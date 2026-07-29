@@ -36,6 +36,7 @@ Hand the harness a foreign-architecture binary (e.g., an old game ROM) and obtai
   - exit code
   - files written (path + content digest)
   - syscall-level event log (name, args, result) — our "recorded state transitions"
+- **Trace canonicalization:** before storage and before any diff, a sanitizer in `exec/` normalizes values that legitimately differ between two correct implementations: heap/stack addresses from `brk`/`mmap` → ordinal placeholders (`ADDR_0`, `ADDR_1`, … per allocation site), ephemeral file descriptors → ordinal placeholders, absolute host paths → task-relative paths. Byte-exact comparison applies to the *canonical* trace.
 - **Experiment:** agent calls `experiment(task, input)` → recorded trace for that input. This is the probing mechanism for forming hypotheses.
 - **Submit:** agent calls `submit_model(task, c_source)`:
   1. Harness compiles the C model (gcc, pinned flags).
@@ -51,11 +52,13 @@ Hand the harness a foreign-architecture binary (e.g., an old game ROM) and obtai
 - **Extraction:** functions come from corpus metadata (synthetic corpus keeps symbols; stripped handling later via qiling/angr recovery — out of v1 scope).
 - **Presentation:** `task_open` returns the function's disassembly (objdump/capstone slice) plus calling-context metadata (signature guess, known callees).
 - **Experiment (function mode):** the harness builds a tiny driver that loads the *original* binary and invokes the real function inside qiling with agent-chosen args; returns return value + observable memory writes + emitted syscalls.
+- **Param spec is part of the hypothesis.** Pointer parameters can't be fuzzed blindly (a `char *buf` with no bounds meta = instant SEGV). With each `submit_model`, the agent declares a param spec — per-parameter kind (`scalar`/`buffer`/`string`/`out-param`), length relationship (`length_param`), direction (`in`/`out`/`in_out`), and range constraints. The harness generates inputs strictly from this spec and checks memory only where the spec grants access. If the agent's spec under-describes the real input space, the (enshrined, seed-varied) fuzz campaign is what catches it — an under-specified signature is simply a hypothesis that fails slower.
 - **Submit + differential validation:**
-  1. Agent's C function compiles into a shared object.
-  2. Harness fuzzes both implementations with N seeded structured inputs derived from the signature.
-  3. Return values, memory writes, and emitted syscalls must match for every input; first mismatch → reject with `{input, expected, actual}`.
+  1. Agent's C function compiles into a shared object (against the ABI-pinned header template provided by `task_open`).
+  2. **Split execution paths:** the model runs *natively* via ctypes (fast); only the original binary runs inside qiling. Fuzzing at N≥100 inputs stays practical.
+  3. Return values, memory writes inside spec-declared bounds, and emitted syscalls must match for every input; first mismatch → reject with `{input, expected, actual}`.
   4. Pass → **accepted function**, entered into the task ledger.
+- **ABI determinism:** corpus seeds and function-mode header templates use explicit-width types (`stdint.h`), documented struct layout (`__attribute__((packed))` where layout matters), and `__attribute__((sysv_abi))`; struct alignment/padding is never left to compiler drift across the matrix slots.
 - **Composition:** accepted functions assemble into the whole-program model, which must then pass the level-A gate on the full binary's traces. The composition step is how B feeds A.
 
 ## 5. MCP server surface
@@ -82,7 +85,8 @@ State (traces, accepted functions, ledgers) lives on disk under a `.reschema/` w
 
 ```
 src/reschema/corpus/     seed programs + generator + manifest
-src/reschema/exec/       qiling recorder: run + trace capture
+src/reschema/exec/       qiling recorder: run + trace capture + trace canonicalizer
+src/reschema/driver/     function-mode driver: native ctypes model exec, qiling original exec
 src/reschema/validate/   compile model, replay, diff (program + function mode)
 src/reschema/disasm/     capstone / pyelftools slicing
 src/reschema/mcp/        MCP tool server (thin wrapper)
@@ -96,6 +100,8 @@ docs/superpowers/specs/  this spec
 - Compile failure of a submission = reject with compiler output verbatim.
 - Run timeout on model replay = reject with the timed-out case.
 - Ground-truth double recording mismatch = task flagged flaky/unusable.
+- Byte-exact diffs always apply to *canonicalized* traces; sanitizer rules are versioned in the repo (a rule change = corpus re-record).
+- Function-mode models execute natively (ctypes) as a throughput decision; v1 corpus + model code is harness-compiled from C we can inspect, so no additional sandboxing in v1.
 - v1 scope: x86-64 ELF produced by our own compile matrix. Dynamic-library resolution beyond libc, anti-emulation tricks, packing, multi-process targets, and symbolic (angr-style) equivalence are **explicit non-goals for v1**.
 
 ## 9. Testing
@@ -110,6 +116,7 @@ docs/superpowers/specs/  this spec
 - `qiling` (unicorn) — execution + trace capture.
 - `capstone`, `pyelftools` — disassembly / ELF slicing.
 - `gcc` + `clang` (system) — corpus matrix + model compilation.
+- stdlib `ctypes` — native execution of function-mode models (no new dependency).
 - Official MCP Python SDK — tool server.
 - Later (deferred): Rust bridge via PyO3/maturin; angr symbolic checks; multi-arch corpus (arm/mips) via qiling.
 

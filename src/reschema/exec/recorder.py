@@ -30,10 +30,6 @@ def record(binary: str | Path, argv: list[str], stdin: bytes = b"", timeout_us: 
     # - Qiling() has no stdin/stdout/stderr kwargs; assign ql.os.std* after construction
     #   (QlOsPosix setters rewire the fd table).
     # - verbose=0 accepted, but console=False is what silences logger chatter.
-    ql = Qiling([str(binary), *argv], "/", verbose=QL_VERBOSE.OFF, console=False)
-    ql.os.stdin = io.BytesIO(stdin)
-    ql.os.stdout = out
-    ql.os.stderr = err
     events = []
 
     def _hook(name, phase):
@@ -51,13 +47,17 @@ def record(binary: str | Path, argv: list[str], stdin: bytes = b"", timeout_us: 
             # implicit None return == "no param override" for qiling ENTER hooks
         return h
 
-    for sc in LOG_SYSCALLS:
-        ql.os.set_syscall(sc, _hook(sc, "enter"), QL_INTERCEPT.ENTER)
-        ql.os.set_syscall(sc, _hook(sc, "exit"), QL_INTERCEPT.EXIT)
     try:
+        ql = Qiling([str(binary), *argv], "/", verbose=QL_VERBOSE.OFF, console=False)
+        ql.os.stdin = io.BytesIO(stdin)
+        ql.os.stdout = out
+        ql.os.stderr = err
+        for sc in LOG_SYSCALLS:
+            ql.os.set_syscall(sc, _hook(sc, "enter"), QL_INTERCEPT.ENTER)
+            ql.os.set_syscall(sc, _hook(sc, "exit"), QL_INTERCEPT.EXIT)
         ql.run(timeout=timeout_us)
         exit_code = ql.os.exit_code if ql.os.exit_code is not None else 0
-    except Exception as e:  # noqa: BLE001 - any emulation fault is trace data, not a recorder crash
+    except Exception as e:  # noqa: BLE001 - any load or emulation fault is trace data, not a recorder crash
         exit_code = -1
         events.append({"phase": "fault", "sc": "crash", "args": [repr(e)]})
     return {

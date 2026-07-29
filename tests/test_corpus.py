@@ -1,10 +1,14 @@
-import json
 import re
 
 import pytest
 from elftools.elf.elffile import ELFFile
 
-from reschema.corpus.generate import OUT_ROOT, build
+from reschema.corpus.generate import build
+
+
+@pytest.fixture(scope="module")
+def manifest():
+    return build()
 
 
 def _gcc_slot(m, seed, opt, stripped):
@@ -19,8 +23,8 @@ def _gcc_slot(m, seed, opt, stripped):
     pytest.skip(f"no gcc slot for {seed} {opt} stripped={stripped}")
 
 
-def test_corpus_builds_with_addresses():
-    m = build()
+def test_corpus_builds_with_addresses(manifest):
+    m = manifest
     assert len(m) >= 6 * 3, "expect >= 6 compiler-opt combos x seeds (minus missing compilers)"
     for x in m:
         assert re.fullmatch(
@@ -32,8 +36,7 @@ def test_corpus_builds_with_addresses():
     assert stripped["functions"]["rot13"] != 0  # address captured pre-strip
 
 
-def test_stripped_has_no_symtab():
-    m = json.loads((OUT_ROOT / "manifest.json").read_text())
-    s = next(x for x in m if x["stripped"])
+def test_stripped_has_no_symtab(manifest):
+    s = next(x for x in manifest if x["stripped"])
     with open(s["binary"], "rb") as f:
         assert ELFFile(f).get_section_by_name(".symtab") is None

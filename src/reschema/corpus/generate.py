@@ -35,6 +35,9 @@ def _symtab(binary: Path) -> dict[str, int]:
 
 def build(out_root: Path = OUT_ROOT) -> list[dict]:
     manifest = []
+    can_strip = shutil.which("strip") is not None
+    if not can_strip:
+        print("note: binutils `strip` not found, leaving binaries unstripped")
     for seed in sorted(SEEDS.glob("*.c")):
         name = seed.stem
         for cc in COMPILERS:
@@ -51,8 +54,10 @@ def build(out_root: Path = OUT_ROOT) -> list[dict]:
                         str(seed), "-o", str(binary),
                     ]
                     subprocess.run(cmd, check=True)
-                    funcs = {f: syms[f] for f in FUNCS[name] if f in (syms := _symtab(binary))}
-                    if strip:
+                    syms = _symtab(binary)
+                    funcs = {f: syms[f] for f in FUNCS[name] if f in syms}
+                    assert funcs, f"no functions captured for {slot}"
+                    if strip and can_strip:
                         subprocess.run(["strip", "-s", str(binary)], check=True)
                     manifest.append({
                         "seed": name,

@@ -7,7 +7,7 @@ name = "reschema"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "qiling",
+    "qiling==1.4.6",
     "capstone",
     "pyelftools",
     "mcp",

@@ -69,10 +69,20 @@ def record(
             ql.os.set_syscall(sc, _hook(sc, "enter"), QL_INTERCEPT.ENTER)
             ql.os.set_syscall(sc, _hook(sc, "exit"), QL_INTERCEPT.EXIT)
         ql.run(timeout=timeout_us)
-        exit_code = ql.os.exit_code if ql.os.exit_code is not None else 0
+        if any(e["phase"] == "enter" and e["sc"] == "exit_group" for e in events):
+            exit_code = ql.os.exit_code
+        else:
+            # qiling 1.4.6: exit_code defaults to 0 (not None) on a timed-out run;
+            # a static-glibc guest exits only via exit_group, so no enter event
+            # means the run stopped prematurely — report failure, not exit 0.
+            exit_code = -1
+            events.append({"phase": "fault", "sc": "timeout", "args": []})
     except Exception as e:  # noqa: BLE001 - any load or emulation fault is trace data, not a recorder crash
         exit_code = -1
-        events.append({"phase": "fault", "sc": "crash", "args": [repr(e)]})
+        # qiling's QlErrorBase init-recurses: repr() recurses forever, avoid it
+        events.append(
+            {"phase": "fault", "sc": "crash", "args": [f"{type(e).__name__}: {e}"]}
+        )
     return {
         "argv": [str(binary), *argv],
         "stdin_hex": stdin.hex(),

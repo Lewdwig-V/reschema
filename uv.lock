@@ -1013,7 +1013,7 @@ requires-dist = [
     { name = "capstone" },
     { name = "mcp" },
     { name = "pyelftools" },
-    { name = "qiling" },
+    { name = "qiling", specifier = "==1.4.6" },
 ]
 
 [package.metadata.requires-dev]

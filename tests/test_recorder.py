@@ -1,3 +1,6 @@
+import json
+import subprocess
+
 import pytest
 
 from reschema.corpus.generate import OUT_ROOT, build
@@ -50,3 +53,26 @@ def test_check_accepts_correct_password_stdin_roundtrip_and_determinism(manifest
 def test_manifest_has_expected_slot(manifest):
     assert len(manifest) == 36
     assert OUT_ROOT.joinpath("manifest.json").exists()
+
+
+def test_record_nonexistent_binary_reports_crash():
+    t = record("/does/not/exist", [])
+    assert t["exit_code"] == -1
+    assert any(e["sc"] == "crash" for e in t["events"])
+
+
+def test_record_timeout_reports_fault(tmp_path):
+    prog = tmp_path / "spin"
+    subprocess.run(
+        ["gcc", "-static", "-x", "c", "-", "-o", str(prog)],
+        input=b"int main(void){for(;;){}}\n",
+        check=True,
+    )
+    t = record(prog, [], timeout_us=300_000)
+    assert t["exit_code"] == -1
+    assert any(e["sc"] == "timeout" for e in t["events"])
+
+
+def test_record_result_is_json_serializable(manifest):
+    t = record(_slot(manifest, "rot13"), ["hello"], b"")
+    json.dumps(t)

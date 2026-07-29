@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reschema"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "qiling",
+    "capstone",
+    "pyelftools",
+    "mcp",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/reschema"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

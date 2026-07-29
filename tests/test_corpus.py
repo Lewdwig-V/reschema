@@ -25,7 +25,9 @@ def _gcc_slot(m, seed, opt, stripped):
 
 def test_corpus_builds_with_addresses(manifest):
     m = manifest
-    assert len(m) >= 6 * 3, "expect >= 6 compiler-opt combos x seeds (minus missing compilers)"
+    assert len(m) >= 6 * 3, (
+        "expect >= 6 compiler-opt combos x seeds (minus missing compilers)"
+    )
     for x in m:
         assert re.fullmatch(
             r"[a-z0-9]+::(gcc|clang)-O[0-2]-(sym|stripped)", x["task_id"]

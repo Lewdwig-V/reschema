@@ -10,8 +10,14 @@ def manifest():
 
 
 def _slot(manifest, seed, opt="-O2", compiler="gcc", stripped=False):
-    return next(x["binary"] for x in manifest if x["seed"] == seed and x["opt"] == opt
-                and x["compiler"] == compiler and x["stripped"] == stripped)
+    return next(
+        x["binary"]
+        for x in manifest
+        if x["seed"] == seed
+        and x["opt"] == opt
+        and x["compiler"] == compiler
+        and x["stripped"] == stripped
+    )
 
 
 def test_rot13_golden(manifest):

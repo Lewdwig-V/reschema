@@ -1,4 +1,5 @@
 """Run a static ELF under qiling; capture observable trace."""
+
 from __future__ import annotations
 
 import hashlib
@@ -8,7 +9,16 @@ from pathlib import Path
 from qiling import Qiling
 from qiling.const import QL_INTERCEPT, QL_VERBOSE
 
-LOG_SYSCALLS = ("read", "write", "writev", "openat", "close", "brk", "mmap", "exit_group")
+LOG_SYSCALLS = (
+    "read",
+    "write",
+    "writev",
+    "openat",
+    "close",
+    "brk",
+    "mmap",
+    "exit_group",
+)
 
 
 class Sink(io.RawIOBase):
@@ -23,7 +33,9 @@ class Sink(io.RawIOBase):
         return len(b)
 
 
-def record(binary: str | Path, argv: list[str], stdin: bytes = b"", timeout_us: int = 3_000_000) -> dict:
+def record(
+    binary: str | Path, argv: list[str], stdin: bytes = b"", timeout_us: int = 3_000_000
+) -> dict:
     """argv excludes the binary; trace includes both. Returns a JSON-serializable dict."""
     out, err = Sink(), Sink()
     # qiling 1.4.6 adjustments vs Task 3 plan:
@@ -45,6 +57,7 @@ def record(binary: str | Path, argv: list[str], stdin: bytes = b"", timeout_us: 
                 e["args"] = [_fmt(a) for a in raw]
             events.append(e)
             # implicit None return == "no param override" for qiling ENTER hooks
+
         return h
 
     try:

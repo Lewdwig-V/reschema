@@ -1,4 +1,5 @@
 """Build the synthetic corpus matrix; write manifest with function addresses."""
+
 from __future__ import annotations
 
 import json
@@ -50,8 +51,15 @@ def build(out_root: Path = OUT_ROOT) -> list[dict]:
                     out.mkdir(parents=True, exist_ok=True)
                     binary = out / "prog"
                     cmd = [
-                        cc, opt, "-static", "-fno-pie", "-no-pie", "-g0",
-                        str(seed), "-o", str(binary),
+                        cc,
+                        opt,
+                        "-static",
+                        "-fno-pie",
+                        "-no-pie",
+                        "-g0",
+                        str(seed),
+                        "-o",
+                        str(binary),
                     ]
                     subprocess.run(cmd, check=True)
                     syms = _symtab(binary)
@@ -59,15 +67,17 @@ def build(out_root: Path = OUT_ROOT) -> list[dict]:
                     assert funcs, f"no functions captured for {slot}"
                     if strip and can_strip:
                         subprocess.run(["strip", "-s", str(binary)], check=True)
-                    manifest.append({
-                        "seed": name,
-                        "compiler": cc,
-                        "opt": opt,
-                        "stripped": strip,
-                        "binary": str(binary),
-                        "task_id": f"{name}::{cc}-{opt.lstrip('-')}-{'stripped' if strip else 'sym'}",
-                        "functions": funcs,
-                    })
+                    manifest.append(
+                        {
+                            "seed": name,
+                            "compiler": cc,
+                            "opt": opt,
+                            "stripped": strip,
+                            "binary": str(binary),
+                            "task_id": f"{name}::{cc}-{opt.lstrip('-')}-{'stripped' if strip else 'sym'}",
+                            "functions": funcs,
+                        }
+                    )
     (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return manifest
 

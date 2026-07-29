@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 from elftools.elf.elffile import ELFFile
@@ -21,6 +22,10 @@ def _gcc_slot(m, seed, opt, stripped):
 def test_corpus_builds_with_addresses():
     m = build()
     assert len(m) >= 6 * 3, "expect >= 6 compiler-opt combos x seeds (minus missing compilers)"
+    for x in m:
+        assert re.fullmatch(
+            r"[a-z0-9]+::(gcc|clang)-O[0-2]-(sym|stripped)", x["task_id"]
+        ), x["task_id"]
     rot = _gcc_slot(m, "rot13", "-O2", False)
     assert rot["functions"]["rot13"] != 0
     stripped = _gcc_slot(m, "rot13", "-O2", True)

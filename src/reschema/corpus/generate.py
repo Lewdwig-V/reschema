@@ -60,7 +60,7 @@ def build(out_root: Path = OUT_ROOT) -> list[dict]:
                         "opt": opt,
                         "stripped": strip,
                         "binary": str(binary),
-                        "task_id": f"{name}::{cc}-{opt}-{'stripped' if strip else 'sym'}",
+                        "task_id": f"{name}::{cc}-{opt.lstrip('-')}-{'stripped' if strip else 'sym'}",
                         "functions": funcs,
                     })
     (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2))

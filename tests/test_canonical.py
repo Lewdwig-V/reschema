@@ -63,3 +63,15 @@ def test_input_not_mutated():
     )
     canonicalize(t)
     assert t["events"][0]["result"] == "0x55aa00000000"  # original untouched
+
+
+def test_non_address_results_pass_through():
+    t = _trace(
+        [
+            {"phase": "exit", "sc": "mmap", "args": [], "result": "0x0"},  # failure
+            {"phase": "exit", "sc": "exit_group", "args": ["0x0"], "result": "None"},
+        ]
+    )
+    c = canonicalize(t)
+    assert c["events"][0]["result"] == "0x0"
+    assert c["events"][1]["result"] == "None"

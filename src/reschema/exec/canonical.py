@@ -1,4 +1,8 @@
-"""Normalize legitimately-divergent values in recorded traces before diffing."""
+"""Normalize legitimately-divergent values in recorded traces before diffing.
+
+rules v1: address-shaped tokens (0x + >=6 hex) -> ADDR_<n> ordinals (first sighting,
+trace-global); argv[0] -> basename. Spec section 8: a rule change here = corpus re-record.
+"""
 
 from __future__ import annotations
 

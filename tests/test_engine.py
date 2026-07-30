@@ -9,7 +9,7 @@ def manifest():
     return build()
 
 
-def test_record_case_saves_canonical_trace(manifest, tmp_path):
+def test_record_case_saves_canonical_trace(manifest):
     st = TaskStore("rot13::gcc-O2-sym")
     t = st.record_case("a", ["abc"], b"")
     assert st.recorded()[0]["stdout"] == t["stdout"]
@@ -17,7 +17,7 @@ def test_record_case_saves_canonical_trace(manifest, tmp_path):
     assert st.recorded()[0]["argv"][0] == "prog"
 
 
-def test_flakiness_detected(manifest, monkeypatch, tmp_path):
+def test_flakiness_detected(manifest, monkeypatch):
     st = TaskStore("rot13::gcc-O2-sym")
     runs = iter(
         [
@@ -30,7 +30,7 @@ def test_flakiness_detected(manifest, monkeypatch, tmp_path):
         st.record_case("x", ["z"], b"")
 
 
-def test_ledger_roundtrip(manifest, tmp_path):
+def test_ledger_roundtrip(manifest):
     st = TaskStore("rot13::gcc-O2-sym")
     # task dir is shared runtime state; reset so reruns see the default ledger
     st._path("ledger.json").unlink(missing_ok=True)

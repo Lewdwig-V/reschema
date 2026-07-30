@@ -2,6 +2,7 @@ import pytest
 
 from reschema.corpus.generate import build
 from reschema.engine import TaskStore
+from reschema.exec.canonical import canonicalize
 from reschema.validate.program import compile_model, replay_against
 
 GOOD = r"""
@@ -103,3 +104,63 @@ def test_unbuffered_writes_rejected(store, tmp_path):
     assert v.divergence["first_diverging_event_index"] == 0
     assert v.divergence["expected"]["args"][-1] == "0x4"  # seed's single 4-byte write
     assert v.divergence["actual"]["args"][-1] == "0x1"  # model's 1-byte dribble
+
+
+def _trace(stdout_hex, exit_code, events):
+    # Minimal trace dict in recorder schema, for replay_against without qiling.
+    return {
+        "argv": ["orig"],
+        "stdin_hex": "",
+        "stdout": stdout_hex,
+        "stderr": "",
+        "exit_code": exit_code,
+        "files_written": [],
+        "events": events,
+    }
+
+
+def test_compile_infra_errors_rejected(tmp_path, monkeypatch):
+    import subprocess
+    from unittest.mock import Mock
+
+    for exc in (subprocess.TimeoutExpired(cmd="gcc", timeout=60), OSError("no gcc")):
+        monkeypatch.setattr(
+            "reschema.validate.program.subprocess.run", Mock(side_effect=exc)
+        )
+        ok, err = compile_model(GOOD, tmp_path / "infra")
+        assert not ok and err.startswith("compile infra:")
+
+
+def test_io_mismatch_decoded_previews_and_actual_fault(tmp_path, monkeypatch):
+    fault = {"phase": "fault", "sc": "crash", "args": ["QlErrorCoreUnmapped"]}
+    monkeypatch.setattr(
+        "reschema.validate.program.record",
+        lambda *a, **k: _trace("666f6f", -1, [fault]),
+    )
+
+    v = replay_against(tmp_path / "m", [_trace("ff0a", 0, [])])
+    assert not v.ok and v.reason == "io-mismatch"
+    assert v.divergence["expected"]["stdout_decoded"] == "ÿ\n"  # latin-1 previews
+    assert v.divergence["actual"]["stdout_decoded"] == "foo"
+    assert v.divergence["actual_fault"]["sc"] == "crash"  # where the model died
+
+
+def test_event_length_reason_pinned(tmp_path, monkeypatch):
+    # Pins: event-length = same observable prefix, different OBS event COUNT. Only
+    # reachable via fault (-1) traces: normally-exiting models end in exit_group,
+    # so any count difference misaligns the final event and lands on divergence first.
+    w_e = {"phase": "enter", "sc": "write", "args": ["0x1", "0x400000", "0x4"]}
+    w_x = {**w_e, "phase": "exit", "result": "0x4"}
+    w0_e = {"phase": "enter", "sc": "write", "args": ["0x1", "0x400000", "0x0"]}
+    w0_x = {**w0_e, "phase": "exit", "result": "0x0"}
+    fault = {"phase": "fault", "sc": "timeout", "args": []}
+    stored = canonicalize(_trace("6e6f700a", -1, [w_e, w_x, fault]))
+    monkeypatch.setattr(
+        "reschema.validate.program.record",
+        lambda *a, **k: _trace("6e6f700a", -1, [w_e, w_x, w0_e, w0_x, fault]),
+    )
+
+    v = replay_against(tmp_path / "m", [stored])
+    assert not v.ok and v.reason == "event-length"
+    assert v.divergence["expected_len"] == 2
+    assert v.divergence["actual_len"] == 4

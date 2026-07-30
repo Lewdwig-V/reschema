@@ -22,13 +22,17 @@ class Verdict:
 def compile_model(c_source: str, out: Path) -> tuple[bool, str]:
     src = out.with_suffix(".c")
     src.write_text(c_source)
-    p = subprocess.run(
-        [*CFLAGS, str(src), "-o", str(out)],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    try:
+        p = subprocess.run(
+            [*CFLAGS, str(src), "-o", str(out)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        # Infra failure (hung/missing cc), not a model bug — report as reject reason.
+        return False, f"compile infra: {type(e).__name__}: {e}"
     return p.returncode == 0, p.stderr
 
 
@@ -40,6 +44,11 @@ def compile_model(c_source: str, out: Path) -> tuple[bool, str]:
 # (bytes written — small literal, meaningful).
 OBS = ("write", "writev", "exit_group")
 ADDR_PREFIX = "ADDR_"
+
+
+def _shown(hexstr: str) -> str:
+    # latin-1: any byte sequence decodes; previews are for humans, hex stays authoritative.
+    return bytes.fromhex(hexstr).decode("latin-1")
 
 
 def _obs_events(trace: dict) -> list[dict]:
@@ -65,23 +74,27 @@ def replay_against(model_bin: Path, traces: list[dict]) -> Verdict:
             or got["stderr"] != tr["stderr"]
             or got["exit_code"] != tr["exit_code"]
         ):
-            return Verdict(
-                False,
-                "io-mismatch",
-                {
-                    "argv": argv,
-                    "expected": {
-                        "stdout": tr["stdout"],
-                        "stderr": tr["stderr"],
-                        "exit_code": tr["exit_code"],
-                    },
-                    "actual": {
-                        "stdout": got["stdout"],
-                        "stderr": got["stderr"],
-                        "exit_code": got["exit_code"],
-                    },
+            divergence = {
+                "argv": argv,
+                "expected": {
+                    "stdout": tr["stdout"],
+                    "stderr": tr["stderr"],
+                    "exit_code": tr["exit_code"],
+                    "stdout_decoded": _shown(tr["stdout"]),
+                    "stderr_decoded": _shown(tr["stderr"]),
                 },
-            )
+                "actual": {
+                    "stdout": got["stdout"],
+                    "stderr": got["stderr"],
+                    "exit_code": got["exit_code"],
+                    "stdout_decoded": _shown(got["stdout"]),
+                    "stderr_decoded": _shown(got["stderr"]),
+                },
+            }
+            if got["exit_code"] == -1 and got["events"]:
+                # Model crashed/timed out: surface the fault marker (where it died).
+                divergence["actual_fault"] = got["events"][-1]
+            return Verdict(False, "io-mismatch", divergence)
         ge, te = _obs_events(got), _obs_events(tr)
         for i, (e, a) in enumerate(
             zip(te, ge)

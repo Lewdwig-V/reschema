@@ -39,3 +39,8 @@ def test_ledger_roundtrip(manifest):
     led["submissions"] = 3
     st.save_ledger(led)
     assert TaskStore("rot13::gcc-O2-sym").ledger()["submissions"] == 3
+
+
+def test_unknown_task_id_raises_clean_keyerror(manifest):
+    with pytest.raises(KeyError, match="unknown task_id: nope::x"):
+        TaskStore("nope::x")

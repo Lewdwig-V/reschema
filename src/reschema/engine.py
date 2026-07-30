@@ -20,7 +20,9 @@ def load_manifest() -> list[dict]:
 
 class TaskStore:
     def __init__(self, task_id: str):
-        self.meta = next(t for t in load_manifest() if t["task_id"] == task_id)
+        self.meta = next((t for t in load_manifest() if t["task_id"] == task_id), None)
+        if self.meta is None:
+            raise KeyError(f"unknown task_id: {task_id}")
         self.dir = TASKS / task_id.replace("::", "__")
         self.dir.mkdir(parents=True, exist_ok=True)
 

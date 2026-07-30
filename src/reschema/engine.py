@@ -3,25 +3,30 @@
 from __future__ import annotations
 
 import json
+import random
+import secrets
 from pathlib import Path
 
 from .exec.canonical import canonicalize
 from .exec.recorder import record
-from .validate.program import (
-    compile_model,
-    gen_hidden_inputs,
-    hidden_replay,
-    replay_against,
-)
+from .validate.program import compile_model, hidden_input_stream, replay_against
 
 # plan said parents[1]; that lands at src/ — engine.py sits at src/reschema/, so root is parents[2]
 ROOT = Path(__file__).resolve().parents[2]
 TASKS = ROOT / ".reschema" / "tasks"
 MANIFEST = ROOT / ".reschema" / "corpus" / "manifest.json"
 
+HIDDEN_N = 8  # distinct usable hidden inputs each submission must survive
+
 
 def load_manifest() -> list[dict]:
     return json.loads(MANIFEST.read_text())
+
+
+def _record_stable(binary: str | Path, argv: list[str], stdin: bytes) -> dict | None:
+    """Double-record ground truth; canonical trace, or None on flaky divergence."""
+    a = canonicalize(record(binary, argv, stdin))
+    return a if a == canonicalize(record(binary, argv, stdin)) else None
 
 
 class TaskStore:
@@ -37,9 +42,8 @@ class TaskStore:
 
     def record_case(self, label: str, argv: list[str], stdin: bytes) -> dict:
         """Record a ground-truth trace; double-record to catch flakiness."""
-        a = canonicalize(record(self.meta["binary"], argv, stdin))
-        b = canonicalize(record(self.meta["binary"], argv, stdin))
-        if a != b:
+        a = _record_stable(self.meta["binary"], argv, stdin)
+        if a is None:
             raise RuntimeError(f"task {self.meta['task_id']} flaky on {label}")
         (self._path(f"trace_{label}.json")).write_text(json.dumps(a))
         return a
@@ -61,16 +65,18 @@ class TaskStore:
         self._path("ledger.json").write_text(json.dumps(led, indent=2))
 
 
+# ponytail: 3-seed corpus, manifest-driven input-space deferred
 STDIN_DRIVEN = {"check"}  # seed names fed via stdin; all others take argv input
 
 
 def submit_program(store: TaskStore, c_source: str) -> dict:
     """Anti-hardcoding gate: replay recorded cases, then freshly-recorded hidden ones."""
+    rec = store.recorded()
     model = store.dir / "model"
     ok, err = compile_model(c_source, model)
     if not ok:
         return {"accepted": False, "reason": "compile", "detail": err}
-    v = replay_against(model, store.recorded())
+    v = replay_against(model, rec)
     if not v.ok:
         return {
             "accepted": False,
@@ -79,13 +85,33 @@ def submit_program(store: TaskStore, c_source: str) -> dict:
             "divergence": v.divergence,
         }
     modes = ("stdin",) if store.meta["seed"] in STDIN_DRIVEN else ("argv",)
-    known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in store.recorded()}
-    inputs = [
-        c
-        for c in gen_hidden_inputs(store.meta["task_id"], modes=modes)
-        if (tuple(c[0]), c[1].hex()) not in known
-    ]
-    v = hidden_replay(model, store.meta["binary"], inputs)
+    known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in rec}
+    # Hidden ground truth: fresh unguessable inputs (new entropy every submission),
+    # double-recorded like stored cases. A flaky or crashing draw invalidates the
+    # INPUT (redraw), never the model — a crash trace is not a behavior spec.
+    rng = random.Random(f"hidden:{store.meta['task_id']}:{secrets.token_hex(16)}")
+    fresh = []
+    for (argv, stdin), _attempt in zip(
+        hidden_input_stream(rng, modes), range(10 * HIDDEN_N), strict=False
+    ):
+        if len(fresh) == HIDDEN_N:
+            break
+        key = (tuple(argv), stdin.hex())
+        if key in known:
+            continue
+        known.add(key)  # dedupes both against recorded cases and within the suite
+        t = _record_stable(store.meta["binary"], argv, stdin)
+        if t is None or t["exit_code"] == -1:
+            continue
+        fresh.append(t)
+    if len(fresh) < HIDDEN_N:
+        # Loud failure over vacuous pass: too few distinct usable hidden inputs.
+        return {
+            "accepted": False,
+            "reason": "hidden-starvation",
+            "detail": f"{len(fresh)}/{HIDDEN_N} usable hidden inputs after 80 draws",
+        }
+    v = replay_against(model, fresh)
     if not v.ok:
         return {
             "accepted": False,

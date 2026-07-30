@@ -5,7 +5,9 @@ from __future__ import annotations
 import random
 import string
 import subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 
 from ..exec.canonical import canonicalize
@@ -121,24 +123,23 @@ def replay_against(model_bin: Path, traces: list[dict]) -> Verdict:
     return Verdict(True)
 
 
+_CHARSET = string.ascii_letters + string.digits + string.punctuation.replace(
+    '"', ""
+).replace("\\", "")
+
+
+def hidden_input_stream(
+    rng: random.Random, modes: tuple
+) -> Iterator[tuple[list[str], bytes]]:
+    """Endless candidate inputs from the task input space."""
+    while True:
+        s = "".join(rng.choice(_CHARSET) for _ in range(rng.randint(1, 24)))
+        yield ([s], b"") if "argv" in modes else ([], (s + "\n").encode())
+
+
 def gen_hidden_inputs(
-    task_id: str, n: int = 8, modes: tuple = ("argv",)
+    task_id: str, n: int = 8, modes: tuple = ("argv",), seed: str | None = None
 ) -> list[tuple[list[str], bytes]]:
-    """Deterministic fresh inputs from the task input space; PRNG seeded by task_id."""
-    rng = random.Random(f"hidden:{task_id}")
-    cs = string.ascii_letters + string.digits + string.punctuation.replace(
-        '"', ""
-    ).replace("\\", "")
-    cases = []
-    for _ in range(n):
-        s = "".join(rng.choice(cs) for _ in range(rng.randint(1, 24)))
-        cases.append(([s], b"") if "argv" in modes else ([], (s + "\n").encode()))
-    return cases
-
-
-def hidden_replay(
-    model_bin: Path, original: str | Path, inputs: list[tuple[list[str], bytes]]
-) -> Verdict:
-    """Record fresh ground truth for hidden inputs, replay model against it."""
-    fresh = [canonicalize(record(original, argv, stdin)) for argv, stdin in inputs]
-    return replay_against(model_bin, fresh)
+    """Deterministic fresh inputs given a seed; submissions pass fresh entropy."""
+    rng = random.Random(seed if seed is not None else f"hidden:{task_id}")
+    return list(islice(hidden_input_stream(rng, modes), n))

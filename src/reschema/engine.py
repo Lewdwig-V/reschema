@@ -7,6 +7,12 @@ from pathlib import Path
 
 from .exec.canonical import canonicalize
 from .exec.recorder import record
+from .validate.program import (
+    compile_model,
+    gen_hidden_inputs,
+    hidden_replay,
+    replay_against,
+)
 
 # plan said parents[1]; that lands at src/ — engine.py sits at src/reschema/, so root is parents[2]
 ROOT = Path(__file__).resolve().parents[2]
@@ -53,3 +59,41 @@ class TaskStore:
 
     def save_ledger(self, led: dict):
         self._path("ledger.json").write_text(json.dumps(led, indent=2))
+
+
+STDIN_DRIVEN = {"check"}  # seed names fed via stdin; all others take argv input
+
+
+def submit_program(store: TaskStore, c_source: str) -> dict:
+    """Anti-hardcoding gate: replay recorded cases, then freshly-recorded hidden ones."""
+    model = store.dir / "model"
+    ok, err = compile_model(c_source, model)
+    if not ok:
+        return {"accepted": False, "reason": "compile", "detail": err}
+    v = replay_against(model, store.recorded())
+    if not v.ok:
+        return {
+            "accepted": False,
+            "reason": v.reason,
+            "stage": "recorded",
+            "divergence": v.divergence,
+        }
+    modes = ("stdin",) if store.meta["seed"] in STDIN_DRIVEN else ("argv",)
+    known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in store.recorded()}
+    inputs = [
+        c
+        for c in gen_hidden_inputs(store.meta["task_id"], modes=modes)
+        if (tuple(c[0]), c[1].hex()) not in known
+    ]
+    v = hidden_replay(model, store.meta["binary"], inputs)
+    if not v.ok:
+        return {
+            "accepted": False,
+            "reason": v.reason,
+            "stage": "hidden",
+            "divergence": v.divergence,
+        }
+    led = store.ledger()
+    led["accepted"].append("program")
+    store.save_ledger(led)
+    return {"accepted": True, "replay_pct": 100}

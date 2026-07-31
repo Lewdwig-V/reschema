@@ -7,8 +7,10 @@ import random
 import secrets
 from pathlib import Path
 
+from .driver.spec import Param
 from .exec.canonical import canonicalize
 from .exec.recorder import record
+from .validate.function import N_FUZZ, validate_function
 from .validate.program import compile_model, hidden_input_stream, replay_against
 
 # plan said parents[1]; that lands at src/ — engine.py sits at src/reschema/, so root is parents[2]
@@ -123,3 +125,72 @@ def submit_program(store: TaskStore, c_source: str) -> dict:
     led["accepted"].append("program")
     store.save_ledger(led)
     return {"accepted": True, "replay_pct": 100}
+
+
+DEFAULT_PARAM_SPECS: dict[str, list[dict]] = {}  # agent supplies; engine passes through
+
+
+def open_function_task(store: TaskStore, func: str) -> dict:
+    from .disasm.slice import disasm_function
+
+    f = store.meta["functions"][func]
+    return {
+        "task_id": store.meta["task_id"],
+        "function": func,
+        "address": hex(f["addr"]),
+        "disasm": disasm_function(store.meta["binary"], f["addr"], f["size"]),
+    }
+
+
+def experiment_function(store: TaskStore, func: str, params: list[dict], case: dict) -> dict:
+    """Ground truth: call the real function once, forward the whole trace."""
+    from .driver.calling import call_original
+
+    ps = [Param.from_json(p) for p in params]
+    return call_original(store.meta["binary"], store.meta["functions"][func]["addr"], ps, case)
+
+
+def submit_function(
+    store: TaskStore,
+    func: str,
+    params: list[dict],
+    c_source: str,
+    seed: int | None = None,
+    n_fuzz: int = N_FUZZ,
+) -> dict:
+    # ret:"void" is agent-supplied and unverifiable from the spec: a mis-declared void
+    # with read-only mem can validate a no-op — same trust class as declared directions.
+    ps = [Param.from_json(p) for p in params]
+    v = validate_function(
+        store.meta["binary"],
+        store.meta["functions"][func]["addr"],
+        func,
+        ps,
+        c_source,
+        store.dir / f"{func}.so",
+        seed=seed,
+        n_fuzz=n_fuzz,
+    )
+    led = store.ledger()
+    led["submissions"] += 1
+    if not v.ok:
+        led["rejections"] += 1
+        store.save_ledger(led)
+        return {"accepted": False, "divergence": v.divergence}
+    if not any(isinstance(f, dict) and func in f for f in led["accepted"]):
+        led["accepted"].append({func: c_source})
+    store.save_ledger(led)
+    return {"accepted": True}
+
+
+def compose(store: TaskStore) -> tuple[bool, str]:
+    """Concatenate accepted function sources; compile-check as one program model."""
+    led = store.ledger()
+    src = "\n".join(next(iter(f.values())) for f in led["accepted"] if isinstance(f, dict))
+    if not src:
+        return False, "#error nothing accepted"
+    ok, err = compile_model(
+        src + "\n#include <stdio.h>\nint main(void){return 0;}\n",
+        store.dir / "composed",
+    )
+    return ok, err

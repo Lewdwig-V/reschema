@@ -46,6 +46,8 @@ def gen_inputs(params: list[Param], rng: random.Random, n: int) -> list[dict]:
         for p in params:
             lo, hi = p.range
             if p.kind == "cstring":
+                # ponytail: cstring ignores p.range — the spec type has no string
+                # char/length range fields; hardcoded a-z, len 0-16 until one exists.
                 ln = rng.randint(0, 16)
                 case[p.name] = bytes(rng.randint(97, 122) for _ in range(ln)) + b"\0"
             elif p.kind == "buffer_i32":
@@ -128,7 +130,9 @@ def call_original(binary: str, addr: int, params: list[Param], case: dict) -> di
             out["mem"][p.name] = list(
                 struct.unpack(f"<{n}i", bytes(ql.mem.read(ptrs[p.name], 4 * n)))
             )
-        if p.kind == "cstring" and p.direction != "in" and p.name in ptrs:
+        # Read back in ALL directions: a "pure-in" cstring that was written is a
+        # mis-declared spec, and the mem mismatch is how the validator catches it.
+        if p.kind == "cstring" and p.name in ptrs:
             out["mem"][p.name] = bytes(ql.mem.read(ptrs[p.name], len(case[p.name])))
     return out
 
@@ -164,13 +168,6 @@ def call_model_native(so_path: str, func: str, params: list[Param], case: dict) 
             watched[p.name] = (arr, "buffer_i32")
     out = {"ret": fn(*args), "mem": {}}
     for name, (buf, kind) in watched.items():
-        # pure-input cstrings read back no mem: an effect of a read-only buffer
-        # is not observable — mirrors call_original's mem keys exactly
-        if kind == "cstring" and _dir(params, name) == "in":
-            continue
+        # Direction-agnostic (mirrors call_original's mem keys exactly, buffer_i32 included).
         out["mem"][name] = list(buf) if kind == "buffer_i32" else bytes(buf)
     return out
-
-
-def _dir(params: list[Param], name: str) -> str:
-    return next(p.direction for p in params if p.name == name)

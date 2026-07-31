@@ -1,17 +1,24 @@
-"""Task state: recorded traces, experiments, ledger. On-disk under .reschema/tasks/<task_id>."""
+"""Task state: recorded traces, experiments, ledger. On-disk under .reschema/tasks/<task_id>.
+
+Ledger writes are atomic (temp file + os.replace) but otherwise uncoordinated:
+single-process (or out-of-band serialized) access is assumed.
+"""
 
 from __future__ import annotations
 
 import json
+import os
 import random
+import re
 import secrets
+import subprocess
 from pathlib import Path
 
 from .driver.spec import Param
 from .exec.canonical import canonicalize
 from .exec.recorder import record
 from .validate.function import N_FUZZ, validate_function
-from .validate.program import compile_model, hidden_input_stream, replay_against
+from .validate.program import CFLAGS, compile_model, hidden_input_stream, replay_against
 
 # plan said parents[1]; that lands at src/ — engine.py sits at src/reschema/, so root is parents[2]
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,9 +40,12 @@ def _record_stable(binary: str | Path, argv: list[str], stdin: bytes) -> dict | 
 
 class TaskStore:
     def __init__(self, task_id: str):
-        self.meta = next((t for t in load_manifest() if t["task_id"] == task_id), None)
+        man = load_manifest()
+        self.meta = next((t for t in man if t["task_id"] == task_id), None)
         if self.meta is None:
-            raise KeyError(f"unknown task_id: {task_id}")
+            raise KeyError(
+                f"unknown task_id: {task_id}; available: {[t['task_id'] for t in man]}"
+            )
         self.dir = TASKS / task_id.replace("::", "__")
         self.dir.mkdir(parents=True, exist_ok=True)
 
@@ -64,7 +74,9 @@ class TaskStore:
         )
 
     def save_ledger(self, led: dict):
-        self._path("ledger.json").write_text(json.dumps(led, indent=2))
+        tmp = self._path(".ledger.json.tmp")
+        tmp.write_text(json.dumps(led, indent=2))
+        os.replace(tmp, self._path("ledger.json"))  # same-dir rename is atomic
 
 
 # ponytail: 3-seed corpus, manifest-driven input-space deferred
@@ -127,13 +139,20 @@ def submit_program(store: TaskStore, c_source: str) -> dict:
     return {"accepted": True, "replay_pct": 100}
 
 
-DEFAULT_PARAM_SPECS: dict[str, list[dict]] = {}  # agent supplies; engine passes through
+def _fn_meta(store: TaskStore, func: str) -> dict:
+    fn = store.meta["functions"]
+    if func not in fn:
+        raise KeyError(
+            f"unknown function {func!r} for task {store.meta['task_id']}; "
+            f"available: {sorted(fn)}"
+        )
+    return fn[func]
 
 
 def open_function_task(store: TaskStore, func: str) -> dict:
     from .disasm.slice import disasm_function
 
-    f = store.meta["functions"][func]
+    f = _fn_meta(store, func)
     return {
         "task_id": store.meta["task_id"],
         "function": func,
@@ -143,11 +162,19 @@ def open_function_task(store: TaskStore, func: str) -> dict:
 
 
 def experiment_function(store: TaskStore, func: str, params: list[dict], case: dict) -> dict:
-    """Ground truth: call the real function once, forward the whole trace."""
+    """Ground truth: call the real function once, forward the whole trace.
+
+    JSON contract: cstring `mem` values come back from the driver as raw bytes and
+    are hexified here — same plain-hex convention as stdin_hex/stdout_hex on program
+    traces, no prefixes. buffer_i32 mem (list[int]) passes through untouched."""
     from .driver.calling import call_original
 
     ps = [Param.from_json(p) for p in params]
-    return call_original(store.meta["binary"], store.meta["functions"][func]["addr"], ps, case)
+    t = call_original(store.meta["binary"], _fn_meta(store, func)["addr"], ps, case)
+    t["mem"] = {
+        k: (v.hex() if isinstance(v, (bytes, bytearray)) else v) for k, v in t["mem"].items()
+    }
+    return t
 
 
 def submit_function(
@@ -160,10 +187,21 @@ def submit_function(
 ) -> dict:
     # ret:"void" is agent-supplied and unverifiable from the spec: a mis-declared void
     # with read-only mem can validate a no-op — same trust class as declared directions.
-    ps = [Param.from_json(p) for p in params]
+    led = store.ledger()
+    try:
+        ps = [Param.from_json(p) for p in params]
+    except (KeyError, ValueError) as e:
+        # Malformed spec = a rejection like any other failed validation; the ledger
+        # must count it — never die before the accounting (or inside the fuzz loop).
+        led["submissions"] += 1
+        led["rejections"] += 1
+        store.save_ledger(led)
+        return {"accepted": False, "reason": "spec", "detail": str(e)}
+    # ponytail: agent-controlled cost (fresh Qiling VM per case) — clamp runaway budgets
+    n_fuzz = min(n_fuzz, 4 * N_FUZZ)
     v = validate_function(
         store.meta["binary"],
-        store.meta["functions"][func]["addr"],
+        _fn_meta(store, func)["addr"],
         func,
         ps,
         c_source,
@@ -171,26 +209,59 @@ def submit_function(
         seed=seed,
         n_fuzz=n_fuzz,
     )
-    led = store.ledger()
     led["submissions"] += 1
     if not v.ok:
         led["rejections"] += 1
         store.save_ledger(led)
         return {"accepted": False, "divergence": v.divergence}
-    if not any(isinstance(f, dict) and func in f for f in led["accepted"]):
+    # Newest accepted source wins: a re-accept also passed validation, so replace.
+    existing = next((f for f in led["accepted"] if isinstance(f, dict) and func in f), None)
+    if existing is not None:
+        existing[func] = c_source
+    else:
         led["accepted"].append({func: c_source})
     store.save_ledger(led)
     return {"accepted": True}
 
 
-def compose(store: TaskStore) -> tuple[bool, str]:
-    """Concatenate accepted function sources; compile-check as one program model."""
-    led = store.ledger()
-    src = "\n".join(next(iter(f.values())) for f in led["accepted"] if isinstance(f, dict))
-    if not src:
-        return False, "#error nothing accepted"
-    ok, err = compile_model(
-        src + "\n#include <stdio.h>\nint main(void){return 0;}\n",
-        store.dir / "composed",
+def _cc(args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [*CFLAGS, *args], capture_output=True, text=True, timeout=60, check=False
     )
-    return ok, err
+
+
+def compose(store: TaskStore) -> tuple[bool, str]:
+    """Compile each accepted source as its OWN translation unit, then link with a
+    generated main stub into one program.
+
+    Per-TU, not text-concat: each source was validated standalone (sum_range's accepted
+    model embeds clamp_i32 while clamp_i32 itself is accepted → one TU redefines it).
+    Linkage rule for agents: a helper used by only one function MUST be declared
+    `static` — internal linkage means no cross-TU collisions and the language dedups
+    it per unit. A duplicate EXTERNALLY-visible symbol across TUs fails at ld and is
+    mapped to a structured, actionable reject below.
+    """
+    led = store.ledger()
+    entries = [next(iter(f.items())) for f in led["accepted"] if isinstance(f, dict)]
+    if not entries:
+        return False, "#error nothing accepted"
+    stub_src = "int main(void){return 0;}\n"
+    (store.dir / "composed_main.c").write_text(stub_src)
+    objs = []
+    for name, src in [*entries, ("composed_main", stub_src)]:
+        c, o = store.dir / f"{name}.compose.c", store.dir / f"{name}.compose.o"
+        c.write_text(src)
+        p = _cc(["-c", str(c), "-o", str(o)])
+        if p.returncode != 0:
+            return False, p.stderr
+        objs.append(str(o))
+    p = _cc([*objs, "-o", str(store.dir / "composed")])
+    if p.returncode != 0:
+        syms = sorted(set(re.findall(r"multiple definition of [‘'`](\w+)", p.stderr)))
+        if syms:
+            names = ", ".join(f"'{s}'" for s in syms)
+            return False, (
+                f"duplicate symbol {names} across accepted sources: "
+                f"declare single-function helpers static\n{p.stderr}"
+            )
+    return p.returncode == 0, p.stderr

@@ -54,3 +54,11 @@ def test_addr_outside_text_raises(manifest):
     t = manifest[0]
     with pytest.raises(ValueError, match="outside .text"):
         disasm_function(t["binary"], 0x10, 16)
+
+
+def test_addr_plus_size_beyond_text_raises(manifest):
+    # addr valid but the end of the slice runs past .text: same structured error.
+    t = manifest[0]
+    fn = next(iter(t["functions"].values()))
+    with pytest.raises(ValueError, match="outside .text"):
+        disasm_function(t["binary"], fn["addr"], 10**9)

@@ -10,7 +10,7 @@ from reschema.driver.spec import Param
 
 MODEL = r"""
 #include <stdint.h>
-__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v, int32_t lo, int32_t hi){
+static int32_t clamp_i32(int32_t v, int32_t lo, int32_t hi){
     return v < lo ? lo : v > hi ? hi : v;
 }
 __attribute__((sysv_abi)) int32_t sum_range(int32_t lo, int32_t hi){

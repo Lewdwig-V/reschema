@@ -900,7 +900,7 @@ from reschema.driver.calling import gen_inputs, call_original, call_model_native
 
 MODEL = r'''
 #include <stdint.h>
-__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v, int32_t lo, int32_t hi){
+static int32_t clamp_i32(int32_t v, int32_t lo, int32_t hi){
     return v < lo ? lo : v > hi ? hi : v;
 }
 __attribute__((sysv_abi)) int32_t sum_range(int32_t lo, int32_t hi){
@@ -1179,7 +1179,7 @@ PARAMS = [{"name": "lo", "kind": "i32", "range": [-20, 10]},
           {"name": "hi", "kind": "i32", "range": [10, 30]}]
 WRONG = '#include <stdint.h>\n__attribute__((sysv_abi)) int32_t sum_range(int32_t a,int32_t b){return a+b;}'
 RIGHT = '''#include <stdint.h>
-__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}
+static int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}
 __attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}'''
 
 def _call(tool, **kw):

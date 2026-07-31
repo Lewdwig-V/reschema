@@ -57,6 +57,9 @@ def build(out_root: Path = OUT_ROOT) -> list[dict]:
                         "-fno-pie",
                         "-no-pie",
                         "-g0",
+                        # Direct-jump emulation can't read the TLS canary (fs:0x28) —
+                        # a future seed with a local array would crash under the call driver.
+                        "-fno-stack-protector",
                         str(seed),
                         "-o",
                         str(binary),

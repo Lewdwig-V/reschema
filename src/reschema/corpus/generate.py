@@ -22,13 +22,13 @@ COMPILERS = ["gcc", "clang"]
 OPTS = ["-O0", "-O1", "-O2"]
 
 
-def _symtab(binary: Path) -> dict[str, int]:
+def _symtab(binary: Path) -> dict[str, tuple[int, int]]:
     with open(binary, "rb") as f:
         sym = ELFFile(f).get_section_by_name(".symtab")
         if not sym:
             return {}
         return {
-            s.name: int(s["st_value"])
+            s.name: (int(s["st_value"]), int(s["st_size"]))
             for s in sym.iter_symbols()
             if s["st_info"]["type"] == "STT_FUNC"
         }
@@ -63,7 +63,11 @@ def build(out_root: Path = OUT_ROOT) -> list[dict]:
                     ]
                     subprocess.run(cmd, check=True)
                     syms = _symtab(binary)
-                    funcs = {f: syms[f] for f in FUNCS[name] if f in syms}
+                    funcs = {
+                        f: {"addr": syms[f][0], "size": syms[f][1]}
+                        for f in FUNCS[name]
+                        if f in syms
+                    }
                     assert funcs, f"no functions captured for {slot}"
                     if strip and can_strip:
                         subprocess.run(["strip", "-s", str(binary)], check=True)

@@ -1011,7 +1011,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "capstone" },
-    { name = "mcp" },
+    { name = "mcp", specifier = ">=2,<3" },
     { name = "pyelftools" },
     { name = "qiling", specifier = "==1.4.6" },
 ]

@@ -21,6 +21,8 @@ from .validate.function import N_FUZZ, validate_function
 from .validate.program import CFLAGS, compile_model, hidden_input_stream, replay_against
 
 # plan said parents[1]; that lands at src/ — engine.py sits at src/reschema/, so root is parents[2]
+# ponytail: correct for src-layout dev runs; pip-installed this lands under
+# site-packages (upgrade: platformdirs/importlib.resources when packaging matters)
 ROOT = Path(__file__).resolve().parents[2]
 TASKS = ROOT / ".reschema" / "tasks"
 MANIFEST = ROOT / ".reschema" / "corpus" / "manifest.json"
@@ -169,7 +171,12 @@ def experiment_function(store: TaskStore, func: str, params: list[dict], case: d
     traces, no prefixes. buffer_i32 mem (list[int]) passes through untouched."""
     from .driver.calling import call_original
 
-    ps = [Param.from_json(p) for p in params]
+    try:
+        ps = [Param.from_json(p) for p in params]
+    except KeyError as e:
+        # Spec misuse, not a missing entity — normalize so the MCP taxonomy
+        # (KeyError = not_found) never 404s a malformed param decl.
+        raise ValueError(e.args[0]) from e
     t = call_original(store.meta["binary"], _fn_meta(store, func)["addr"], ps, case)
     t["mem"] = {
         k: (v.hex() if isinstance(v, (bytes, bytearray)) else v) for k, v in t["mem"].items()
@@ -220,6 +227,9 @@ def submit_function(
         existing[func] = c_source
     else:
         led["accepted"].append({func: c_source})
+    # Audit trail (parallel to "accepted" so compose's {func: source} shape is
+    # untouched): the EFFECTIVE fuzz seed (fresh entropy included) + final budget.
+    led.setdefault("audit", {})[func] = {"seed": v.seed, "n_fuzz": n_fuzz}
     store.save_ledger(led)
     return {"accepted": True}
 

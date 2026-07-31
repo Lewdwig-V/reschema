@@ -136,6 +136,30 @@ def test_submit_function_reaccept_newest_source_wins(store):
     assert store.ledger()["accepted"] == [{"sum_range": RIGHT2}]
 
 
+def test_submit_function_audit_records_seed_and_budget(store):
+    assert submit_function(store, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)["accepted"]
+    assert store.ledger()["audit"]["sum_range"] == {"seed": 1, "n_fuzz": 8}
+
+
+def test_submit_function_audit_newest_wins_and_entropy_seed(store, monkeypatch):
+    assert submit_function(store, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)["accepted"]
+    monkeypatch.setattr("reschema.validate.function.secrets.token_hex", lambda n: "ent" * 8)
+    assert submit_function(store, "sum_range", PARAMS, RIGHT2, seed=None, n_fuzz=8)["accepted"]
+    # re-accept replaces the seed too; fresh entropy is recorded, never None
+    assert store.ledger()["audit"]["sum_range"] == {"seed": "ent" * 8, "n_fuzz": 8}
+    ok, err = compose(store)  # extra ledger keys don't disturb stitching
+    assert ok, err
+
+
+def test_compose_tolerates_ledger_without_audit_key(store):
+    # Backward compat: a pre-audit ledger (accepted + counters only) still composes.
+    led = store.ledger()
+    led["accepted"].append({"sum_range": RIGHT})
+    store.save_ledger(led)
+    ok, err = compose(store)
+    assert ok, err
+
+
 def test_open_function_task_unknown_function_lists_available(store):
     with pytest.raises(KeyError) as exc_info:
         open_function_task(store, "no_such_fn")

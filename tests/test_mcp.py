@@ -61,6 +61,13 @@ def call(tool, **kw):
     return anyio.run(_acall, tool, kw)
 
 
+@pytest.fixture(autouse=True)
+def _small_fuzz_budget(monkeypatch):
+    # The tool floors n_fuzz at server.N_FUZZ (real: 64); pin it to the flow test's
+    # own budget so the suite doesn't pay 8x the qiling bill for the floor.
+    monkeypatch.setattr("reschema.mcp.server.N_FUZZ", 8)
+
+
 def test_tool_listing():
     async def go():
         async with InMemoryTransport(server) as (r, w), ClientSession(r, w) as s:
@@ -105,3 +112,54 @@ def test_unknown_task_returns_structured_error():
     assert "unknown task" in r["detail"] and "error" in r
     r2 = call("task_open", task_id="calc::gcc-O2-sym", function="nope")
     assert "unknown function" in r2["detail"] and "error" in r2
+
+
+def _spy_submit(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "reschema.mcp.server.submit_function",
+        lambda *a, **kw: seen.update(kw) or {"ok": True},
+    )
+    return seen
+
+
+def test_submit_model_floors_n_fuzz_at_boundary(monkeypatch):
+    # Agent cannot tune its own judge budget down: n_fuzz=1 goes in, the floored
+    # campaign size comes out at the engine call.
+    seen = _spy_submit(monkeypatch)
+    call("submit_model", task_id="calc::gcc-O2-sym", function="sum_range",
+         params=PARAMS, c_source=WRONG, seed=1, n_fuzz=1)
+    assert seen["n_fuzz"] == 8  # max(N_FUZZ=8, min(1, 4*8))
+    assert seen["seed"] == 1
+
+
+def test_submit_model_none_n_fuzz_stays_engine_default(monkeypatch):
+    seen = _spy_submit(monkeypatch)
+    call("submit_model", task_id="calc::gcc-O2-sym", function="sum_range",
+         params=PARAMS, c_source=WRONG, seed=1)
+    assert "n_fuzz" not in seen  # None → engine default, not a floored value
+
+
+def test_task_open_program_mode_surfaces_input_mode():
+    meta = call("task_open", task_id="rot13::gcc-O2-sym")
+    assert meta["input"] == "argv"  # rot13 not in STDIN_DRIVEN
+
+
+def test_experiment_bad_param_spec_returns_spec_error():
+    r = call("experiment", task_id="calc::gcc-O2-sym", function="sum_range",
+             params=[{"name": "x", "kind": "bogus"}], case={})
+    assert r["error"] == "spec" and r["error"] != "not_found" and "bogus" in r["detail"]
+    # missing 'kind' is spec misuse too — must not be mislabeled not_found
+    r2 = call("experiment", task_id="calc::gcc-O2-sym", function="sum_range",
+              params=[{"name": "x"}], case={})
+    assert r2["error"] == "spec"
+
+
+def test_status_corrupt_ledger_returns_internal_error():
+    st = TaskStore("calc::gcc-O2-sym")
+    st._path("ledger.json").write_text("{corrupt")
+    try:
+        r = call("status", task_id="calc::gcc-O2-sym")
+        assert r["error"] == "internal" and "JSONDecodeError" in r["detail"]
+    finally:
+        st._path("ledger.json").unlink(missing_ok=True)

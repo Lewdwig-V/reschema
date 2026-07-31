@@ -129,3 +129,11 @@ docs/superpowers/specs/  this spec
 ## 12. Explicit non-goals (v1)
 
 Packed/protected binaries, anti-emulation countermeasures, multi-arch beyond x86-64, symbolic equivalence engines, performance optimization, pretty CLI/TUI, multi-agent orchestration.
+
+## Descoped for v1
+
+- `task_open` calling-context metadata (signature guess, known callees) — agents derive it from the disasm slice.
+- ABI header template for model sources — `sysv_abi` attribute in the task docs suffices.
+- Program-mode input-space spec field — input space stays implicit in the hidden-stream generator.
+- `status` replay-%/coverage/readiness fields — v1 status reports recorded-case count + ledger only.
+- `corpus_build(seed_ids, matrix)` signature — v1 builds the full fixed seed set, no filtering.

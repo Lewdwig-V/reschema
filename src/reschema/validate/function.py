@@ -30,6 +30,7 @@ class FnVerdict:
     divergence: dict | None = None
     compared: int = 0
     skipped: int = 0
+    seed: int | str | None = None  # effective fuzz seed (entropy-drawn if unpinned)
 
 
 def validate_function(
@@ -112,4 +113,4 @@ def validate_function(
             },
             skipped=skipped,
         )
-    return FnVerdict(True, compared=compared, skipped=skipped)
+    return FnVerdict(True, compared=compared, skipped=skipped, seed=effective_seed)

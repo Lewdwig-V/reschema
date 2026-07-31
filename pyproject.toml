@@ -10,7 +10,7 @@ dependencies = [
     "qiling==1.4.6",
     "capstone",
     "pyelftools",
-    "mcp",
+    "mcp>=2,<3",
 ]
 
 [dependency-groups]

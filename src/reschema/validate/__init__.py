@@ -1,0 +1,1 @@
+"""Program-mode validation."""

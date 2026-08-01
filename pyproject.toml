@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reschema"
+version = "0.1.0"
+description = "Reasoning-with-verification harness for reverse engineering"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+dependencies = [
+    "qiling==1.4.6",
+    "capstone",
+    "pyelftools",
+    "mcp==2.0.*",  # tests import private mcp.client._memory; narrowed until that API settles
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/reschema"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

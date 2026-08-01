@@ -4,7 +4,7 @@ import pytest
 
 import reschema.engine as eng
 from reschema.corpus.generate import build
-from reschema.engine import TaskStore, submit_program
+from reschema.engine import STDIN_DRIVEN, TaskStore, submit_program
 from reschema.validate.program import gen_hidden_inputs
 
 GOOD = r"""
@@ -50,10 +50,105 @@ def store():
 @pytest.fixture(scope="module")
 def check_store():
     build()
-    st = TaskStore("check::gcc-O1-sym")  # stdin-driven; no other module owns a check dir
+    st = TaskStore(
+        "check::gcc-O1-sym"
+    )  # stdin-driven; no other module owns a check dir
     _wipe(st)
     st.record_case("a", [], b"hello\n")  # STORED case fed via stdin bytes
     return st
+
+
+# Equivalent model: reads stdin via getchar instead of fread — same observable
+# behavior (file bytes, stdout line, stdio chunking) through a different code path.
+GOOD_FW = r"""
+#include <stdio.h>
+#include <stdint.h>
+int main(void){
+ unsigned char buf[8192]; size_t n=0; int c;
+ while((c=getchar())!=EOF && n<sizeof buf) buf[n++]=(unsigned char)c;
+ uint32_t h=5381u;
+ for(size_t i=0;i<n;i++){ buf[i]=(unsigned char)(buf[i] ^ (unsigned char)((uint32_t)i*31u+7u)); h=h*33u+buf[i]; }
+ FILE*f=fopen("out.bin","wb"); if(!f){puts("open failed");return 2;}
+ fwrite(buf,1,n,f); fclose(f);
+ printf("%zu bytes -> out.bin djb2=%08x\n", n, h);
+ return 0;
+}
+"""
+
+# Claims the file on stdout but never creates it: must fail on the FILE channel
+# (io channels are clean), at the recorded stage.
+NOFILE_FW = r"""
+#include <stdio.h>
+#include <stdint.h>
+int main(void){
+ unsigned char buf[8192]; size_t n=0; int c;
+ while((c=getchar())!=EOF && n<sizeof buf) buf[n++]=(unsigned char)c;
+ uint32_t h=5381u;
+ for(size_t i=0;i<n;i++){ buf[i]=(unsigned char)(buf[i] ^ (unsigned char)((uint32_t)i*31u+7u)); h=h*33u+buf[i]; }
+ printf("%zu bytes -> out.bin djb2=%08x\n", n, h);
+ return 0;
+}
+"""
+
+# Memorizes the recorded case ("hello\n"): correct file+stdout ONLY for that input;
+# other inputs get correct stdout but WRONG file bytes — hidden must catch it.
+MEMO_FW = r"""
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+int main(void){
+ unsigned char buf[8192]; size_t n=0; int c;
+ while((c=getchar())!=EOF && n<sizeof buf) buf[n++]=(unsigned char)c;
+ if(n==6 && !memcmp(buf,"hello\n",6)){
+   /* pre-image of xform("hello\n"), like check's crackme pre-image */
+   static const unsigned char gt[6]={0x6f,0x43,0x29,0x08,0xec,0xa8};
+   uint32_t h=5381u; for(unsigned i=0;i<6;i++) h=h*33u+gt[i];
+   FILE*f=fopen("out.bin","wb"); fwrite(gt,1,6,f); fclose(f);
+   printf("6 bytes -> out.bin djb2=%08x\n", h);
+   return 0;
+ }
+ uint32_t h=5381u;
+ for(size_t i=0;i<n;i++){ buf[i]=(unsigned char)(buf[i] ^ (unsigned char)((uint32_t)i*31u+7u)); h=h*33u+buf[i]; }
+ static const unsigned char z[2]={'z','z'};
+ FILE*f=fopen("out.bin","wb"); fwrite(z,1,2,f); fclose(f);  /* wrong bytes */
+ printf("%zu bytes -> out.bin djb2=%08x\n", n, h);
+ return 0;
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def fw_store():
+    build()
+    st = TaskStore("filewrite::gcc-O1-sym")  # no other module owns a filewrite dir
+    _wipe(st)
+    st.record_case("a", [], b"hello\n")
+    return st
+
+
+def test_generalizing_file_model_passes_hidden(fw_store):
+    r = submit_program(fw_store, GOOD_FW)
+    assert r["accepted"], r
+
+
+def test_missing_file_model_fails_recorded(fw_store):
+    r = submit_program(fw_store, NOFILE_FW)
+    assert not r["accepted"]
+    assert r["stage"] == "recorded"
+    assert r["reason"] == "files-mismatch"  # io is clean; only the file channel differs
+    assert r["divergence"]["expected"] != {}
+    assert r["divergence"]["actual"] == {}
+
+
+def test_memorized_file_model_fails_hidden(fw_store):
+    r = submit_program(fw_store, MEMO_FW)
+    assert not r["accepted"]
+    assert r["stage"] == "hidden"  # recorded case replayed clean, hidden caught it
+    assert r["reason"] == "files-mismatch"
+    # hidden draws carry stdin, so the expected file is a non-empty transform —
+    # proving the hidden suite feeds real stdin, not empty draws.
+    assert r["divergence"]["expected"].get("out.bin") not in (None, "")
+    assert r["divergence"]["actual"]["out.bin"] == "7a7a"  # "zz"
 
 
 def test_generalizing_model_passes_hidden(store):
@@ -97,9 +192,17 @@ def test_hidden_seed_fresh_per_submission(store, monkeypatch):
 def test_hidden_inputs_deterministic():
     a = gen_hidden_inputs("rot13::gcc-O2-sym", seed="s1")
     assert a == gen_hidden_inputs("rot13::gcc-O2-sym", seed="s1")  # pinned by seed
-    assert a != gen_hidden_inputs("rot13::gcc-O2-sym", seed="s2")  # seed drives the draw
+    assert a != gen_hidden_inputs(
+        "rot13::gcc-O2-sym", seed="s2"
+    )  # seed drives the draw
 
 
 def test_hidden_inputs_stdin_mode():
     for argv, stdin in gen_hidden_inputs("check::gcc-O2-sym", modes=("stdin",)):
         assert argv == [] and stdin.endswith(b"\n")
+
+
+def test_filewrite_is_stdin_driven():
+    # Hidden draws must carry stdin (the seed ignores argv); otherwise both gate
+    # and model see empty input and the hidden suite proves nothing.
+    assert "filewrite" in STDIN_DRIVEN

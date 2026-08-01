@@ -114,9 +114,53 @@ def _trace(stdout_hex, exit_code, events):
         "stdout": stdout_hex,
         "stderr": "",
         "exit_code": exit_code,
-        "files_written": [],
+        "files_written": {},
         "events": events,
     }
+
+
+def test_files_written_compared_byte_exact(tmp_path, monkeypatch):
+    # Expected trace carries a file; candidate must produce identical path+bytes.
+    stored = canonicalize(
+        {**_trace("666f6f0a", 0, []), "files_written": {"out.bin": "c0ffee"}}
+    )
+    monkeypatch.setattr(
+        "reschema.validate.program.record",
+        lambda *a, **k: {
+            **_trace("666f6f0a", 0, []),
+            "files_written": {"out.bin": "c0ffee"},
+        },
+    )
+    v = replay_against(tmp_path / "m", [stored])
+    assert v.ok, v.divergence
+
+
+def test_files_mismatch_reasons(tmp_path, monkeypatch):
+    # Hardcoder reproduces stdout/exit but skips the file channel: reject
+    # files-mismatch, not io-mismatch (io channels are clean).
+    stored = canonicalize(
+        {**_trace("666f6f0a", 0, []), "files_written": {"out.bin": "c0ffee"}}
+    )
+    monkeypatch.setattr(
+        "reschema.validate.program.record",
+        lambda *a, **k: _trace("666f6f0a", 0, []),  # no file written
+    )
+    v = replay_against(tmp_path / "m", [stored])
+    assert not v.ok and v.reason == "files-mismatch"
+    assert v.divergence["argv"] == []
+    assert v.divergence["expected"] == {"out.bin": "c0ffee"}
+    assert v.divergence["actual"] == {}
+
+    # Same path, wrong bytes is also files-mismatch.
+    monkeypatch.setattr(
+        "reschema.validate.program.record",
+        lambda *a, **k: {
+            **_trace("666f6f0a", 0, []),
+            "files_written": {"out.bin": "deadbeef"},
+        },
+    )
+    v = replay_against(tmp_path / "m", [stored])
+    assert not v.ok and v.reason == "files-mismatch"
 
 
 def test_compile_infra_errors_rejected(tmp_path, monkeypatch):

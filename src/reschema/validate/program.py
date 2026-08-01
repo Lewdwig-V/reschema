@@ -99,6 +99,18 @@ def replay_against(model_bin: Path, traces: list[dict]) -> Verdict:
                 # Model crashed/timed out: surface the fault marker (where it died).
                 divergence["actual_fault"] = got["events"][-1]
             return Verdict(False, "io-mismatch", divergence)
+        if got["files_written"] != tr["files_written"]:
+            # File channel: path set + content hex compared byte-exact. Hex is
+            # authoritative (files may be binary) — no decoded previews here.
+            return Verdict(
+                False,
+                "files-mismatch",
+                {
+                    "argv": argv,
+                    "expected": tr["files_written"],
+                    "actual": got["files_written"],
+                },
+            )
         ge, te = _obs_events(got), _obs_events(tr)
         for i, (e, a) in enumerate(
             zip(te, ge)
@@ -123,9 +135,11 @@ def replay_against(model_bin: Path, traces: list[dict]) -> Verdict:
     return Verdict(True)
 
 
-_CHARSET = string.ascii_letters + string.digits + string.punctuation.replace(
-    '"', ""
-).replace("\\", "")
+_CHARSET = (
+    string.ascii_letters
+    + string.digits
+    + string.punctuation.replace('"', "").replace("\\", "")
+)
 
 
 def hidden_input_stream(

@@ -17,8 +17,8 @@ The harness is the judge. The agent never gets to grade its own homework:
   comparison against the agent's native `.so` rebuild), and per-TU composition
   of validated functions into a compiled program.
 
-Chef's kiss requirement: negative tests are first-class. Every gate ships with
-the attack it must repel (wrong-spec flattery, overfitting, event-splits, void
+Non-negotiable: negative tests are first-class. Every gate ships with the
+attack it must repel (wrong-spec flattery, overfitting, event-splits, void
 function differing only in register residue...).
 
 ## Corpus

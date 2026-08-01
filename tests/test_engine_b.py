@@ -130,6 +130,27 @@ def test_experiment_function_mem_hex_json_safe(manifest):
     json.dumps(t)
 
 
+def test_experiment_function_cstring_hex_input_decoded(manifest):
+    # JSON boundary rule: a cstring case value crossing MCP is a hex string (mirrors
+    # stdin_hex/stdout_hex); the engine decodes engine-side before the driver call.
+    st = TaskStore("rot13::gcc-O2-sym")
+    t = experiment_function(
+        st, "rot13", [{"name": "in_out", "kind": "cstring", "ret": "void"}], {"in_out": "68656c6c6f"}
+    )
+    assert t["exit_code"] == 0
+    assert t["mem"]["in_out"] == b"uryyb".hex()  # return side stays hex-encoded
+    json.dumps(t)
+
+
+def test_experiment_function_cstring_bad_input_is_spec_error(manifest):
+    st = TaskStore("rot13::gcc-O2-sym")
+    params = [{"name": "in_out", "kind": "cstring", "ret": "void"}]
+    with pytest.raises(ValueError, match="hex"):
+        experiment_function(st, "rot13", params, {"in_out": "zz"})
+    with pytest.raises(ValueError, match="hex|bytes"):
+        experiment_function(st, "rot13", params, {"in_out": 42})
+
+
 def test_submit_function_reaccept_newest_source_wins(store):
     assert submit_function(store, "sum_range", PARAMS, RIGHT, seed=1)["accepted"]
     assert submit_function(store, "sum_range", PARAMS, RIGHT2, seed=1)["accepted"]
@@ -149,6 +170,29 @@ def test_submit_function_audit_newest_wins_and_entropy_seed(store, monkeypatch):
     assert store.ledger()["audit"]["sum_range"] == {"seed": "ent" * 8, "n_fuzz": 8}
     ok, err = compose(store)  # extra ledger keys don't disturb stitching
     assert ok, err
+
+
+def test_submit_function_void_scalar_only_counts_rejection(store):
+    # ret:"void" with zero memory-channel params is a no-op pass vector: spec-stage
+    # reject from the validator must still hit the ledger like any other rejection.
+    params = [dict(PARAMS[0], ret="void"), PARAMS[1]]
+    r = submit_function(store, "sum_range", params, RIGHT, seed=1, n_fuzz=8)
+    assert r["accepted"] is False
+    assert r["divergence"]["stage"] == "spec"
+    led = store.ledger()
+    assert led["submissions"] == 1 and led["rejections"] == 1 and led["accepted"] == []
+
+
+def test_submit_function_link_failure_counts_rejection(store):
+    # -shared link tolerates the undefined extern; the engine must account the
+    # structured link-stage reject like any other failed validation.
+    src = ('#include <stdint.h>\nextern int32_t missing_dep(int32_t);\n'
+           '__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){return missing_dep(lo)+hi;}')
+    r = submit_function(store, "sum_range", PARAMS, src, seed=1, n_fuzz=8)
+    assert r["accepted"] is False
+    assert r["divergence"]["stage"] == "link"
+    led = store.ledger()
+    assert led["submissions"] == 1 and led["rejections"] == 1 and led["accepted"] == []
 
 
 def test_compose_tolerates_ledger_without_audit_key(store):

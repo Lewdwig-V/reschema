@@ -67,6 +67,12 @@ __attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){ re
 
 NOT_C = "this is not C"
 
+# Compiles under -shared (undefined externals are permitted) but can never load.
+LINK_BROKEN = r"""
+#include <stdint.h>
+extern int32_t missing_dep(int32_t);
+__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){ return missing_dep(lo)+hi; }"""
+
 SUM_PARAMS = [Param("lo", "i32", range=(-20, 10)), Param("hi", "i32", range=(10, 30))]
 CLAMP_PARAMS = [Param("v", "i32"), Param("lo", "i32"), Param("hi", "i32")]
 # 51*2 = 102 > 100: bad no-clamp scale diverges on the very first element.
@@ -78,6 +84,13 @@ SCALE_PARAMS = [
     Param("factor", "i32", range=(2, 5)),
 ]
 ROT13_PARAMS = [Param("in_out", "cstring", direction="in_out", ret="void")]
+# Same as SCALE_PARAMS but the buffer is declared pure-out: the driver must poison-fill
+# it from the rng stream so a no-op model can't match the original by sitting still.
+OUT_SCALE_PARAMS = [
+    Param("buf", "buffer_i32", direction="out", length_param="n", range=(51, 100), ret="void"),
+    Param("n", "i32", range=(3, 4)),
+    Param("factor", "i32", range=(2, 5)),
+]
 
 
 def _slot(manifest, seed, func):
@@ -147,6 +160,16 @@ def test_missing_symbol_rejected(manifest, tmp_path):
     assert v.divergence["stage"] == "symbol"
 
 
+def test_unresolved_extern_structured_link_reject(manifest, tmp_path):
+    """gcc -shared permits unresolved externals; the load must surface as a structured
+    "link" reject, not a raw OSError escaping to the MCP catch-all."""
+    binary, addr = _slot(manifest, "calc", "sum_range")
+    v = validate_function(binary, addr, "sum_range", SUM_PARAMS, LINK_BROKEN, tmp_path / "m.so", seed=1, n_fuzz=2)
+    assert not v.ok
+    assert v.divergence["stage"] == "link"
+    assert "missing_dep" in v.divergence["detail"]
+
+
 def test_all_original_faults_reject_skip_starvation(manifest, tmp_path):
     # Bogus function address: original faults on every fuzz case. Skipping all cases
     # must be a loud rejection, not a vacuous pass.
@@ -154,6 +177,16 @@ def test_all_original_faults_reject_skip_starvation(manifest, tmp_path):
     v = validate_function(binary, 0x111, "sum_range", SUM_PARAMS, MODEL, tmp_path / "m.so", seed=1, n_fuzz=4)
     assert not v.ok
     assert v.divergence["stage"] == "skip-starvation"
+
+
+def test_void_scalar_only_spec_rejected(manifest, tmp_path):
+    """ret:"void" + scalars-only params compares {} == {} — a no-op would pass.
+    The spec must be refused before a single fuzz case runs."""
+    binary, addr = _slot(manifest, "calc", "sum_range")
+    params = [Param("lo", "i32", range=(-20, 10), ret="void"), Param("hi", "i32", range=(10, 30))]
+    v = validate_function(binary, addr, "sum_range", params, MODEL, tmp_path / "m.so", seed=1, n_fuzz=2)
+    assert not v.ok
+    assert v.divergence["stage"] == "spec"
 
 
 def test_param_ret_json_roundtrip():
@@ -176,6 +209,23 @@ def test_true_rot13_cstring_void_accepted(manifest, tmp_path):
     v = validate_function(binary, addr, "rot13", ROT13_PARAMS, GOOD_ROT13_STR, tmp_path / "m.so", seed=6, n_fuzz=16)
     assert v.ok, v.divergence
     assert v.compared == 16 and v.skipped == 0
+
+
+def test_out_buffer_noop_model_rejected_on_poison(manifest, tmp_path):
+    """A pure-out buffer must arrive poison-filled: the original overwrites it, a no-op
+    model leaves the poison → mem mismatch. Red before the fill: both sides were zeroed."""
+    binary, addr = _slot(manifest, "calc", "scale_buf")
+    v = validate_function(binary, addr, "scale_buf", OUT_SCALE_PARAMS, NOOP_SCALE, tmp_path / "m.so", seed=1, n_fuzz=8)
+    assert not v.ok
+    assert v.divergence["field"] == "mem"
+
+
+def test_out_buffer_correct_model_accepted(manifest, tmp_path):
+    """Poison must not break a genuine out-function: it overwrites every cell."""
+    binary, addr = _slot(manifest, "calc", "scale_buf")
+    v = validate_function(binary, addr, "scale_buf", OUT_SCALE_PARAMS, GOOD_SCALE, tmp_path / "m.so", seed=5, n_fuzz=8)
+    assert v.ok, v.divergence
+    assert v.compared == 8 and v.skipped == 0
 
 
 def test_buffer_declared_in_noop_model_rejected(manifest, tmp_path):

@@ -48,6 +48,19 @@ def validate_function(
             False,
             {"stage": "arity", "detail": f"{len(params)} params exceed {len(BAREGS)} register-passed args"},
         )
+    if params and params[0].ret == "void" and not any(
+        p.kind in ("buffer_i32", "cstring") for p in params
+    ):
+        # Exploit floor: a scalar-only void compares {} == {} — a no-op would pass.
+        # Readback is direction-agnostic, so ANY buffer/cstring param counts as a channel.
+        return FnVerdict(
+            False,
+            {
+                "stage": "spec",
+                "detail": 'ret "void" requires >=1 memory-channel param (buffer_i32/cstring); '
+                "scalar-only compares nothing",
+            },
+        )
     tmp = so_path.with_suffix(".c")
     tmp.write_text(c_source)
     try:
@@ -67,7 +80,13 @@ def validate_function(
     # blow up as a bare AttributeError later (same ponytail leak as call_model_native).
     fd, so_tmp = tempfile.mkstemp(suffix=".so")
     os.close(fd)
-    lib = ctypes.CDLL(shutil.copyfile(str(so_path), so_tmp))
+    try:
+        # RTLD_NOW: gcc -shared permits unresolved externals; eager binding surfaces them
+        # at load as a catchable OSError (lazy binding can abort the process at first call).
+        lib = ctypes.CDLL(shutil.copyfile(str(so_path), so_tmp), mode=os.RTLD_NOW)
+    except OSError as e:
+        os.unlink(so_tmp)
+        return FnVerdict(False, {"stage": "link", "detail": f"{type(e).__name__}: {e}"})
     os.unlink(so_tmp)
     if not hasattr(lib, func):
         return FnVerdict(False, {"stage": "symbol", "detail": f"'{func}' not defined by submission"})

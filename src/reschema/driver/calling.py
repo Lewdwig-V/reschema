@@ -52,10 +52,10 @@ def gen_inputs(params: list[Param], rng: random.Random, n: int) -> list[dict]:
                 case[p.name] = bytes(rng.randint(97, 122) for _ in range(ln)) + b"\0"
             elif p.kind == "buffer_i32":
                 ln = case.get(p.length_param, rng.randint(1, 8))
-                if p.direction != "out":
-                    case[p.name] = [rng.randint(lo, hi) for _ in range(ln)]
-                else:
-                    case[p.name] = ln  # out buffer: length marker, allocated zeroed
+                # out buffers are poison-filled too: a genuine out-function overwrites
+                # every cell; a no-op leaves the poison → mem mismatch. Zeroed fill was
+                # how a no-op validated against a zero-preserving original.
+                case[p.name] = [rng.randint(lo, hi) for _ in range(ln)]
         cases.append(case)
     return cases
 

@@ -168,7 +168,10 @@ def experiment_function(store: TaskStore, func: str, params: list[dict], case: d
 
     JSON contract: cstring `mem` values come back from the driver as raw bytes and
     are hexified here — same plain-hex convention as stdin_hex/stdout_hex on program
-    traces, no prefixes. buffer_i32 mem (list[int]) passes through untouched."""
+    traces, no prefixes. buffer_i32 mem (list[int]) passes through untouched.
+    INPUT side mirrors this: a cstring case value crossing the JSON boundary is a
+    hex string, decoded with bytes.fromhex before the driver call; bytes pass through
+    unchanged for internal callers (driver tests call this with bytes directly)."""
     from .driver.calling import call_original
 
     try:
@@ -177,6 +180,20 @@ def experiment_function(store: TaskStore, func: str, params: list[dict], case: d
         # Spec misuse, not a missing entity — normalize so the MCP taxonomy
         # (KeyError = not_found) never 404s a malformed param decl.
         raise ValueError(e.args[0]) from e
+    for p in ps:
+        if p.kind != "cstring" or p.name not in case:
+            continue
+        v = case[p.name]
+        if isinstance(v, str):
+            try:
+                case[p.name] = bytes.fromhex(v)
+            except ValueError as e:
+                raise ValueError(f"cstring case value for {p.name!r} must be hex: {e}") from e
+        elif not isinstance(v, (bytes, bytearray)):
+            raise ValueError(  # noqa: TRY004 — MCP taxonomy maps ValueError → "spec"
+                f"cstring case value for {p.name!r} must be a hex str or bytes, "
+                f"got {type(v).__name__}"
+            )
     t = call_original(store.meta["binary"], _fn_meta(store, func)["addr"], ps, case)
     t["mem"] = {
         k: (v.hex() if isinstance(v, (bytes, bytearray)) else v) for k, v in t["mem"].items()
@@ -192,8 +209,9 @@ def submit_function(
     seed: int | None = None,
     n_fuzz: int = N_FUZZ,
 ) -> dict:
-    # ret:"void" is agent-supplied and unverifiable from the spec: a mis-declared void
-    # with read-only mem can validate a no-op — same trust class as declared directions.
+    # ret:"void" is agent-supplied and unverifiable from the spec: the validator floors it
+    # at >=1 memory-channel param (scalar-only void compares {}=={}, a no-op would pass).
+    # Beyond the floor it's the same trust class as declared directions.
     led = store.ledger()
     try:
         ps = [Param.from_json(p) for p in params]

@@ -145,6 +145,23 @@ def test_task_open_program_mode_surfaces_input_mode():
     assert meta["input"] == "argv"  # rot13 not in STDIN_DRIVEN
 
 
+def test_experiment_cstring_hex_value_roundtrip():
+    # Over MCP a cstring case value is a hex string (bytes can't cross JSON): decoded
+    # engine-side, mem comes back hex — json-safe end to end.
+    r = call("experiment", task_id="rot13::gcc-O2-sym", function="rot13",
+             params=[{"name": "in_out", "kind": "cstring", "ret": "void"}],
+             case={"in_out": "68656c6c6f"})
+    assert r["exit_code"] == 0
+    assert bytes.fromhex(r["mem"]["in_out"]) == b"uryyb"
+
+
+def test_experiment_cstring_bad_hex_returns_spec_error():
+    r = call("experiment", task_id="rot13::gcc-O2-sym", function="rot13",
+             params=[{"name": "in_out", "kind": "cstring", "ret": "void"}],
+             case={"in_out": "zz"})
+    assert r["error"] == "spec"
+
+
 def test_experiment_bad_param_spec_returns_spec_error():
     r = call("experiment", task_id="calc::gcc-O2-sym", function="sum_range",
              params=[{"name": "x", "kind": "bogus"}], case={})

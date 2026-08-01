@@ -41,7 +41,7 @@ def _internal(e: Exception) -> dict:
 
 
 @server.tool()
-def corpus_build() -> list[str]:
+def corpus_build() -> list[str] | dict:
     """Build the synthetic corpus; return task IDs."""
     from ..corpus.generate import build
 

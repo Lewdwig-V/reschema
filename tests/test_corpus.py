@@ -33,9 +33,9 @@ def test_corpus_builds_with_addresses(manifest):
             r"[a-z0-9]+::(gcc|clang)-O[0-2]-(sym|stripped)", x["task_id"]
         ), x["task_id"]
     rot = _gcc_slot(m, "rot13", "-O2", False)
-    assert rot["functions"]["rot13"] != 0
+    assert rot["functions"]["rot13"]["addr"] != 0
     stripped = _gcc_slot(m, "rot13", "-O2", True)
-    assert stripped["functions"]["rot13"] != 0  # address captured pre-strip
+    assert stripped["functions"]["rot13"]["addr"] != 0  # address captured pre-strip
 
 
 def test_stripped_has_no_symtab(manifest):

@@ -85,3 +85,75 @@ def test_full_build_prunes_stale_slots_but_targeted_preserves_them():
     # full rebuild regenerates from the current plan (stale slot pruned)
     build()
     assert not any(x["seed"] == "ghost" for x in json.loads(mf.read_text()))
+
+
+def test_strip_runs_in_the_toolchain_image_and_never_on_host(monkeypatch, tmp_path):
+    import reschema.corpus.generate as gen
+
+    calls = []
+
+    def fake_worker(job, workdir, timeout=None):
+        calls.append(job)
+        if job["mode"] == "compile":
+            for j in job["jobs"]:
+                (workdir / j["out"]).write_bytes(b"")
+            return {
+                "results": [
+                    {"out": j["out"], "rc": 0, "stderr": ""} for j in job["jobs"]
+                ]
+            }
+        if job["mode"] == "strip":
+            return {
+                "results": [{"file": f, "rc": 0, "stderr": ""} for f in job["files"]]
+            }
+        raise AssertionError(job)
+
+    monkeypatch.setattr(gen.podrun, "run_worker", fake_worker)
+    monkeypatch.setattr(
+        gen,
+        "_symtab",
+        lambda _p: {n: (0x1000, 8) for fns in gen.FUNCS.values() for n in fns},
+    )
+    out = gen.build(tmp_path)
+    assert len(out) == 48
+    modes = [c["mode"] for c in calls]
+    assert modes == ["compile", "strip"]
+    strip_job = calls[1]
+    assert len(strip_job["files"]) == 24  # all stripped variants, one pod round
+
+
+def test_no_host_subprocess_for_strip(monkeypatch, tmp_path):
+    import subprocess as sp
+
+    import reschema.corpus.generate as gen
+
+    seen: list[list[str]] = []
+
+    def fake_worker(job, workdir, timeout=None):
+        if job["mode"] == "compile":
+            for j in job["jobs"]:
+                (workdir / j["out"]).write_bytes(b"")
+            return {
+                "results": [
+                    {"out": j["out"], "rc": 0, "stderr": ""} for j in job["jobs"]
+                ]
+            }
+        return {
+            "results": [
+                {"file": f, "rc": 0, "stderr": ""} for f in job.get("files", [])
+            ]
+        }
+
+    monkeypatch.setattr(gen.podrun, "run_worker", fake_worker)
+    monkeypatch.setattr(
+        gen,
+        "_symtab",
+        lambda _p: {n: (0x1000, 8) for fns in gen.FUNCS.values() for n in fns},
+    )
+    monkeypatch.setattr(
+        sp,
+        "run",
+        lambda *a, **k: seen.append(list(a[0])) or sp.CompletedProcess(a[0], 0),
+    )
+    gen.build(tmp_path)
+    assert not any("strip" in cmd for cmd in seen)

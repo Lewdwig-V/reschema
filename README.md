@@ -115,7 +115,7 @@ src/reschema/
   mcp/server.py        # thin 1:1 tool wrapper over the engine
 ```
 
-Design doc: `docs/superpowers/specs/2026-07-29-reschema-design.md` (includes a
-"Descoped for v1" section). Implementation plan: `docs/superpowers/plans/`.
+Architecture reference: `ARCHITECTURE.md` (canonical current-state
+description, including the v1 scope guardrails).
 
 MIT licensed. Contributions welcome — keep the gates strict.

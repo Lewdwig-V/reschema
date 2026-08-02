@@ -12,8 +12,6 @@ byte-identical to its full-build counterpart.
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
 from pathlib import Path
 
 from elftools.elf.elffile import ELFFile
@@ -107,10 +105,8 @@ def build(
             f"corpus compile failed for {bad[0]['out']}: {bad[0]['stderr']}"
         )
 
-    can_strip = shutil.which("strip") is not None
-    if not can_strip:
-        print("note: binutils `strip` not found, leaving binaries unstripped")
     built = []
+    to_strip: list[str] = []
     for name, cc, opt, strip, binary in plan:
         slot = f"{name}/{cc}-{opt.lstrip('-')}-{'stripped' if strip else 'sym'}"
         syms = _symtab(binary)
@@ -120,8 +116,8 @@ def build(
             if f in syms
         }
         assert funcs, f"no functions captured for {slot}"
-        if strip and can_strip:
-            subprocess.run(["strip", "-s", str(binary)], check=True)
+        if strip:
+            to_strip.append(str(binary.relative_to(out_root)))
         built.append(
             {
                 "seed": name,
@@ -133,6 +129,19 @@ def build(
                 "functions": funcs,
             }
         )
+    # Stripping (binutils) happens inside the pinned image with everything else
+    # binary — the ambient host toolchain is never in the corpus artifact path.
+    if to_strip:
+        r = podrun.run_worker(
+            {"mode": "strip", "files": to_strip}, out_root, timeout=300
+        )
+        if "stage" in r:
+            raise RuntimeError(f"corpus strip container failed: {r['detail']}")
+        bad = [j for j in r["results"] if j["rc"] != 0]
+        if bad:
+            raise RuntimeError(
+                f"corpus strip failed for {bad[0]['file']}: {bad[0]['stderr']}"
+            )
     mf_path = out_root / "manifest.json"
     # Unfiltered builds regenerate the manifest from the current plan (stale
     # slots are pruned); targeted builds merge — anything outside the filter

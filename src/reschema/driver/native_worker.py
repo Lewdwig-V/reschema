@@ -170,6 +170,22 @@ def _compile_jobs(job: dict) -> dict:
     return {"results": results}
 
 
+def _strip(job: dict) -> dict:
+    """strip -s for the given /work-relative files. Binutils is image-pinned, so
+    stripping is always available here (unlike the ambient host toolchain)."""
+    out = []
+    for f in job["files"]:
+        r = subprocess.run(
+            ["strip", "-s", f"/work/{f}"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        out.append({"file": f, "rc": r.returncode, "stderr": r.stderr})
+    return {"results": out}
+
+
 def _compile_link(job: dict) -> dict:
     for name in job["objects"]:
         p = f"/work/{name}"
@@ -225,6 +241,8 @@ def main():
         out = _compile_link(job)
     elif job["mode"] == "compile":
         out = _compile_jobs(job)
+    elif job["mode"] == "strip":
+        out = _strip(job)
     else:
         out = {"stage": "internal", "detail": f"unknown mode {job['mode']!r}"}
     json.dump(out, sys.stdout)

@@ -1,5 +1,5 @@
 """Invoke a function: original in qiling. (Model execution lives in the level-B
-podman worker — see validate/function.py and spec 2026-08-02-level-b-containment.)
+podman worker — see validate/function.py.)
 
 Traps (qiling 1.4.6):
 - SENTINEL is a mapped return-address trap: write it at [rsp], run until RIP == SENTINEL.

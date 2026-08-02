@@ -23,7 +23,9 @@ class Param:
             if k not in d:
                 raise KeyError(f"param spec missing key {k!r}: {d!r}")
         if d["kind"] not in KINDS:
-            raise ValueError(f"unknown param kind {d['kind']!r} in {d!r}; valid: {KINDS}")
+            raise ValueError(
+                f"unknown param kind {d['kind']!r} in {d!r}; valid: {KINDS}"
+            )
         r = d.get("range", [-100, 100])
         return cls(
             d["name"],
@@ -33,3 +35,14 @@ class Param:
             (r[0], r[1]),
             d.get("ret", "i32"),
         )
+
+    def to_json(self) -> dict:
+        # Wire shape for the level-B worker (mirrors from_json; no defaults elided).
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "direction": self.direction,
+            "length_param": self.length_param,
+            "range": list(self.range),
+            "ret": self.ret,
+        }

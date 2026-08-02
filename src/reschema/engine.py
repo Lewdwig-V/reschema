@@ -11,14 +11,14 @@ import os
 import random
 import re
 import secrets
-import subprocess
 from pathlib import Path
 
+from .driver import podrun
 from .driver.spec import Param
 from .exec.canonical import canonicalize
 from .exec.recorder import record
 from .validate.function import N_FUZZ, validate_function
-from .validate.program import CFLAGS, compile_model, hidden_input_stream, replay_against
+from .validate.program import compile_model, hidden_input_stream, replay_against
 
 # plan said parents[1]; that lands at src/ — engine.py sits at src/reschema/, so root is parents[2]
 # ponytail: correct for src-layout dev runs; pip-installed this lands under
@@ -266,15 +266,10 @@ def submit_function(
     return {"accepted": True}
 
 
-def _cc(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [*CFLAGS, *args], capture_output=True, text=True, timeout=60, check=False
-    )
-
-
 def compose(store: TaskStore) -> tuple[bool, str]:
     """Compile each accepted source as its OWN translation unit, then link with a
-    generated main stub into one program.
+    generated main stub into one program — inside the level-B podman worker
+    (agent sources never touch the host toolchain).
 
     Per-TU, not text-concat: each source was validated standalone (sum_range's accepted
     model embeds clamp_i32 while clamp_i32 itself is accepted → one TU redefines it).
@@ -287,23 +282,32 @@ def compose(store: TaskStore) -> tuple[bool, str]:
     entries = [next(iter(f.items())) for f in led["accepted"] if isinstance(f, dict)]
     if not entries:
         return False, "#error nothing accepted"
-    stub_src = "int main(void){return 0;}\n"
-    (store.dir / "composed_main.c").write_text(stub_src)
-    objs = []
-    for name, src in [*entries, ("composed_main", stub_src)]:
-        c, o = store.dir / f"{name}.compose.c", store.dir / f"{name}.compose.o"
-        c.write_text(src)
-        p = _cc(["-c", str(c), "-o", str(o)])
-        if p.returncode != 0:
-            return False, p.stderr
-        objs.append(str(o))
-    p = _cc([*objs, "-o", str(store.dir / "composed")])
-    if p.returncode != 0:
-        syms = sorted(set(re.findall(r"multiple definition of [‘'`](\w+)", p.stderr)))
+    sources = {
+        f"{name}.compose": src
+        for name, src in [*entries, ("composed_main", "int main(void){return 0;}\n")]
+    }
+    try:
+        r = podrun.run_worker(
+            {
+                "mode": "compile-link",
+                "sources": sources,
+                "objects": [*sources],
+                "out": "composed",
+            },
+            store.dir,
+        )
+    except RuntimeError as e:
+        return False, f"infra: {e}"
+    if "stage" in r:
+        return False, f"infra: {r['detail']}"
+    if not r["ok"]:
+        syms = sorted(
+            set(re.findall(r"multiple definition of [‘'`](\w+)", r["stderr"]))
+        )
         if syms:
             names = ", ".join(f"'{s}'" for s in syms)
             return False, (
                 f"duplicate symbol {names} across accepted sources: "
-                f"declare single-function helpers static\n{p.stderr}"
+                f"declare single-function helpers static\n{r['stderr']}"
             )
-    return p.returncode == 0, p.stderr
+    return r["ok"], r["stderr"]

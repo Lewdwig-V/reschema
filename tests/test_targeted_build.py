@@ -61,3 +61,27 @@ def test_full_build_default_unchanged():
     shutil.rmtree(OUT_ROOT)
     m = build()
     assert len(m) == 48
+
+
+def test_full_build_prunes_stale_slots_but_targeted_preserves_them():
+    build()  # full: manifest from scratch
+    mf = OUT_ROOT / "manifest.json"
+    ghost = {
+        "task_id": "ghost::gcc-O2-sym",
+        "seed": "ghost",
+        "compiler": "gcc",
+        "opt": "-O2",
+        "stripped": False,
+        "binary": "/nope/prog",
+        "functions": {},
+    }
+    with_ghost = json.loads(mf.read_text()) + [ghost]
+    mf.write_text(json.dumps(with_ghost))
+
+    # targeted merges: a plight outside the filter scope must survive untouched
+    build(seed_ids=["rot13"])
+    assert any(x["seed"] == "ghost" for x in json.loads(mf.read_text()))
+
+    # full rebuild regenerates from the current plan (stale slot pruned)
+    build()
+    assert not any(x["seed"] == "ghost" for x in json.loads(mf.read_text()))

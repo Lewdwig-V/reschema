@@ -134,9 +134,13 @@ def build(
             }
         )
     mf_path = out_root / "manifest.json"
+    # Unfiltered builds regenerate the manifest from the current plan (stale
+    # slots are pruned); targeted builds merge — anything outside the filter
+    # scope is preserved untouched (self-play seeds, other branches' work).
+    merge = seed_ids is not None or matrix is not None
     manifest = (
         {x["task_id"]: x for x in json.loads(mf_path.read_text())}
-        if mf_path.exists()
+        if merge and mf_path.exists()
         else {}
     )
     for x in built:

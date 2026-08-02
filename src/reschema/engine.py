@@ -170,14 +170,22 @@ def _fn_meta(store: TaskStore, func: str) -> dict:
 
 
 def open_function_task(store: TaskStore, func: str) -> dict:
+    from .disasm.analyze import analyze_function
     from .disasm.slice import disasm_function
 
     f = _fn_meta(store, func)
+    facts = analyze_function(store.meta["binary"], store.meta["functions"])[func]
     return {
         "task_id": store.meta["task_id"],
         "function": func,
         "address": hex(f["addr"]),
         "disasm": disasm_function(store.meta["binary"], f["addr"], f["size"]),
+        "signature_guess": {
+            "arity_guess": facts["arity_guess"],
+            "returns_hint": facts["returns_hint"],
+            "labeled": facts["labeled"],
+        },
+        "callees": facts["callees"],
     }
 
 

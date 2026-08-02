@@ -60,6 +60,18 @@ def test_open_function_task_returns_disasm_slice(store):
     assert t["disasm"].startswith("0x") and "ret" in t["disasm"]
 
 
+def test_open_function_task_carries_signature_guess_and_callees(store):
+    t = open_function_task(store, "sum_range")
+    assert t["signature_guess"]["arity_guess"] == 2
+    assert t["signature_guess"]["returns_hint"] is True
+    assert "heuristic" in t["signature_guess"]["labeled"]
+    assert [c["name"] for c in t["callees"]] == ["clamp_i32"]
+    assert t["callees"][0]["address"].startswith("0x")
+
+    t = open_function_task(store, "scale_buf")
+    assert t["signature_guess"]["returns_hint"] is False  # void seed
+
+
 def test_experiment_function_forwards_whole_trace(store):
     t = experiment_function(store, "sum_range", PARAMS, {"lo": -5, "hi": 30})
     assert t["exit_code"] == 0

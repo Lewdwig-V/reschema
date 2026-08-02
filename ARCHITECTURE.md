@@ -118,10 +118,14 @@ seeds; `STDIN_DRIVEN`/`STDIN_BYTES_DRIVEN` select modes per seed.
 ## corpus/generate.py — 48-slot seed matrix
 Four seeds (`rot13`, `check`, `calc`, `filewrite`) × gcc/clang × O0/O1/O2 ×
 sym/stripped = 48 slots. All compiles run via worker `compile` jobs inside the
-image; the manifest (`task_id`, binary, `functions` addresses pre-strip,
-seed/compiler/opt/stripped) merges targeted builds in canonical full-build
-order; unfiltered builds regenerate the manifest from the current plan (stale
-slots pruned), targeted builds merge, preserving out-of-scope entries.
+image, and stripped variants are finalized with `strip -s` executed in the
+same image (binutils is image-pinned; no host binary tools are invoked in the
+corpus artifact path — host-side symtab reads happen before stripping, so
+manifest addresses are captured pre-strip). The manifest (`task_id`, binary,
+`functions` addresses pre-strip, seed/compiler/opt/stripped) merges targeted
+builds in canonical full-build order; unfiltered builds regenerate the
+manifest from the current plan (stale slots pruned), targeted builds merge,
+preserving out-of-scope entries.
 
 ## disasm/ — task_open facts
 `analyze.function_insns` is the single loader (elftools + capstone detail).
@@ -159,6 +163,9 @@ labeled a guess in payload.
    sources/audit/journal are cumulative state by design; composition
    re-compiles accepted sources per-TU rather than trusting earlier
    artifacts.
+8. **No ambient host binaries anywhere in the corpus path** — compilation
+   and stripping of corpus binaries happen inside the toolchain image; a
+   binutils-less host cannot produce degraded corpora.
 
 # Critical Constraints & Deviations
 
@@ -175,7 +182,8 @@ Where the delivered code intentionally departs from the original specs/plans:
 - **Host gcc removed everywhere** — original flow compiled models on the
   host for both levels; delivered code compiles only inside the toolchain
   image (also resolving the dirfd-ABI flakiness across host/CI glibc
-  versions).
+  versions). A later host `strip` residue in corpus builds was likewise moved
+  into the image — no host binary tools remain in the corpus artifact path.
 - **Corpus shape** — planned 36 slots (3 seeds); shipped 48 with a
   `filewrite` seed, a `files_written` gate, and a `stdin-bytes` hidden domain
   for it. `corpus_build(seed_ids, matrix)` targeting exists with merge and

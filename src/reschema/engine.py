@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .driver import podrun
 from .driver.spec import Param
-from .exec.canonical import canonicalize
+from .exec.canonical import CANONICALIZER_VERSION, canonicalize
 from .exec.recorder import record
 from .validate.function import N_FUZZ, validate_function
 from .validate.program import compile_model, hidden_input_stream, replay_against
@@ -31,6 +31,14 @@ HIDDEN_N = 8  # distinct usable hidden inputs each submission must survive
 
 
 def load_manifest() -> list[dict]:
+    sidecar = MANIFEST.parent / "canonicalizer_version"
+    stamped = sidecar.read_text() if sidecar.exists() else "(missing)"
+    if stamped != CANONICALIZER_VERSION:
+        raise RuntimeError(
+            f"corpus recorded under canonicalizer {stamped}, current {CANONICALIZER_VERSION}; "
+            f"a rules change means a corpus re-record: run `python -m reschema.corpus.generate` "
+            f"and re-record affected task traces (stale .reschema state)"
+        )
     return json.loads(MANIFEST.read_text())
 
 

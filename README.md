@@ -42,31 +42,34 @@ gcc/clang × O0/O1/O2 × sym/stripped = 48 build slots, recorded via a manifest
 
 ## Trust model
 
-This is adversarial-by-design tooling: the engine compiles agent-authored C
-(`gcc`) and then **executes it**. Execution is contained differently per level:
+This is adversarial-by-design tooling: agent-authored C must be compiled and
+executed *somewhere* — never on the unprotected host. Containment per level:
 
-- **Level A (qiling)**: every record runs against a fresh, **empty rootfs**
-  holding only a copy of the binary. Qiling emulates syscalls in userspace, so
-  any host-mutating file op the guest issues (open/unlink/rename/mkdir/...)
-  resolves inside that scratch dir and is discarded with it. Guest file writes
-  cannot touch the host fs by construction (`files_written` is scraped from the
-  record rootfs — capture and containment are the same mechanism). Static ELF
-  guests need nothing else from a rootfs.
+- **Level A (qiling replay)**: every record runs against a fresh, **empty
+  rootfs** holding only a copy of the binary. Qiling emulates syscalls in
+  userspace, so any host-mutating file op a guest issues (open/unlink/rename/
+  mkdir/...) resolves inside that scratch dir, discarded after the run.
+  (`files_written` is scraped from the same rootfs — capture and containment
+  are one mechanism.)
 - **Level B (differential function fuzzing)**: agent C compiles and executes
   ONLY inside a one-shot rootless **podman** container (`--network none`,
   `--read-only`, 1g memory, 128 pids, fork-per-case). Model segfaults/hangs
   become structured rejects, not harness death.
 
-**Toolchain is pinned, not ambient:** one image
+**Toolchain is pinned, not ambient:** ONE image
 (`localhost/reschema-toolchain:1`, debian trixie + gcc + clang) builds the
-*entire* corpus (gcc+clang × opt matrix) and **every** model compile for both
-levels. Host `gcc`/`clang`/glibc versions are irrelevant — guest binaries carry
-identical toolchain/libc encodings on every machine (this is what keeps qiling
-behavior deterministic). Mandatory, no fallback: a missing image hard-fails
-with the build command (`podman build -t localhost/reschema-toolchain:1 -f Containerfile .`).
+entire corpus (gcc+clang × opt matrix) and every model compile for both levels,
+so guest binaries carry identical toolchain/libc encodings on every machine and
+host `gcc` is never in the picture. Podman is therefore a **hard dependency for
+any build/validate/test flow**, not just level B — a missing image or podman
+binary is an actionable structured refusal, never a silent fallback
+(`podman build -t localhost/reschema-toolchain:1 -f Containerfile .`).
 
-Residuals that are *not* contained: CPU within the emulation timeout, and image
-supply-chain (pin your base image digest if that matters to you).
+What still runs on the host: python orchestration (engine, ledger,
+canonicalization) and the qiling/unicorn emulator itself — contained by the
+scratch rootfs and the per-record timeout, but ultimately trusted third-party
+code like any other dependency. Also not contained: image supply chain (pin
+your base-image digest if that matters to you).
 
 ## How to use
 

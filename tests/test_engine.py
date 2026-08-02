@@ -2,6 +2,7 @@ import pytest
 
 from reschema.corpus.generate import build
 from reschema.engine import TaskStore
+from reschema.exec.canonical import CANONICALIZER_VERSION
 
 
 @pytest.fixture(scope="module")
@@ -44,3 +45,21 @@ def test_ledger_roundtrip(manifest):
 def test_unknown_task_id_raises_clean_keyerror(manifest):
     with pytest.raises(KeyError, match="unknown task_id: nope::x"):
         TaskStore("nope::x")
+
+
+def test_load_manifest_rejects_stale_canonicalizer_version(manifest):
+    from reschema.engine import ROOT, load_manifest
+
+    sidecar = ROOT / ".reschema" / "corpus" / "canonicalizer_version"
+    assert (
+        sidecar.read_text() == CANONICALIZER_VERSION
+    )  # build() stamps the current rules
+    sidecar.write_text("1.0")
+    try:
+        with pytest.raises(
+            RuntimeError,
+            match=f"canonicalizer 1.0.*current {CANONICALIZER_VERSION}.*re-record",
+        ):
+            load_manifest()
+    finally:
+        sidecar.write_text(CANONICALIZER_VERSION)

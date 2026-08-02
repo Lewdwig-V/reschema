@@ -139,7 +139,11 @@ def _validate(job: dict) -> dict:
                 }
             }
         )
-    results = [_run_case(workdir + ".so", job["fname"], params, case) for case in cases]
+    results = []
+    for case in cases:
+        results.append(_run_case(workdir + ".so", job["fname"], params, case))
+        if "crash" in results[-1]:
+            break  # validator rejects on the first crash; later cases are moot
     return {"ok": True, "results": results}
 
 

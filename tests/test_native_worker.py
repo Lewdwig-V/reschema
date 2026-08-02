@@ -98,11 +98,9 @@ def test_model_segfault_is_per_case_result_not_worker_death(tmp_path):
         },
         tmp_path,
     )
-    # the worker survives; BOTH cases report the crash at their index
-    assert r == {
-        "ok": True,
-        "results": [{"crash": {"signal": 11}}, {"crash": {"signal": 11}}],
-    }
+    # the worker survives and reports the crash structured at its index, then
+    # stops (validator rejects on the first crash; sibling cases are moot)
+    assert r == {"ok": True, "results": [{"crash": {"signal": 11}}]}
 
 
 def test_model_hang_is_timeout_result(tmp_path):
@@ -112,10 +110,12 @@ def test_model_hang_is_timeout_result(tmp_path):
             "c_source": "__attribute__((sysv_abi)) int sum_range(int lo, int hi) { for (;;) {} }",
             "fname": "sum_range",
             "params": SUM_PARAMS,
-            "cases": [{"lo": 1, "hi": 1}],
+            "cases": [{"lo": 1, "hi": 1}, {"lo": 2, "hi": 2}],
         },
         tmp_path,
     )
+    # worker stops after the FIRST crash: the validator rejects on it anyway,
+    # and skipping 63 pointless 5s hangs keeps run_worker's timeout honest
     assert r == {"ok": True, "results": [{"crash": {"timeout": True}}]}
 
 
@@ -131,9 +131,9 @@ def test_crash_isolated_to_the_faulting_case(tmp_path):
         tmp_path,
     )
     assert r["ok"] is True
-    assert r["results"][0] == {"ret": 3, "mem": {}}
-    assert r["results"][1] == {"crash": {"signal": 11}}
-    assert r["results"][2]["ret"] == 1  # worker kept going after the crashed case
+    # cases BEFORE the crash compare normally; the crash is reported at its index
+    # and the results list ends there (validator rejects on the first crash)
+    assert r["results"] == [{"ret": 3, "mem": {}}, {"crash": {"signal": 11}}]
 
 
 # Computes the right answer AND attempts two escapes: absolute-path write

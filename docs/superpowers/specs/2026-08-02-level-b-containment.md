@@ -50,8 +50,11 @@ Image: `Containerfile.levelb` = `python:3.12-slim` + `gcc`, `libc6-dev`; tag
 Job `validate`: `{mode, c_source, fname, params, cases}` — params in the same
 dict shape `Param.from_json` accepts; cstring case values are hex (engine-wide
 JSON convention). Result:
-- `{"ok": true, "results": [{ret, mem}, ...]}` — one entry per case; a crashed/
-  hung case yields `{crash: {signal: N}}`/`{crash: {timeout: true}}` at its index.
+- `{"ok": true, "results": [{ret, mem}, ...]}` — one entry per case UP TO the
+  first crashed/hung case, which yields `{crash: {signal: N}}`/`{crash: {timeout:
+  true}}` at its index and ends the list (the validator rejects on the first
+  crash; later cases are moot and skipping them keeps the container timeout
+  honest). Container timeout is sized from the case budget, never a fixed cap.
 - `{"stage": "compile"|"link"|"symbol", "stderr"|"detail": ...}` on failure.
 Per-case calls fork (posix, stdlib) with a wall-clock budget; dlopen caching is
 defeated exactly as today (copyfile-per-call into /tmp tmpfs).

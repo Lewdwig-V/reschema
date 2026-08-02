@@ -20,17 +20,34 @@ _SRC = Path(__file__).resolve().parents[2]
 
 
 def ensure_image() -> None:
-    if (
-        subprocess.run(
-            ["podman", "image", "exists", IMAGE], capture_output=True, check=False
-        ).returncode
-        != 0
-    ):
+    try:
+        missing = (
+            subprocess.run(
+                ["podman", "image", "exists", IMAGE], capture_output=True, check=False
+            ).returncode
+            != 0
+        )
+    except FileNotFoundError as e:
+        # No podman binary at all: still an actionable RuntimeError, never a bare
+        # traceback up to the MCP 'internal' catch-all.
+        raise RuntimeError(
+            "podman not installed; install podman (rootless) for level-B work"
+        ) from e
+    if missing:
         raise RuntimeError(f"level-B worker image missing; build it: {BUILD_CMD}")
 
 
-def run_worker(job: dict, workdir: Path, timeout: int = 240) -> dict:
-    """One validation round inside a throwaway rootless container; returns result JSON."""
+def run_worker(job: dict, workdir: Path, timeout: int | None = None) -> dict:
+    """One validation round inside a throwaway rootless container; returns result JSON.
+
+    Timeout scales with the fuzz budget: N cases can each burn a full per-case
+    budget inside the worker (compile may also run); a fixed cap would kill the
+    container mid-report and turn valid crash verdicts into infra failures.
+    """
+    if timeout is None:
+        from .native_worker import CASE_TIMEOUT_S
+
+        timeout = 120 + len(job.get("cases", ())) * (CASE_TIMEOUT_S + 2)
     ensure_image()
     p = subprocess.run(
         [

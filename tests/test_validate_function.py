@@ -148,6 +148,25 @@ def test_missing_worker_image_is_structured_infra(manifest, tmp_path, monkeypatc
     assert "podman build" in v.divergence["detail"]
 
 
+def test_hanging_model_rejected_with_crash_detail(manifest, tmp_path):
+    # Infinite-loop model: must become a structured crash verdict (~5s), never a
+    # podman timeout/internal error (worker early-exits after the first crash).
+    binary, addr = _slot(manifest, "calc", "sum_range")
+    v = validate_function(
+        binary,
+        addr,
+        "sum_range",
+        SUM_PARAMS,
+        "__attribute__((sysv_abi)) int sum_range(int lo, int hi) { for (;;) {} }",
+        tmp_path / "m.so",
+        seed=1,
+        n_fuzz=2,
+    )
+    assert not v.ok
+    assert v.divergence["field"] == "crash"
+    assert v.divergence["actual"] == "timeout"
+
+
 def test_true_sum_range_accepted(manifest, tmp_path):
     binary, addr = _slot(manifest, "calc", "sum_range")
     v = validate_function(

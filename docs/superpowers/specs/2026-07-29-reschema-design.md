@@ -133,6 +133,5 @@ Packed/protected binaries, anti-emulation countermeasures, multi-arch beyond x86
 ## Descoped for v1
 
 - Program-mode input-space spec field — input space stays implicit in the hidden-stream generator.
-- `status` replay-%/coverage/readiness fields — v1 status reports recorded-case count + ledger only.
-- `corpus_build(seed_ids, matrix)` signature — v1 builds the full fixed seed set, no filtering.
+- `status` replay-% field — status now reports readiness/coverage/telemetry via the ledger; a replay-% metric needs a defined denominator.
 - §5 tool-table exact signatures — the shipped 5 tools match in behavior, not in every literal parameter name; see `mcp/server.py`.

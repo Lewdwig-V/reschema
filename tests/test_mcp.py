@@ -288,3 +288,8 @@ def test_status_corrupt_ledger_returns_internal_error():
         assert r["error"] == "internal" and "JSONDecodeError" in r["detail"]
     finally:
         st._path("ledger.json").unlink(missing_ok=True)
+
+
+def test_corpus_build_targeted_passthrough():
+    ids = call("corpus_build", seed_ids=["rot13"])
+    assert len(ids) == 12 and all(i.startswith("rot13::") for i in ids)

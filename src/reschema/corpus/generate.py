@@ -3,6 +3,10 @@
 All compiles run inside the pinned toolchain image (driver/podrun), so corpus
 binaries carry identical toolchain/libc encodings on every machine — the
 darwin/CI/local gcc matrix is pinned, not ambient.
+
+Targeted builds (seed_ids/matrix): merge into manifest.json in canonical
+(full-build) order, updating only their slots, so a targeted slot's entry is
+byte-identical to its full-build counterpart.
 """
 
 from __future__ import annotations
@@ -47,15 +51,41 @@ def _symtab(binary: Path) -> dict[str, tuple[int, int]]:
         }
 
 
-def build(out_root: Path = OUT_ROOT) -> list[dict]:
+def _slot_sort_key(task_id: str) -> tuple:
+    seed, rest = task_id.split("::")
+    cc, opt, variant = rest.split("-")
+    return (
+        seed,
+        COMPILERS.index(cc),
+        OPTS.index("-" + opt),
+        ["sym", "stripped"].index(variant),
+    )
+
+
+def build(
+    out_root: Path = OUT_ROOT,
+    *,
+    seed_ids: list[str] | None = None,
+    matrix: list[str] | None = None,
+) -> list[dict]:
+    """Build corpus slots. `seed_ids` filters seed names; `matrix` filters
+    '<cc>-<opt>-<sym|stripped>' slot selectors; None means the full matrix.
+    Returns the entries BUILT (binaries -> manifest written last)."""
     jobs, plan = [], []
     for seed in sorted(SEEDS.glob("*.c")):
         name = seed.stem
+        if seed_ids is not None and name not in seed_ids:
+            continue
         for cc in COMPILERS:
             for opt in OPTS:
                 for strip in (False, True):
-                    slot = f"{name}/{cc}-{opt.lstrip('-')}-{'stripped' if strip else 'sym'}"
-                    out = out_root / slot
+                    variant = "stripped" if strip else "sym"
+                    if (
+                        matrix is not None
+                        and f"{cc}-{opt.lstrip('-')}-{variant}" not in matrix
+                    ):
+                        continue
+                    out = out_root / f"{name}/{cc}-{opt.lstrip('-')}-{variant}"
                     out.mkdir(parents=True, exist_ok=True)
                     jobs.append(
                         {
@@ -66,6 +96,8 @@ def build(out_root: Path = OUT_ROOT) -> list[dict]:
                         }
                     )
                     plan.append((name, cc, opt, strip, out / "prog"))
+    if not plan:
+        return []
     r = podrun.run_worker({"mode": "compile", "jobs": jobs}, out_root, timeout=600)
     if "stage" in r:
         raise RuntimeError(f"corpus toolchain container failed: {r['detail']}")
@@ -75,10 +107,10 @@ def build(out_root: Path = OUT_ROOT) -> list[dict]:
             f"corpus compile failed for {bad[0]['out']}: {bad[0]['stderr']}"
         )
 
-    manifest = []
     can_strip = shutil.which("strip") is not None
     if not can_strip:
         print("note: binutils `strip` not found, leaving binaries unstripped")
+    built = []
     for name, cc, opt, strip, binary in plan:
         slot = f"{name}/{cc}-{opt.lstrip('-')}-{'stripped' if strip else 'sym'}"
         syms = _symtab(binary)
@@ -90,7 +122,7 @@ def build(out_root: Path = OUT_ROOT) -> list[dict]:
         assert funcs, f"no functions captured for {slot}"
         if strip and can_strip:
             subprocess.run(["strip", "-s", str(binary)], check=True)
-        manifest.append(
+        built.append(
             {
                 "seed": name,
                 "compiler": cc,
@@ -101,11 +133,27 @@ def build(out_root: Path = OUT_ROOT) -> list[dict]:
                 "functions": funcs,
             }
         )
-    (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    mf_path = out_root / "manifest.json"
+    # Unfiltered builds regenerate the manifest from the current plan (stale
+    # slots are pruned); targeted builds merge — anything outside the filter
+    # scope is preserved untouched (self-play seeds, other branches' work).
+    merge = seed_ids is not None or matrix is not None
+    manifest = (
+        {x["task_id"]: x for x in json.loads(mf_path.read_text())}
+        if merge and mf_path.exists()
+        else {}
+    )
+    for x in built:
+        manifest[x["task_id"]] = x
+    mf_path.write_text(
+        json.dumps(
+            [manifest[k] for k in sorted(manifest, key=_slot_sort_key)], indent=2
+        )
+    )
     # Machine-checkable canonicalizer stamp: engine refuses to load a corpus
     # recorded under different sanitizer rules (rules change = corpus re-record).
     (out_root / "canonicalizer_version").write_text(CANONICALIZER_VERSION)
-    return manifest
+    return built
 
 
 if __name__ == "__main__":

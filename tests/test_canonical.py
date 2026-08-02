@@ -206,3 +206,26 @@ def test_v2_fd_ordinals_on_real_filewrite_trace():
     fds = [e["args"][0] for e in by_sc]
     assert "FD_0" in fds and "0x1" in fds  # out.bin writes ordinalized, stdout literal
     assert canonicalize(record(binary, [], b"hello\n")) == c  # deterministic
+
+
+def test_fd_ordinals_on_exit_phase_events():
+    # exit events of fd-carrier syscalls carry the same fd in args[0] (retval is
+    # separate); OBS compares include them, so they must normalize identically.
+    t = _fd_trace()
+    t["events"].insert(
+        3,
+        {
+            "phase": "exit",
+            "sc": "write",
+            "args": ["0x3", "0x480100", "0x6"],
+            "result": "0x6",
+        },
+    )
+    t["events"].insert(
+        5, {"phase": "exit", "sc": "close", "args": ["0x3"], "result": "0x0"}
+    )
+    c = canonicalize(t)
+    assert c["events"][3]["args"][0] == "FD_0"  # write exit's fd, not raw 0x3
+    assert c["events"][5]["args"][0] == "FD_0"  # close exit's fd
+    assert c["events"][3]["result"] == "0x6"  # byte counts untouched
+    assert c["events"][6]["args"][0] == "0x1"  # stdout exit fd still literal

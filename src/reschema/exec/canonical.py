@@ -4,9 +4,10 @@ rules v2 (CANONICALIZER_VERSION below): address-shaped tokens (0x + >=6 hex) ->
 ADDR_<n> ordinals (first sighting, trace-global); argv[0] -> basename; fds from
 write-intent opens -> FD_<n> ordinals by first sighting (fds 0/1/2 stay ABI
 literals; read-only opens never enter the table, so a model's extra read-open
-cannot shift numbering); absolute host paths inside string args -> PATH_<n>.
+cannot shift numbering), applied to fd-carrier events in both enter and exit
+phases; absolute host paths inside string args -> PATH_<n>.
 Spec section 8: a rule change here = corpus re-record (enforced via the version
-sidecar next to the corpus manifest).
+sidecar next to the corpus manifest). 2.1: fd normalization of exit events too.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-CANONICALIZER_VERSION = "2.0"
+CANONICALIZER_VERSION = "2.1"
 
 ADDR = re.compile(r"0x[0-9a-f]{6,}")
 ABSPATH = re.compile(r"/(?:[\w.-]+/)+[\w.-]+")
@@ -62,7 +63,7 @@ def canonicalize(trace: dict) -> dict:
             if pending_write_open and isinstance(res, str) and res.startswith("0x"):
                 fds.setdefault(res, fd_of(res))
             pending_write_open = False
-        if sc in FD_CARRIERS and phase == "enter" and e["args"]:
+        if sc in FD_CARRIERS and e["args"]:  # enter AND exit share args[0]=fd
             a0 = e["args"][0]
             if a0 in fds:
                 e["args"] = [fds[a0], *e["args"][1:]]

@@ -132,7 +132,6 @@ Packed/protected binaries, anti-emulation countermeasures, multi-arch beyond x86
 
 ## Descoped for v1
 
-- `task_open` calling-context metadata (signature guess, known callees) — agents derive it from the disasm slice.
 - ABI header template for model sources — `sysv_abi` attribute in the task docs suffices.
 - Program-mode input-space spec field — input space stays implicit in the hidden-stream generator.
 - `status` replay-%/coverage/readiness fields — v1 status reports recorded-case count + ledger only.

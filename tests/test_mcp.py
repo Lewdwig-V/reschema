@@ -102,7 +102,8 @@ def test_tool_descriptions_carry_the_contract():
         "task_open": {"function mode", "program mode", "input"},
         # argv after prog, prog prepended, hex encodings, files_written
         "experiment": {"argv", "prepended", "hex", "files_written"},
-        # compile, io byte-exactness, event shape, hidden fresh inputs, fuzz floor
+        # compile, io byte-exactness, event shape, hidden fresh inputs, fuzz floor,
+        # divergence-vs-detail reject shapes (no overclaiming in the contract)
         "submit_model": {
             "byte-exact",
             "hidden",
@@ -112,6 +113,7 @@ def test_tool_descriptions_carry_the_contract():
             "stdout",
             "stderr",
             "exit_code",
+            "detail",
         },
         # ledger keys + persistence by design
         "status": {"accepted", "submissions", "rejections", "persist"},

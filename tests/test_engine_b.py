@@ -351,3 +351,46 @@ def test_status_snapshot_program_path_events(manifest):
         "outcome": "reject",
         "stage": "compile",
     }
+
+
+def test_status_snapshot_efficiency_metric():
+    import math
+
+    from reschema.engine import status_snapshot
+
+    st = _status_store()
+    st._path("ledger.json").unlink(missing_ok=True)
+    for p in st.dir.glob("trace_*.json"):
+        p.unlink()
+    st.record_case("a", [], b"")
+    eff = status_snapshot(st)["efficiency"]
+    assert eff["n_exp"] == 1 and eff["n_sub"] == 0
+    assert eff["E"] == 0.0  # indicator false until an acceptance exists
+
+    assert submit_function(st, "sum_range", PARAMS, RIGHT, seed=3, n_fuzz=8)["accepted"]
+    eff = status_snapshot(st)["efficiency"]
+    assert eff["E"] == 1.0  # accepted on the first submission with one probe
+
+    led = st.ledger()
+    led["probes"], led["submissions"] = 7, 3
+    st.save_ledger(led)
+    eff = status_snapshot(st)["efficiency"]
+    assert eff["E"] == pytest.approx(math.exp(-(0.15 * 6 + 0.4 * 2)))
+
+    # legacy accepted ledger with submissions == 0: E must cap at the
+    # baseline-one-submission state, never exceed 1
+    led["probes"], led["submissions"] = 1, 0
+    st.save_ledger(led)
+    assert status_snapshot(st)["efficiency"]["E"] == 1.0
+    led["probes"] = 11
+    st.save_ledger(led)
+    assert status_snapshot(st)["efficiency"]["E"] == pytest.approx(
+        math.exp(-(0.15 * 10))
+    )
+    assert eff == {
+        "E": eff["E"],
+        "n_exp": 7,
+        "n_sub": 3,
+        "alpha": 0.15,
+        "beta": 0.4,
+    }

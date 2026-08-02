@@ -181,7 +181,24 @@ def _abi_template(func: str, facts: dict) -> str:
         {"name": f"arg{i}", "kind": "i32", "range": default_range} for i in range(n)
     ]
     if ret_void and params:
-        params[0]["ret"] = "void"
+        # The sketch must satisfy the engine's own void floor (>=1 memory-channel
+        # param), or a pasted submission self-rejects at the spec stage. Channel
+        # kind is a guess (buffer_i32+length param for multi-arg fns, cstring for
+        # 1-arg fns); the agent verifies against experiments — facts are guesses.
+        params[0] = {
+            "name": "arg0",
+            **(
+                {
+                    "kind": "buffer_i32",
+                    "direction": "in_out",
+                    "length_param": "arg1",
+                    "range": default_range,
+                }
+                if n > 1
+                else {"kind": "cstring", "direction": "in_out"}
+            ),
+            "ret": "void",
+        }
     sketch = json.dumps(params)
     ret_ty = "void" if ret_void else "int32_t"
     sig = ", ".join(f"int32_t arg{i}" for i in range(n)) or "void"

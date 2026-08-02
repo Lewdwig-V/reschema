@@ -32,6 +32,29 @@ def test_template_returns_void_sketch_has_ret_note(manifest):
     assert '"ret": "void"' in t["abi_template"]
 
 
+def _sketch_json(tpl):
+    import json as _json
+    import re as _re
+
+    m = _re.search(r"\[\s*\{.*?\}\s*\]", tpl, _re.DOTALL)
+    return _json.loads(m.group(0)) if m else None
+
+
+def test_void_sketch_is_a_valid_void_spec(manifest):
+    # A pasted sketch must satisfy the engine's own void floor (>=1 memory
+    # channel), never an all-i32 shape the spec stage would reject outright.
+    t = open_function_task(_store("calc::gcc-O2-sym"), "scale_buf")
+    sketch = _sketch_json(t["abi_template"])
+    assert sketch[0]["kind"] == "buffer_i32"
+    assert sketch[0]["length_param"] == "arg1"
+    assert sketch[0]["ret"] == "void"
+
+    t = open_function_task(_store("rot13::gcc-O2-sym"), "rot13")
+    sketch = _sketch_json(t["abi_template"])
+    assert sketch[0]["kind"] == "cstring"
+    assert sketch[0]["ret"] == "void"
+
+
 # Models written verbatim from the template contract (include + RESCHEMA_FN
 # macro + static helpers) must compile and validate with NO ABI-stage rejection.
 def test_scalar_from_template_accepted(manifest):

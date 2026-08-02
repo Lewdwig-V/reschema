@@ -143,10 +143,11 @@ def submit_model(
     every recorded trace and 8 freshly-drawn hidden inputs (unguessable, new
     entropy per submission). Per case the gate compares, byte-exact after
     canonicalization: `stdout`, `stderr`, `exit_code`, `files_written` paths +
-    bytes, and the write-family event SHAPE (fd, count per syscall). Reasons
+    bytes,     and the write-family event SHAPE (fd, count per syscall). Reasons
     for rejection: compile, io-mismatch, files-mismatch, event-divergence/
-    event-length, hidden-starvation; every rejection comes with a structured
-    divergence payload.
+    event-length, hidden-starvation — behavior divergences (io/files/events)
+    come with a structured `divergence` payload; mechanical rejects
+    (compile/spec/starvation) come with a `detail` message instead.
     Function mode: your source is compiled and differential-fuzzed against the
     ORIGINAL function on per-call {ret, mem} over N_FUZZ random cases drawn
     with fresh entropy every submission (seed= pins the draw for determinism;

@@ -18,21 +18,21 @@ PARAMS = [
     {"name": "lo", "kind": "i32", "range": [-20, 10]},
     {"name": "hi", "kind": "i32", "range": [10, 30]},
 ]
-WRONG = '#include <stdint.h>\n__attribute__((sysv_abi)) int32_t sum_range(int32_t a,int32_t b){return a+b;}'
-RIGHT = '''#include <stdint.h>
+WRONG = "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t sum_range(int32_t a,int32_t b){return a+b;}"
+RIGHT = """#include <stdint.h>
 static int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}
-__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}'''
+__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}"""
 # Re-accept variant: same semantics, different source text (helper order flipped).
-RIGHT2 = '''#include <stdint.h>
+RIGHT2 = """#include <stdint.h>
 static int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v>hi?hi:v<lo?lo:v;}
-__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}'''
+__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}"""
 # Rule violation for the dup-symbol path: single-function helper left EXPORTED.
-RIGHT_EXPORTED_HELPER = '''#include <stdint.h>
+RIGHT_EXPORTED_HELPER = """#include <stdint.h>
 __attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}
-__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}'''
+__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}"""
 # clamp_i32 as the accepted function itself (exported — matches -shared model compiles).
-CLAMP = '''#include <stdint.h>
-__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}'''
+CLAMP = """#include <stdint.h>
+__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}"""
 CLAMP_PARAMS = [
     {"name": "v", "kind": "i32", "range": [-100, 100]},
     {"name": "lo", "kind": "i32", "range": [-50, 0]},
@@ -98,21 +98,27 @@ def test_compose_links_per_tu_with_static_helpers(store):
     # The calc canonical scenario: clamp_i32 accepted standalone (exported — model
     # compiles are -shared, so non-static functions export), sum_range's accepted
     # model embeds clamp_i32 as a STATIC helper. Per-TU compile + link must succeed.
-    assert submit_function(store, "clamp_i32", CLAMP_PARAMS, CLAMP, seed=1, n_fuzz=8)["accepted"]
-    assert submit_function(store, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)["accepted"]
+    assert submit_function(store, "clamp_i32", CLAMP_PARAMS, CLAMP, seed=1, n_fuzz=8)[
+        "accepted"
+    ]
+    assert submit_function(store, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)[
+        "accepted"
+    ]
     ok, err = compose(store)
     assert ok, err
     assert (store.dir / "composed").exists()
-    assert "int main" in (store.dir / "composed_main.c").read_text()
+    assert "int main" in (store.dir / "composed_main.compose.c").read_text()
 
 
 def test_compose_duplicate_exported_symbol_structured_reject(store):
     # Same EXTERNALLY-visible helper name across two accepted sources → ld failure
     # mapped to a structured, actionable reject.
-    assert submit_function(store, "clamp_i32", CLAMP_PARAMS, CLAMP, seed=1, n_fuzz=8)["accepted"]
-    assert submit_function(store, "sum_range", PARAMS, RIGHT_EXPORTED_HELPER, seed=1, n_fuzz=8)[
+    assert submit_function(store, "clamp_i32", CLAMP_PARAMS, CLAMP, seed=1, n_fuzz=8)[
         "accepted"
     ]
+    assert submit_function(
+        store, "sum_range", PARAMS, RIGHT_EXPORTED_HELPER, seed=1, n_fuzz=8
+    )["accepted"]
     ok, err = compose(store)
     assert not ok
     assert "duplicate symbol" in err and "clamp_i32" in err and "static" in err
@@ -123,7 +129,10 @@ def test_experiment_function_mem_hex_json_safe(manifest):
     # bytes, which must not leak into the engine result (json.dumps would TypeError).
     st = TaskStore("rot13::gcc-O2-sym")
     t = experiment_function(
-        st, "rot13", [{"name": "in_out", "kind": "cstring", "ret": "void"}], {"in_out": b"hello"}
+        st,
+        "rot13",
+        [{"name": "in_out", "kind": "cstring", "ret": "void"}],
+        {"in_out": b"hello"},
     )
     assert t["exit_code"] == 0
     assert t["mem"]["in_out"] == b"uryyb".hex()  # hex, mirrors stdin_hex/stdout_hex
@@ -135,7 +144,10 @@ def test_experiment_function_cstring_hex_input_decoded(manifest):
     # stdin_hex/stdout_hex); the engine decodes engine-side before the driver call.
     st = TaskStore("rot13::gcc-O2-sym")
     t = experiment_function(
-        st, "rot13", [{"name": "in_out", "kind": "cstring", "ret": "void"}], {"in_out": "68656c6c6f"}
+        st,
+        "rot13",
+        [{"name": "in_out", "kind": "cstring", "ret": "void"}],
+        {"in_out": "68656c6c6f"},
     )
     assert t["exit_code"] == 0
     assert t["mem"]["in_out"] == b"uryyb".hex()  # return side stays hex-encoded
@@ -158,14 +170,22 @@ def test_submit_function_reaccept_newest_source_wins(store):
 
 
 def test_submit_function_audit_records_seed_and_budget(store):
-    assert submit_function(store, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)["accepted"]
+    assert submit_function(store, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)[
+        "accepted"
+    ]
     assert store.ledger()["audit"]["sum_range"] == {"seed": 1, "n_fuzz": 8}
 
 
 def test_submit_function_audit_newest_wins_and_entropy_seed(store, monkeypatch):
-    assert submit_function(store, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)["accepted"]
-    monkeypatch.setattr("reschema.validate.function.secrets.token_hex", lambda n: "ent" * 8)
-    assert submit_function(store, "sum_range", PARAMS, RIGHT2, seed=None, n_fuzz=8)["accepted"]
+    assert submit_function(store, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)[
+        "accepted"
+    ]
+    monkeypatch.setattr(
+        "reschema.validate.function.secrets.token_hex", lambda n: "ent" * 8
+    )
+    assert submit_function(store, "sum_range", PARAMS, RIGHT2, seed=None, n_fuzz=8)[
+        "accepted"
+    ]
     # re-accept replaces the seed too; fresh entropy is recorded, never None
     assert store.ledger()["audit"]["sum_range"] == {"seed": "ent" * 8, "n_fuzz": 8}
     ok, err = compose(store)  # extra ledger keys don't disturb stitching
@@ -186,8 +206,10 @@ def test_submit_function_void_scalar_only_counts_rejection(store):
 def test_submit_function_link_failure_counts_rejection(store):
     # -shared link tolerates the undefined extern; the engine must account the
     # structured link-stage reject like any other failed validation.
-    src = ('#include <stdint.h>\nextern int32_t missing_dep(int32_t);\n'
-           '__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){return missing_dep(lo)+hi;}')
+    src = (
+        "#include <stdint.h>\nextern int32_t missing_dep(int32_t);\n"
+        "__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){return missing_dep(lo)+hi;}"
+    )
     r = submit_function(store, "sum_range", PARAMS, src, seed=1, n_fuzz=8)
     assert r["accepted"] is False
     assert r["divergence"]["stage"] == "link"
@@ -227,10 +249,14 @@ def test_param_from_json_names_missing_key():
 
 def test_submit_function_malformed_spec_counts_rejection(store):
     # Phantom kind: structured reject BEFORE the fuzz loop, ledger still accounted.
-    r = submit_function(store, "sum_range", [{"name": "lo", "kind": "buffer_u8"}], RIGHT, seed=1)
+    r = submit_function(
+        store, "sum_range", [{"name": "lo", "kind": "buffer_u8"}], RIGHT, seed=1
+    )
     assert r["accepted"] is False and r["reason"] == "spec"
     assert "buffer_u8" in r["detail"]
-    r2 = submit_function(store, "sum_range", [{"kind": "i32"}], RIGHT, seed=1)  # missing 'name'
+    r2 = submit_function(
+        store, "sum_range", [{"kind": "i32"}], RIGHT, seed=1
+    )  # missing 'name'
     assert r2["accepted"] is False and r2["reason"] == "spec"
     led = store.ledger()
     assert led["submissions"] == 2 and led["rejections"] == 2

@@ -297,3 +297,57 @@ def test_submit_function_clamps_n_fuzz(store, monkeypatch):
     r = submit_function(store, "sum_range", PARAMS, RIGHT, n_fuzz=10**9)
     assert seen["n_fuzz"] == 4 * N_FUZZ and r["accepted"] is False
     assert store.ledger()["rejections"] == 1
+
+
+def _status_store():
+    build()
+    st = TaskStore("calc::gcc-O1-sym")  # own slot: engine_b's shared store is O2
+    st._path("ledger.json").unlink(missing_ok=True)
+    return st
+
+
+def test_status_snapshot_readiness_coverage_and_journal():
+    from reschema.engine import HIDDEN_N, status_snapshot
+
+    st = _status_store()
+    st.record_case("a", [], b"")
+    s = status_snapshot(st)
+    assert s["recorded_cases"] == 1
+    assert s["readiness"] == {"minimum": HIDDEN_N, "ready": False}
+    cov = s["coverage"]
+    assert cov["total_functions"] == 3
+    assert cov["accepted_functions"] == []
+    assert cov["program_accepted"] is False
+    assert s["recent"] == []
+
+    assert submit_function(st, "sum_range", PARAMS, RIGHT, seed=3, n_fuzz=8)["accepted"]
+    s = status_snapshot(st)
+    assert s["coverage"]["accepted_functions"] == ["sum_range"]
+    assert s["recent"] == [
+        {"mode": "function", "outcome": "accept", "function": "sum_range"}
+    ]
+
+    r = submit_function(st, "clamp_i32", CLAMP_PARAMS, "int main( {", seed=4, n_fuzz=8)
+    assert not r["accepted"]
+    s = status_snapshot(st)
+    assert s["recent"][-1] == {
+        "mode": "function",
+        "outcome": "reject",
+        "function": "clamp_i32",
+        "stage": "compile",
+    }
+    assert len(s["recent"]) == 2
+
+
+def test_status_snapshot_program_path_events(manifest):
+    from reschema.engine import status_snapshot, submit_program
+
+    st = _status_store()
+    st.record_case("a", [], b"")
+    submit_program(st, "int main( {")
+    s = status_snapshot(st)
+    assert s["recent"][-1] == {
+        "mode": "program",
+        "outcome": "reject",
+        "stage": "compile",
+    }

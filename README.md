@@ -36,24 +36,33 @@ function differing only in register residue...).
 ## Corpus
 
 Synthetic seeds with perfect ground truth: `rot13` (argv), `check` (stdin,
-password), `calc` (multi-function) × gcc/clang × O0/O1/O2 × sym/stripped = 36
-build slots, recorded via a manifest (addresses + sizes captured pre-strip).
+password), `calc` (multi-function), `filewrite` (stdin bytes → `out.bin` file) ×
+gcc/clang × O0/O1/O2 × sym/stripped = 48 build slots, recorded via a manifest
+(addresses + sizes captured pre-strip).
 
 ## Trust model
 
 This is adversarial-by-design tooling: the engine compiles agent-authored C
-(`gcc`) and then **executes it** — natively via `ctypes` (level B) and under
-qiling with rootfs `/` (level A), where guest file syscalls pass through to host
-paths as the harness user. That is deliberate (the harness must observe real
-behavior); run submissions you don't trust inside a container or VM.
+(`gcc`) and then **executes it**. Execution is contained differently per level:
 
-## Layout
+- **Level A (qiling)**: every record runs against a fresh, **empty rootfs**
+  holding only a copy of the binary. Qiling emulates syscalls in userspace, so
+  any host-mutating file op the guest issues (open/unlink/rename/mkdir/...)
+  resolves inside that scratch dir and is discarded with it. Guest file writes
+  cannot touch the host fs by construction (`files_written` is scraped from the
+  record rootfs — capture and containment are the same mechanism). Static ELF
+  guests need nothing else from a rootfs.
+- **Level B (ctypes, native)**: runs with **full host process privileges** —
+  deliberate, since the harness must observe real behavior.
+
+CPU spin is bounded by the emulation timeout; nothing else is bounded. Run
+submissions you don't trust inside a container or VM.
 
 ## How to use
 
 ```bash
 uv sync                                    # python 3.12, qiling 1.4.6, mcp 2.x
-uv run python -m reschema.corpus.generate  # builds the 36-slot corpus
+uv run python -m reschema.corpus.generate  # builds the 48-slot corpus
 uv run pytest -q                           # full suite (includes emulation)
 ```
 
@@ -84,7 +93,7 @@ a program task is the level-A verdict on reusing them.
 
 ```
 src/reschema/
-  corpus/generate.py   # seeds → 36-slot build matrix + manifest
+  corpus/generate.py   # seeds → 48-slot build matrix + manifest
   exec/                # qiling recorder, canonicalizer (rules v1)
   validate/            # program gate, function gate
   driver/              # call driver (SENTINEL trap), param specs, input gen

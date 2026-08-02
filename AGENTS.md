@@ -32,7 +32,8 @@ the matrix).
   harness-controlled (`N_FUZZ` floor at the MCP boundary — the agent cannot
   tune its own judge).
 - **Trust model is deliberate:** agent C is compiled and executed (ctypes
-  native + qiling rootfs `/`). See README "Trust model".
+  native with full host privileges; qiling runs against a fresh empty rootfs —
+  guest file ops are contained). See README "Trust model".
 - On-disk state under `.reschema/` (gitignored) is shared runtime state; tests
   wipe what they own (see `tests/test_hidden.py` pattern). Single-process use
   is assumed (engine module docstring).

@@ -83,6 +83,13 @@ class TaskStore:
 
 # ponytail: manifest-driven input-space deferred
 STDIN_DRIVEN = {"check", "filewrite"}  # seed names fed via stdin; others take argv
+STDIN_BYTES_DRIVEN = {"filewrite"}  # stdin in the RAW byte domain (binary-safe seeds)
+
+
+def _hidden_modes(seed: str) -> tuple:
+    if seed in STDIN_BYTES_DRIVEN:
+        return ("stdin-bytes",)
+    return ("stdin",) if seed in STDIN_DRIVEN else ("argv",)
 
 
 def submit_program(store: TaskStore, c_source: str) -> dict:
@@ -100,7 +107,7 @@ def submit_program(store: TaskStore, c_source: str) -> dict:
             "stage": "recorded",
             "divergence": v.divergence,
         }
-    modes = ("stdin",) if store.meta["seed"] in STDIN_DRIVEN else ("argv",)
+    modes = _hidden_modes(store.meta["seed"])
     known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in rec}
     # Hidden ground truth: fresh unguessable inputs (new entropy every submission),
     # double-recorded like stored cases. A flaky or crashing draw invalidates the

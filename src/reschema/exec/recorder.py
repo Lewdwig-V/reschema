@@ -1,23 +1,26 @@
 """Run a static ELF under qiling; capture observable trace.
 
-Schema: files_written maps the guest's path (as written at the open call) to its
-final content hex. Write-intent opens are redirected to in-memory buffers: agent
-C is executed deliberately, so guest file writes must never reach the host fs.
+Schema: files_written maps rootfs-relative paths to final content hex, scraped
+from the record rootfs after the run (post-state, not syscall interception).
+
+Containment: agent C is executed deliberately, so guest file ops must never reach
+the host fs. The record runs against a fresh EMPTY rootfs holding only a copy of
+the binary itself (qiling needs the binary inside the rootfs namespace: static
+glibc readlinks /proc/self/exe at startup). Every host-mutating file op qiling
+emulates (open/unlink/rename/mkdir/chmod/...) resolves inside the scratch dir,
+which is discarded afterwards. Static binaries need nothing else from a rootfs.
 """
 
 from __future__ import annotations
 
 import hashlib
 import io
+import shutil
+import tempfile
 from pathlib import Path
 
 from qiling import Qiling
 from qiling.const import QL_INTERCEPT, QL_VERBOSE
-from qiling.os.posix.syscall.fcntl import ql_syscall_open, ql_syscall_openat
-
-# x86-64-linux guest open(2) flag values (v1 is x86-64-only, spec §12).
-O_ACCMODE = 0x3
-O_CREAT, O_TRUNC, O_APPEND = 0x40, 0x200, 0x400
 
 LOG_SYSCALLS = (
     "read",
@@ -31,11 +34,6 @@ LOG_SYSCALLS = (
     "mmap",
     "exit_group",
 )
-
-
-class _Captured(io.BytesIO):
-    def close(self):
-        pass  # keep content readable for files_written; qiling frees the fd slot itself
 
 
 class Sink(io.RawIOBase):
@@ -60,37 +58,6 @@ def record(
     #   (QlOsPosix setters rewire the fd table).
     # - verbose=0 accepted, but console=False is what silences logger chatter.
     events = []
-    written: dict[str, _Captured] = {}
-
-    # ponytail: one byte position per PATH, shared across opens — correct for the
-    # single-writer corpus seeds (per-open offset table if a seed ever needs it)
-    def _capture_open(ql, path: int, flags: int) -> int:
-        vpath = ql.os.utils.read_cstring(path)
-        buf = written.setdefault(vpath, _Captured())
-        if flags & O_APPEND:
-            buf.seek(0, 2)  # O_APPEND: position at end
-        else:
-            buf.seek(0)
-            if flags & O_ACCMODE and flags & O_TRUNC:
-                buf.truncate(0)
-        idx = next((i for i in range(len(ql.os.fd)) if ql.os.fd[i] is None), -1)
-        if idx == -1:
-            return -24  # -EMFILE
-        ql.os.fd[idx] = buf
-        return idx
-
-    def _openat_sandbox(ql, dirfd: int, path: int, flags: int, mode: int) -> int:
-        if flags & O_ACCMODE or flags & O_CREAT:
-            return _capture_open(ql, path, flags)
-        return ql_syscall_openat(ql, dirfd, path, flags, mode)
-
-    def _open_sandbox(ql, filename: int, flags: int, mode: int) -> int:
-        if flags & O_ACCMODE or flags & O_CREAT:
-            return _capture_open(ql, filename, flags)
-        return ql_syscall_open(ql, filename, flags, mode)
-
-    def _creat_sandbox(ql, filename: int, mode: int) -> int:
-        return _capture_open(ql, filename, 0x1 | O_CREAT | O_TRUNC)  # 0x1: O_WRONLY
 
     def _hook(name, phase):
         def h(ql, *args):
@@ -108,35 +75,43 @@ def record(
 
         return h
 
-    try:
-        ql = Qiling([str(binary), *argv], "/", verbose=QL_VERBOSE.OFF, console=False)
-        ql.os.stdin = io.BytesIO(stdin)
-        ql.os.stdout = out
-        ql.os.stderr = err
-        for sc, h in (
-            ("openat", _openat_sandbox),
-            ("open", _open_sandbox),
-            ("creat", _creat_sandbox),
-        ):
-            ql.os.set_syscall(sc, h)  # CALL replacement: sandbox write-intent opens
-        for sc in LOG_SYSCALLS:
-            ql.os.set_syscall(sc, _hook(sc, "enter"), QL_INTERCEPT.ENTER)
-            ql.os.set_syscall(sc, _hook(sc, "exit"), QL_INTERCEPT.EXIT)
-        ql.run(timeout=timeout_us)
-        if any(e["phase"] == "enter" and e["sc"] == "exit_group" for e in events):
-            exit_code = ql.os.exit_code
-        else:
-            # qiling 1.4.6: exit_code defaults to 0 (not None) on a timed-out run;
-            # a static-glibc guest exits only via exit_group, so no enter event
-            # means the run stopped prematurely — report failure, not exit 0.
+    # Fresh EMPTY rootfs per record: contains ALL host-mutating file ops.
+    with tempfile.TemporaryDirectory(prefix="reschema-rootfs-") as rootfs:
+        guest = Path(rootfs) / Path(binary).name  # binary must live in the namespace
+        try:
+            shutil.copy2(binary, guest)
+            ql = Qiling(
+                [str(guest), *argv], rootfs, verbose=QL_VERBOSE.OFF, console=False
+            )
+            ql.os.stdin = io.BytesIO(stdin)
+            ql.os.stdout = out
+            ql.os.stderr = err
+            for sc in LOG_SYSCALLS:
+                ql.os.set_syscall(sc, _hook(sc, "enter"), QL_INTERCEPT.ENTER)
+                ql.os.set_syscall(sc, _hook(sc, "exit"), QL_INTERCEPT.EXIT)
+            ql.run(timeout=timeout_us)
+            if any(e["phase"] == "enter" and e["sc"] == "exit_group" for e in events):
+                exit_code = ql.os.exit_code
+            else:
+                # qiling 1.4.6: exit_code defaults to 0 (not None) on a timed-out run;
+                # a static-glibc guest exits only via exit_group, so no enter event
+                # means the run stopped prematurely — report failure, not exit 0.
+                exit_code = -1
+                events.append({"phase": "fault", "sc": "timeout", "args": []})
+        except Exception as e:  # noqa: BLE001 - any load or emulation fault is trace data, not a recorder crash
             exit_code = -1
-            events.append({"phase": "fault", "sc": "timeout", "args": []})
-    except Exception as e:  # noqa: BLE001 - any load or emulation fault is trace data, not a recorder crash
-        exit_code = -1
-        # qiling's QlErrorBase init-recurses: repr() recurses forever, avoid it
-        events.append(
-            {"phase": "fault", "sc": "crash", "args": [f"{type(e).__name__}: {e}"]}
-        )
+            # qiling's QlErrorBase init-recurses: repr() recurses forever, avoid it
+            events.append(
+                {"phase": "fault", "sc": "crash", "args": [f"{type(e).__name__}: {e}"]}
+            )
+        # Post-state scrape: everything the guest left behind is the capture —
+        # correct truncate/rename/multi-open semantics come free from real fs
+        # behavior; only regular files count (the binary copy itself excluded).
+        files_written = {
+            str(p.relative_to(rootfs)): p.read_bytes().hex()
+            for p in Path(rootfs).rglob("*")
+            if p.is_file() and not p.is_symlink() and p != guest
+        }
     return {
         "argv": [str(binary), *argv],
         "stdin_hex": stdin.hex(),
@@ -144,7 +119,7 @@ def record(
         "stdout": bytes(out.buf).hex(),
         "stderr": bytes(err.buf).hex(),
         "exit_code": exit_code,
-        "files_written": {p: b.getvalue().hex() for p, b in written.items()},
+        "files_written": files_written,
         "events": events,
     }
 

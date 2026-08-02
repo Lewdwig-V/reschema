@@ -206,3 +206,42 @@ def test_filewrite_is_stdin_driven():
     # Hidden draws must carry stdin (the seed ignores argv); otherwise both gate
     # and model see empty input and the hidden suite proves nothing.
     assert "filewrite" in STDIN_DRIVEN
+
+
+def test_hidden_inputs_filewrite_byte_mode():
+    # filewrite consumes raw bytes (fread): hidden draws must span the byte
+    # domain — NUL + non-printable guaranteed per draw, not just line text.
+    kw = {"modes": ("stdin-bytes",), "seed": "s1"}
+    a = gen_hidden_inputs("filewrite::gcc-O2-sym", **kw)
+    assert a == gen_hidden_inputs("filewrite::gcc-O2-sym", **kw)  # pinned by seed
+    for argv, stdin in a:
+        assert argv == []
+        assert b"\0" in stdin
+        assert any(b >= 0x80 for b in stdin)
+
+
+# C-string/line overfit: passes recorded + text hidden draws, but strlen
+# truncates at the first NUL — wrong out.bin (and stdout) for real byte stdin.
+OVERFIT_FW = r"""
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+int main(void){
+ char buf[8192];
+ if(!fgets(buf, sizeof buf, stdin)) return 2;
+ size_t n = strlen(buf);
+ uint32_t h = 5381u;
+ for(size_t i=0;i<n;i++){ buf[i]=(char)(buf[i] ^ (char)((uint32_t)i*31u+7u)); h=h*33u+(unsigned char)buf[i]; }
+ FILE*f=fopen("out.bin","wb"); fwrite(buf,1,n,f); fclose(f);
+ printf("%zu bytes -> out.bin djb2=%08x\n", n, h);
+ return 0;
+}
+"""
+
+
+def test_cstring_overfit_model_fails_hidden(fw_store):
+    r = submit_program(fw_store, OVERFIT_FW)
+    assert not r["accepted"], "text-only hidden draws let the strlen overfit through"
+    assert r["stage"] == "hidden"  # recorded "hello\n" contains no NUL — passes
+    # stdout prints the truncated length: clean divergence on every NUL draw.
+    assert r["reason"] == "io-mismatch"

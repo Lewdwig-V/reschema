@@ -1,5 +1,6 @@
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -87,6 +88,33 @@ def test_filewrite_files_written_captured_and_sandboxed(
 def test_existing_seed_files_written_empty(manifest):
     t = record(_slot(manifest, "rot13"), ["hello"], b"")
     assert t["files_written"] == {}  # 36 existing slots: no write-open, no entry
+
+
+def test_guest_filesystem_mutation_contained(tmp_path):
+    # The open family is intercepted in memory; every OTHER host-mutating file
+    # op qiling emulates (unlink, mkdir, rename, chmod, ...) must be contained
+    # by the record rootfs, never reaching the real fs.
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me")
+    src = f"""#include <stdio.h>
+#include <sys/stat.h>
+int main(void){{ remove("{victim}"); mkdir("/reschema_probe_dir", 0777); return 0; }}
+"""
+    prog = tmp_path / "probe"
+    subprocess.run(
+        ["gcc", "-static", "-x", "c", "-", "-o", str(prog)],
+        input=src.encode(),
+        check=True,
+    )
+    try:
+        t = record(prog, [])
+        assert t["exit_code"] == 0
+        assert victim.exists()  # unlink contained
+        assert not Path("/reschema_probe_dir").exists()  # mkdir contained
+    finally:
+        subprocess.run(
+            ["rm", "-rf", "/reschema_probe_dir"], check=False
+        )  # leak cleanup
 
 
 def test_record_nonexistent_binary_reports_crash():

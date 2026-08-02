@@ -145,8 +145,20 @@ _CHARSET = (
 def hidden_input_stream(
     rng: random.Random, modes: tuple
 ) -> Iterator[tuple[list[str], bytes]]:
-    """Endless candidate inputs from the task input space."""
+    """Endless candidate inputs from the task input space.
+
+    Byte-domain stdin ("stdin-bytes"): raw random bytes, every draw guaranteed to
+    contain a NUL and a >=0x80 byte — text/C-string overfits must fail reliably
+    (random CONTENT keeps draws unguessable; the corner bytes are by construction).
+    """
     while True:
+        if "stdin-bytes" in modes:
+            body = bytearray(rng.randrange(256) for _ in range(rng.randint(4, 48)))
+            nul, hi = rng.sample(range(len(body)), 2)  # distinct: corner bytes survive
+            body[nul] = 0
+            body[hi] = rng.randrange(0x80, 0x100)
+            yield [], bytes(body)
+            continue
         s = "".join(rng.choice(_CHARSET) for _ in range(rng.randint(1, 24)))
         yield ([s], b"") if "argv" in modes else ([], (s + "\n").encode())
 

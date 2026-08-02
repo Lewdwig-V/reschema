@@ -7,6 +7,13 @@ on every `submit_model(function=...)`. Level A gained structural containment via
 isolated rootfs (ISSUE-02); this spec gives level B the equivalent guarantee:
 **no agent-authored source ever touches the host toolchain or host process.**
 
+> **Amendment (same PR, toolchain pinning):** the image's role grew from
+> "level-B sandbox" to the ONE pinned toolchain for everything binary — corpus
+> matrix compiles (gcc+clang) and level-A model compiles also run inside it.
+> Host `gcc`/glibc versions no longer matter anywhere, which eliminates the
+> qiling dirfd-ABI flakiness observed when CI and host toolchains diverged
+> (glibc ≤ 2.39's 32-bit-form fds). Image renamed `reschema-toolchain:1`.
+
 ## Goals
 - Compile, symbol-check, and ALL native case calls execute inside a one-shot,
   rootless podman container per validation round.

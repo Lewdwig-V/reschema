@@ -33,8 +33,9 @@ the matrix).
   tune its own judge).
 - **Trust model is deliberate:** agent C is compiled and executed — level A
   (qiling vs a fresh empty rootfs), level B (mandatory one-shot rootless podman
-  worker; podman is a hard dependency for level-B work/tests). Level-A model
-  compile still uses host gcc (parse-only). See README "Trust model".
+  worker; podman is a hard dependency for level-B work/tests). ALL compiles —
+  corpus matrix and both levels' models — run inside the one pinned toolchain
+  image (`Containerfile`); host gcc is never used. See README "Trust model".
 - On-disk state under `.reschema/` (gitignored) is shared runtime state; tests
   wipe what they own (see `tests/test_hidden.py` pattern). Single-process use
   is assumed (engine module docstring).

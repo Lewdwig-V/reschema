@@ -143,6 +143,29 @@ def _validate(job: dict) -> dict:
     return {"ok": True, "results": results}
 
 
+def _compile_jobs(job: dict) -> dict:
+    """Batch compiles in one container: corpus slots, model binaries. Sources are
+    inline (c_source -> /work/<out>.c) or mounted paths (/app/... or absolute)."""
+    results = []
+    for j in job["jobs"]:
+        if "src_path" in j:
+            src = j["src_path"]
+            src = src if src.startswith("/") else f"/app/{src}"
+        else:
+            src = f"/work/{j['out']}.c"
+            with open(src, "w") as f:
+                f.write(j["c_source"])
+        r = subprocess.run(
+            [j["compiler"], *j["flags"], src, "-o", f"/work/{j['out']}"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        results.append({"out": j["out"], "rc": r.returncode, "stderr": r.stderr})
+    return {"results": results}
+
+
 def _compile_link(job: dict) -> dict:
     for name in job["objects"]:
         p = f"/work/{name}"
@@ -196,6 +219,8 @@ def main():
         out = _validate(job)
     elif job["mode"] == "compile-link":
         out = _compile_link(job)
+    elif job["mode"] == "compile":
+        out = _compile_jobs(job)
     else:
         out = {"stage": "internal", "detail": f"unknown mode {job['mode']!r}"}
     json.dump(out, sys.stdout)

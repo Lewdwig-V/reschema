@@ -174,6 +174,41 @@ def test_containment_fs_write_and_network_refused(tmp_path):
     )
     assert r == {"ok": True, "results": [{"ret": 10000, "mem": {}}]}
     assert not Path("/pwn").exists()  # host untouched
+
+
+def test_compile_mode_gcc_clang_and_errors(tmp_path):
+    # The pinned matrix toolchains are inside the image; seeds compile from a
+    # repo-mounted path, models from inline source; failures carry stderr.
+    r = run_worker(
+        {
+            "mode": "compile",
+            "jobs": [
+                {
+                    "src_path": "reschema/corpus/seeds/rot13.c",
+                    "out": "rot13-gcc",
+                    "compiler": "gcc",
+                    "flags": ["-O2", "-static", "-fno-pie", "-no-pie", "-g0"],
+                },
+                {
+                    "src_path": "reschema/corpus/seeds/rot13.c",
+                    "out": "rot13-clang",
+                    "compiler": "clang",
+                    "flags": ["-O2", "-static", "-fno-pie", "-no-pie", "-g0"],
+                },
+                {
+                    "c_source": "int main( {",
+                    "out": "broken",
+                    "compiler": "gcc",
+                    "flags": ["-O1"],
+                },
+            ],
+        },
+        tmp_path,
+    )
+    rcs = {j["out"]: j["rc"] for j in r["results"]}
+    assert rcs == {"rot13-gcc": 0, "rot13-clang": 0, "broken": 1}
+    assert (tmp_path / "rot13-gcc").exists() and (tmp_path / "rot13-clang").exists()
+    assert next(j for j in r["results"] if j["out"] == "broken")["stderr"]
     # buffer_i32 in_out, buffer_i32 out-as-count, cstring (hex over JSON) —
     # marshaling parity with the old native path, all cases in one round trip.
     r = run_worker(

@@ -1,7 +1,8 @@
-"""Host-side spawn of the level-B podman worker + mandatory image guard.
+"""Host-side spawn of the podman toolchain worker + mandatory image guard.
 
-Level B compiles and executes agent-authored C; that happens ONLY inside a
-one-shot rootless container (spec 2026-08-02-level-b-containment). Missing
+One pinned image for everything binary: corpus seeds (gcc+clang matrix), all
+model compiles (level A + B), and level-B native execution happen ONLY inside
+one-shot rootless containers (spec 2026-08-02-level-b-containment). Missing
 podman/image is a hard refusal, never a native fallback.
 """
 
@@ -11,8 +12,8 @@ import json
 import subprocess
 from pathlib import Path
 
-IMAGE = "localhost/reschema-levelb:1"
-BUILD_CMD = "podman build -t localhost/reschema-levelb:1 -f Containerfile.levelb ."
+IMAGE = "localhost/reschema-toolchain:1"
+BUILD_CMD = "podman build -t localhost/reschema-toolchain:1 -f Containerfile ."
 
 # src/ mounts here so the in-image python imports the checkout's worker module.
 _SRC = Path(__file__).resolve().parents[2]

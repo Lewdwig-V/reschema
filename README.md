@@ -54,15 +54,19 @@ This is adversarial-by-design tooling: the engine compiles agent-authored C
   guests need nothing else from a rootfs.
 - **Level B (differential function fuzzing)**: agent C compiles and executes
   ONLY inside a one-shot rootless **podman** container (`--network none`,
-  `--read-only`, 1g memory, 128 pids, fork-per-case). Mandatory — there is no
-  native fallback; a missing image hard-fails with the build command
-  (`podman build -t localhost/reschema-levelb:1 -f Containerfile.levelb .`).
-  Model segfaults/hangs become structured rejects, not harness death.
+  `--read-only`, 1g memory, 128 pids, fork-per-case). Model segfaults/hangs
+  become structured rejects, not harness death.
 
-Residuals that are *not* contained: the host `gcc` still parses program-mode
-(level-A) model sources (parse-only; all execution is contained as above), CPU
-within the emulation timeout, and image supply-chain (pin your base image
-digest if that matters to you).
+**Toolchain is pinned, not ambient:** one image
+(`localhost/reschema-toolchain:1`, debian trixie + gcc + clang) builds the
+*entire* corpus (gcc+clang × opt matrix) and **every** model compile for both
+levels. Host `gcc`/`clang`/glibc versions are irrelevant — guest binaries carry
+identical toolchain/libc encodings on every machine (this is what keeps qiling
+behavior deterministic). Mandatory, no fallback: a missing image hard-fails
+with the build command (`podman build -t localhost/reschema-toolchain:1 -f Containerfile .`).
+
+Residuals that are *not* contained: CPU within the emulation timeout, and image
+supply-chain (pin your base image digest if that matters to you).
 
 ## How to use
 

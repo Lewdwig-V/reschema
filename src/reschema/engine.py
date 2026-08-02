@@ -169,6 +169,63 @@ def _fn_meta(store: TaskStore, func: str) -> dict:
     return fn[func]
 
 
+def _abi_template(func: str, facts: dict) -> str:
+    """Compile-ready function-mode starter, rendered from the driver's own
+    constants (KINDS + Param defaults) so the schema docs can't drift."""
+    from .driver.spec import KINDS
+
+    n = facts["arity_guess"]
+    ret_void = not facts["returns_hint"]
+    default_range = list(Param.__dataclass_fields__["range"].default)
+    params = [
+        {"name": f"arg{i}", "kind": "i32", "range": default_range} for i in range(n)
+    ]
+    if ret_void and params:
+        # The sketch must satisfy the engine's own void floor (>=1 memory-channel
+        # param), or a pasted submission self-rejects at the spec stage. Channel
+        # kind is a guess (buffer_i32+length param for multi-arg fns, cstring for
+        # 1-arg fns); the agent verifies against experiments — facts are guesses.
+        params[0] = {
+            "name": "arg0",
+            **(
+                {
+                    "kind": "buffer_i32",
+                    "direction": "in_out",
+                    "length_param": "arg1",
+                    "range": default_range,
+                }
+                if n > 1
+                else {"kind": "cstring", "direction": "in_out"}
+            ),
+            "ret": "void",
+        }
+    sketch = json.dumps(params)
+    ret_ty = "void" if ret_void else "int32_t"
+    sig = ", ".join(f"int32_t arg{i}" for i in range(n)) or "void"
+    return f"""/* ReSchema ABI starter — {func} (facts are {facts["labeled"]})
+ *
+ * COMPOSE RULE: a helper used by ONE function MUST be declared `static` —
+ * internal linkage means no cross-TU duplicate-symbol failures at compose time.
+ */
+#include <stdint.h>
+#define RESCHEMA_FN __attribute__((sysv_abi, noinline))
+
+/* Param-spec JSON sketch (schema from the driver constants):
+ *   kind: {(" | ").join(f'"{k}"' for k in KINDS)}
+ *   direction: "in" (default) | "out" | "in_out"
+ *   ret: "i32" (default) | "void" — carried on params[0]; a void spec with NO
+ *        memory-channel param (buffer_i32/cstring) is REJECTED (compares {{}} == {{}}).
+ *   length_param: scalar param name carrying a buffer_i32's length
+ *   range: i32 default [-100, 100]; cstring case values travel as hex
+ *
+ * {sketch}
+ *
+ * Sketched signature: {ret_ty} {func}({sig}) — arity {n}, returns {"void" if ret_void else "int32_t"}:
+ * heuristic guess; verify via experiments before declaring. */
+
+"""
+
+
 def open_function_task(store: TaskStore, func: str) -> dict:
     from .disasm.analyze import analyze_function
     from .disasm.slice import disasm_function
@@ -186,6 +243,7 @@ def open_function_task(store: TaskStore, func: str) -> dict:
             "labeled": facts["labeled"],
         },
         "callees": facts["callees"],
+        "abi_template": _abi_template(func, facts),
     }
 
 

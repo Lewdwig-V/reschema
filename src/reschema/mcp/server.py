@@ -43,17 +43,20 @@ def _internal(e: Exception) -> dict:
 
 
 @server.tool()
-def corpus_build() -> list[str] | dict:
-    """Build the synthetic corpus; return task IDs.
+def corpus_build(
+    seed_ids: list[str] | None = None, matrix: list[str] | None = None
+) -> list[str] | dict:
+    """Build corpus slots; return the built task IDs.
 
-    Compiles the seed matrix (gcc+clang x O0/O1/O2 x sym/stripped) inside the
-    pinned toolchain container and writes the manifest with per-function
-    addresses. Returns the task_id list ("<seed>::<cc>-<opt>-<sym|stripped>")
-    usable with task_open/experiment/submit_model/status."""
+    Compiles inside the pinned toolchain container and merges the manifest with
+    per-function addresses. Optional targeting: `seed_ids` (e.g. ["rot13"])
+    and/or `matrix` slot selectors ("<cc>-<opt>-<sym|stripped>", e.g.
+    ["gcc-O2-sym"]); omitted params build the full matrix (previous behavior).
+    Returns the task_id list of what was built."""
     from ..corpus.generate import build
 
     try:
-        return [t["task_id"] for t in build()]
+        return [t["task_id"] for t in build(seed_ids=seed_ids, matrix=matrix)]
     except Exception as e:  # noqa: BLE001 — catch-all at the tool boundary: faults become structured answers
         return _internal(e)
 

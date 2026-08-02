@@ -100,6 +100,37 @@ def _hidden_modes(seed: str) -> tuple:
     return ("stdin",) if seed in STDIN_DRIVEN else ("argv",)
 
 
+def _journal(led: dict, event: dict) -> None:
+    """Capped per-submission event log for status telemetry (last 16)."""
+    led.setdefault("recent", []).append(event)
+    del led["recent"][:-16]
+
+
+def status_snapshot(store: TaskStore) -> dict:
+    """Ledger+manifest status: readiness, coverage, validation telemetry."""
+    led = store.ledger()
+    accepted_fns = sorted(
+        name for entry in led["accepted"] if isinstance(entry, dict) for name in entry
+    )
+    return {
+        "task_id": store.meta["task_id"],
+        "recorded_cases": len(store.recorded()),
+        "readiness": {
+            "minimum": HIDDEN_N,
+            "ready": len(store.recorded()) >= HIDDEN_N,
+        },
+        "coverage": {
+            "accepted_functions": accepted_fns,
+            "total_functions": len(store.meta["functions"]),
+            "program_accepted": any(
+                isinstance(x, str) and x == "program" for x in led["accepted"]
+            ),
+        },
+        "ledger": led,
+        "recent": led.get("recent", []),
+    }
+
+
 def submit_program(store: TaskStore, c_source: str) -> dict:
     """Anti-hardcoding gate: replay recorded cases, then freshly-recorded hidden ones."""
     rec = store.recorded()
@@ -109,6 +140,14 @@ def submit_program(store: TaskStore, c_source: str) -> dict:
 
     def reject(**kw):
         led["rejections"] += 1
+        _journal(
+            led,
+            {
+                "mode": "program",
+                "outcome": "reject",
+                "stage": kw.get("stage", kw["reason"]),
+            },
+        )
         store.save_ledger(led)
         return {"accepted": False, **kw}
 
@@ -155,6 +194,7 @@ def submit_program(store: TaskStore, c_source: str) -> dict:
     ]
     led["accepted"].append("program")
     led.setdefault("audit", {})["program"] = {"hidden_seed": hidden_seed}
+    _journal(led, {"mode": "program", "outcome": "accept"})
     store.save_ledger(led)
     return {
         "accepted": True,
@@ -315,6 +355,15 @@ def submit_function(
         # must count it — never die before the accounting (or inside the fuzz loop).
         led["submissions"] += 1
         led["rejections"] += 1
+        _journal(
+            led,
+            {
+                "mode": "function",
+                "outcome": "reject",
+                "function": func,
+                "stage": "spec",
+            },
+        )
         store.save_ledger(led)
         return {"accepted": False, "reason": "spec", "detail": str(e)}
     # ponytail: agent-controlled cost (fresh Qiling VM per case) — clamp runaway budgets
@@ -332,6 +381,15 @@ def submit_function(
     led["submissions"] += 1
     if not v.ok:
         led["rejections"] += 1
+        _journal(
+            led,
+            {
+                "mode": "function",
+                "outcome": "reject",
+                "function": func,
+                "stage": v.divergence.get("stage", "divergence"),
+            },
+        )
         store.save_ledger(led)
         return {"accepted": False, "divergence": v.divergence}
     # Newest accepted source wins: a re-accept also passed validation, so replace.
@@ -345,6 +403,7 @@ def submit_function(
     # Audit trail (parallel to "accepted" so compose's {func: source} shape is
     # untouched): the EFFECTIVE fuzz seed (fresh entropy included) + final budget.
     led.setdefault("audit", {})[func] = {"seed": v.seed, "n_fuzz": n_fuzz}
+    _journal(led, {"mode": "function", "outcome": "accept", "function": func})
     store.save_ledger(led)
     return {
         "accepted": True,

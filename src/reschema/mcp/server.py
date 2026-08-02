@@ -18,6 +18,7 @@ from ..engine import (
     TaskStore,
     experiment_function,
     open_function_task,
+    status_snapshot,
     submit_function,
     submit_program,
 )
@@ -186,21 +187,22 @@ def submit_model(
 
 @server.tool()
 def status(task_id: str) -> dict:
-    """Progress and accounting for a task.
+    """Progress, readiness, and validation telemetry for a task.
 
-    Returns recorded_cases (how many stored traces submit_model replays
-    against) and the ledger: `submissions`/`rejections` counters (program and
-    function paths both accounted),     `accepted` entries — "program" markers and
-    `{<function>: source}` dicts — and `audit` seeds. The ledger persists
-    across runs by design (accepted work is cumulative task state, not a
-    session artifact); do not read a clean ledger as a fresh task."""
+    - `readiness`: recorded_cases vs the hidden-gate minimum (8 fresh inputs);
+      below minimum is not ready for a meaningful submit
+    - `coverage`: accepted_functions/total_functions in the manifest, program
+      marker
+    - `recent`: last submissions as `{mode, outcome, function?, stage?}`
+      (capped at 16; stage for rejects is the gate stage that caught it)
+    - `ledger`: `submissions`/`rejections` counters (program and function
+      paths both accounted), `accepted` entries — "program" markers and
+      `{<function>: source}` dicts — and `audit` seeds. The ledger persists
+      across runs by design (accepted work is cumulative task state, not a
+      session artifact); do not read a clean ledger as a fresh task."""
     try:
         st = TaskStore(task_id)
-        return {
-            "task_id": task_id,
-            "recorded_cases": len(st.recorded()),
-            "ledger": st.ledger(),
-        }
+        return status_snapshot(st)
     except KeyError as e:
         return _err(e)
     except Exception as e:  # noqa: BLE001 — catch-all at the tool boundary: faults become structured answers

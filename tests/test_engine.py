@@ -118,3 +118,17 @@ def test_program_accept_is_idempotent_and_audited(manifest):
     hidden_seed = led["audit"]["program"]["hidden_seed"]
     assert hidden_seed.startswith("hidden:rot13::gcc-O1-sym:")
     assert len(hidden_seed.rsplit(":", 1)[1]) == 32  # token_hex(16)
+
+
+def test_program_accept_payload_is_rich(manifest):
+    # acceptance was a stub {accepted, replay_pct}; calibration: audit parity
+    # with rejections means counts + the hidden seed in the response itself.
+    from reschema.engine import HIDDEN_N, submit_program
+
+    st = _prog_store(manifest)
+    st.record_case("b", ["world"], b"")
+    r = submit_program(st, GOOD_ROT13_PROG)
+    assert r["accepted"]
+    assert r["recorded_cases"] == 2
+    assert r["hidden_cases"] == HIDDEN_N
+    assert r["hidden_seed"].startswith("hidden:")

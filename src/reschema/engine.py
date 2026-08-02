@@ -156,7 +156,13 @@ def submit_program(store: TaskStore, c_source: str) -> dict:
     led["accepted"].append("program")
     led.setdefault("audit", {})["program"] = {"hidden_seed": hidden_seed}
     store.save_ledger(led)
-    return {"accepted": True, "replay_pct": 100}
+    return {
+        "accepted": True,
+        "replay_pct": 100,
+        "recorded_cases": len(rec),
+        "hidden_cases": HIDDEN_N,
+        "hidden_seed": hidden_seed,
+    }
 
 
 def _fn_meta(store: TaskStore, func: str) -> dict:
@@ -340,7 +346,12 @@ def submit_function(
     # untouched): the EFFECTIVE fuzz seed (fresh entropy included) + final budget.
     led.setdefault("audit", {})[func] = {"seed": v.seed, "n_fuzz": n_fuzz}
     store.save_ledger(led)
-    return {"accepted": True}
+    return {
+        "accepted": True,
+        "compared": v.compared,
+        "skipped": v.skipped,
+        "seed": v.seed,
+    }
 
 
 def compose(store: TaskStore) -> tuple[bool, str]:

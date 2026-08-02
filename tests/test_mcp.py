@@ -86,6 +86,17 @@ def test_tool_listing():
     # compose is deliberately not exposed (spec §5)
 
 
+def test_experiment_quiet_strips_events_but_keeps_storage_full():
+    cashes = call("corpus_build")
+    assert "rot13::gcc-O2-sym" in cashes
+    tr = call("experiment", task_id="rot13::gcc-O2-sym", argv=["abc"], quiet=True)
+    assert "events" not in tr  # ~10x fewer tokens per probe
+    assert tr["stdout"] == b"nop\n".hex()
+    # storage keeps the FULL trace for the replay gate, quiet view is response-only
+    full = call("experiment", task_id="rot13::gcc-O2-sym", argv=["abc"])
+    assert full["events"]  # default path unchanged
+
+
 def test_tool_descriptions_carry_the_contract():
     """Every tool description must disclose what a blind agent would otherwise
     have to guess: modes, encodings, argv semantics, comparison contract,

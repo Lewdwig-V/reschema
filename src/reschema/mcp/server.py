@@ -96,8 +96,9 @@ def experiment(
     function: str | None = None,
     params: list[dict] | None = None,
     case: dict | None = None,
+    quiet: bool = False,
 ) -> dict:
-    """Run a ground-truth experiment and GET the full canonical trace back.
+    """Run a ground-truth experiment and GET the canonical trace back.
 
     Program mode: supply argv (plain strings, args after the program) and/or
     stdin (plain text, NOT hex). The returned trace records the run:
@@ -106,6 +107,9 @@ def experiment(
     timeout, with a trailing fault event), `files_written` as {path: hex}
     (never touches the host fs), and the syscall `events` timeline (canonical:
     addresses -> ADDR_n, write-intent fds -> FD_n).
+    `quiet=true` trims the RESPONSE (drops the events timeline — most of the
+    token weight) when you only need the io/files/exit summary; storage keeps
+    full events regardless (the replay gate needs them).
     Experiments persist as the task's recorded cases and are replayed at
     submit time — record the behavior you claim to model.
     Function mode: dispatch a single call against the ORIGINAL function with
@@ -121,7 +125,8 @@ def experiment(
         # ponytail: zero-padded — recorded() globs trace_<label>.json and sorts
         # lexicographically, so e10 must not precede e2 (upgrade: e04d at 100)
         label = f"e{len(st.recorded()):02d}"
-        return st.record_case(label, argv or [], stdin.encode())
+        t = st.record_case(label, argv or [], stdin.encode())
+        return {k: v for k, v in t.items() if k != "events"} if quiet else t
     except KeyError as e:  # unknown task (TaskStore) or function (_fn_meta)
         return _err(e)
     except Exception as e:  # noqa: BLE001 — catch-all at the tool boundary: faults become structured answers
@@ -139,15 +144,19 @@ def submit_model(
 ) -> dict:
     """Submit a C world-model for judgment. COMPARISON CONTRACT:
 
-    Program mode (no function): your source is compiled, then replayed against
-    every recorded trace and 8 freshly-drawn hidden inputs (unguessable, new
-    entropy per submission). Per case the gate compares, byte-exact after
+    Program mode (no function): your source is compiled, then replayed in two
+    STAGES: `recorded` (your stored experiment traces), then `hidden` (8 fresh
+    inputs drawn with fresh entropy per submission — passes recorded only tell
+    you nothing yet). Per case the gate compares, byte-exact after
     canonicalization: `stdout`, `stderr`, `exit_code`, `files_written` paths +
-    bytes,     and the write-family event SHAPE (fd, count per syscall). Reasons
-    for rejection: compile, io-mismatch, files-mismatch, event-divergence/
-    event-length, hidden-starvation — behavior divergences (io/files/events)
-    come with a structured `divergence` payload; mechanical rejects
-    (compile/spec/starvation) come with a `detail` message instead.
+    bytes, and the write-family event SHAPE (fd, count per syscall).
+    Rejections report the FIRST divergence per stage, by design: extraction of
+    the recorded corpus is priced in submissions, and the hidden gate
+    backstops overfitting the revealed prefix.
+    Reasons for rejection: compile, io-mismatch, files-mismatch,
+    event-divergence/event-length, hidden-starvation — behavior divergences
+    (io/files/events) come with a structured `divergence` payload; mechanical
+    rejects (compile/spec/starvation) come with a `detail` message instead.
     Function mode: your source is compiled and differential-fuzzed against the
     ORIGINAL function on per-call {ret, mem} over N_FUZZ random cases drawn
     with fresh entropy every submission (seed= pins the draw for determinism;

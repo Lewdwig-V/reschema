@@ -80,6 +80,16 @@ def test_experiment_function_forwards_whole_trace(store):
     assert "mem" in t and "events" in t
 
 
+def test_submit_function_accept_payload_carries_fuzz_audit(store):
+    r = submit_function(store, "sum_range", PARAMS, RIGHT, seed=7, n_fuzz=64)
+    assert r["accepted"]
+    assert r["seed"] == 7  # effective fuzz seed surfaced in the response
+    assert r["compared"] > 0 and r["skipped"] >= 0
+    assert (
+        store.ledger()["audit"]["sum_range"]["seed"] == 7
+    )  # response matches ledger audit
+
+
 def test_submit_function_rejects_then_accepts(store):
     bad = submit_function(store, "sum_range", PARAMS, WRONG, seed=1)
     assert not bad["accepted"]
@@ -87,7 +97,8 @@ def test_submit_function_rejects_then_accepts(store):
     led = store.ledger()
     assert led["submissions"] == 1 and led["rejections"] == 1 and led["accepted"] == []
     good = submit_function(store, "sum_range", PARAMS, RIGHT, seed=1)
-    assert good == {"accepted": True}
+    assert good["accepted"] is True
+    assert good["seed"] == 1 and good["compared"] > 0  # audit-rich acceptance
     led = store.ledger()
     assert led["submissions"] == 2 and led["rejections"] == 1
     assert led["accepted"] == [{"sum_range": RIGHT}]

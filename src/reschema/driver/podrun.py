@@ -2,8 +2,8 @@
 
 One pinned image for everything binary: corpus seeds (gcc+clang matrix), all
 model compiles (level A + B), and level-B native execution happen ONLY inside
-one-shot rootless containers (spec 2026-08-02-level-b-containment). Missing
-podman/image is a hard refusal, never a native fallback.
+one-shot rootless containers (see ARCHITECTURE.md). Missing podman/image is a
+hard refusal, never a native fallback.
 """
 
 from __future__ import annotations

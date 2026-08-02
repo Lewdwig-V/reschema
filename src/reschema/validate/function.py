@@ -6,7 +6,7 @@ fresh-entropy by default (mirrors submit_program: nothing precomputable); tests 
 `seed` for determinism.
 
 Containment: agent source compiles and executes ONLY inside the level-B podman
-worker (spec 2026-08-02-level-b-containment) — never in this process.
+worker (see ARCHITECTURE.md) — never in this process.
 """
 
 from __future__ import annotations

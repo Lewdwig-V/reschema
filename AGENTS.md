@@ -45,7 +45,6 @@ the matrix).
 
 ## Non-goals (v1)
 
-See spec doc `docs/superpowers/specs/2026-07-29-reschema-design.md` §/heading
-"Descoped for v1" (multi-arch, packing, symbolic checks, struct-by-value,
-float/vector regs, level-B syscall comparison, >6 int args, ...). Don't build
-them speculatively.
+See `ARCHITECTURE.md` §"Critical Constraints & Deviations" scope guardrails
+(multi-arch, packing, symbolic checks, struct-by-value, float/vector regs,
+level-B syscall comparison, >6 int args, ...). Don't build them speculatively.

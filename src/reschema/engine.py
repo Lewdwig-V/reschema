@@ -81,8 +81,15 @@ class TaskStore:
         os.replace(tmp, self._path("ledger.json"))  # same-dir rename is atomic
 
 
-# ponytail: 3-seed corpus, manifest-driven input-space deferred
-STDIN_DRIVEN = {"check"}  # seed names fed via stdin; all others take argv input
+# ponytail: manifest-driven input-space deferred
+STDIN_DRIVEN = {"check", "filewrite"}  # seed names fed via stdin; others take argv
+STDIN_BYTES_DRIVEN = {"filewrite"}  # stdin in the RAW byte domain (binary-safe seeds)
+
+
+def _hidden_modes(seed: str) -> tuple:
+    if seed in STDIN_BYTES_DRIVEN:
+        return ("stdin-bytes",)
+    return ("stdin",) if seed in STDIN_DRIVEN else ("argv",)
 
 
 def submit_program(store: TaskStore, c_source: str) -> dict:
@@ -100,7 +107,7 @@ def submit_program(store: TaskStore, c_source: str) -> dict:
             "stage": "recorded",
             "divergence": v.divergence,
         }
-    modes = ("stdin",) if store.meta["seed"] in STDIN_DRIVEN else ("argv",)
+    modes = _hidden_modes(store.meta["seed"])
     known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in rec}
     # Hidden ground truth: fresh unguessable inputs (new entropy every submission),
     # double-recorded like stored cases. A flaky or crashing draw invalidates the
@@ -163,7 +170,9 @@ def open_function_task(store: TaskStore, func: str) -> dict:
     }
 
 
-def experiment_function(store: TaskStore, func: str, params: list[dict], case: dict) -> dict:
+def experiment_function(
+    store: TaskStore, func: str, params: list[dict], case: dict
+) -> dict:
     """Ground truth: call the real function once, forward the whole trace.
 
     JSON contract: cstring `mem` values come back from the driver as raw bytes and
@@ -188,7 +197,9 @@ def experiment_function(store: TaskStore, func: str, params: list[dict], case: d
             try:
                 case[p.name] = bytes.fromhex(v)
             except ValueError as e:
-                raise ValueError(f"cstring case value for {p.name!r} must be hex: {e}") from e
+                raise ValueError(
+                    f"cstring case value for {p.name!r} must be hex: {e}"
+                ) from e
         elif not isinstance(v, (bytes, bytearray)):
             raise ValueError(  # noqa: TRY004 — MCP taxonomy maps ValueError → "spec"
                 f"cstring case value for {p.name!r} must be a hex str or bytes, "
@@ -196,7 +207,8 @@ def experiment_function(store: TaskStore, func: str, params: list[dict], case: d
             )
     t = call_original(store.meta["binary"], _fn_meta(store, func)["addr"], ps, case)
     t["mem"] = {
-        k: (v.hex() if isinstance(v, (bytes, bytearray)) else v) for k, v in t["mem"].items()
+        k: (v.hex() if isinstance(v, (bytes, bytearray)) else v)
+        for k, v in t["mem"].items()
     }
     return t
 
@@ -240,7 +252,9 @@ def submit_function(
         store.save_ledger(led)
         return {"accepted": False, "divergence": v.divergence}
     # Newest accepted source wins: a re-accept also passed validation, so replace.
-    existing = next((f for f in led["accepted"] if isinstance(f, dict) and func in f), None)
+    existing = next(
+        (f for f in led["accepted"] if isinstance(f, dict) and func in f), None
+    )
     if existing is not None:
         existing[func] = c_source
     else:

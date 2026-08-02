@@ -1,9 +1,22 @@
-"""Run a static ELF under qiling; capture observable trace."""
+"""Run a static ELF under qiling; capture observable trace.
+
+Schema: files_written maps rootfs-relative paths to final content hex, scraped
+from the record rootfs after the run (post-state, not syscall interception).
+
+Containment: agent C is executed deliberately, so guest file ops must never reach
+the host fs. The record runs against a fresh EMPTY rootfs holding only a copy of
+the binary itself (qiling needs the binary inside the rootfs namespace: static
+glibc readlinks /proc/self/exe at startup). Every host-mutating file op qiling
+emulates (open/unlink/rename/mkdir/chmod/...) resolves inside the scratch dir,
+which is discarded afterwards. Static binaries need nothing else from a rootfs.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import io
+import shutil
+import tempfile
 from pathlib import Path
 
 from qiling import Qiling
@@ -13,7 +26,9 @@ LOG_SYSCALLS = (
     "read",
     "write",
     "writev",
+    "open",
     "openat",
+    "creat",
     "close",
     "brk",
     "mmap",
@@ -60,29 +75,43 @@ def record(
 
         return h
 
-    try:
-        ql = Qiling([str(binary), *argv], "/", verbose=QL_VERBOSE.OFF, console=False)
-        ql.os.stdin = io.BytesIO(stdin)
-        ql.os.stdout = out
-        ql.os.stderr = err
-        for sc in LOG_SYSCALLS:
-            ql.os.set_syscall(sc, _hook(sc, "enter"), QL_INTERCEPT.ENTER)
-            ql.os.set_syscall(sc, _hook(sc, "exit"), QL_INTERCEPT.EXIT)
-        ql.run(timeout=timeout_us)
-        if any(e["phase"] == "enter" and e["sc"] == "exit_group" for e in events):
-            exit_code = ql.os.exit_code
-        else:
-            # qiling 1.4.6: exit_code defaults to 0 (not None) on a timed-out run;
-            # a static-glibc guest exits only via exit_group, so no enter event
-            # means the run stopped prematurely — report failure, not exit 0.
+    # Fresh EMPTY rootfs per record: contains ALL host-mutating file ops.
+    with tempfile.TemporaryDirectory(prefix="reschema-rootfs-") as rootfs:
+        guest = Path(rootfs) / Path(binary).name  # binary must live in the namespace
+        try:
+            shutil.copy2(binary, guest)
+            ql = Qiling(
+                [str(guest), *argv], rootfs, verbose=QL_VERBOSE.OFF, console=False
+            )
+            ql.os.stdin = io.BytesIO(stdin)
+            ql.os.stdout = out
+            ql.os.stderr = err
+            for sc in LOG_SYSCALLS:
+                ql.os.set_syscall(sc, _hook(sc, "enter"), QL_INTERCEPT.ENTER)
+                ql.os.set_syscall(sc, _hook(sc, "exit"), QL_INTERCEPT.EXIT)
+            ql.run(timeout=timeout_us)
+            if any(e["phase"] == "enter" and e["sc"] == "exit_group" for e in events):
+                exit_code = ql.os.exit_code
+            else:
+                # qiling 1.4.6: exit_code defaults to 0 (not None) on a timed-out run;
+                # a static-glibc guest exits only via exit_group, so no enter event
+                # means the run stopped prematurely — report failure, not exit 0.
+                exit_code = -1
+                events.append({"phase": "fault", "sc": "timeout", "args": []})
+        except Exception as e:  # noqa: BLE001 - any load or emulation fault is trace data, not a recorder crash
             exit_code = -1
-            events.append({"phase": "fault", "sc": "timeout", "args": []})
-    except Exception as e:  # noqa: BLE001 - any load or emulation fault is trace data, not a recorder crash
-        exit_code = -1
-        # qiling's QlErrorBase init-recurses: repr() recurses forever, avoid it
-        events.append(
-            {"phase": "fault", "sc": "crash", "args": [f"{type(e).__name__}: {e}"]}
-        )
+            # qiling's QlErrorBase init-recurses: repr() recurses forever, avoid it
+            events.append(
+                {"phase": "fault", "sc": "crash", "args": [f"{type(e).__name__}: {e}"]}
+            )
+        # Post-state scrape: everything the guest left behind is the capture —
+        # correct truncate/rename/multi-open semantics come free from real fs
+        # behavior; only regular files count (the binary copy itself excluded).
+        files_written = {
+            str(p.relative_to(rootfs)): p.read_bytes().hex()
+            for p in Path(rootfs).rglob("*")
+            if p.is_file() and not p.is_symlink() and p != guest
+        }
     return {
         "argv": [str(binary), *argv],
         "stdin_hex": stdin.hex(),
@@ -90,7 +119,7 @@ def record(
         "stdout": bytes(out.buf).hex(),
         "stderr": bytes(err.buf).hex(),
         "exit_code": exit_code,
-        "files_written": {},  # v1: seeds write no files; spec reserves the field
+        "files_written": files_written,
         "events": events,
     }
 

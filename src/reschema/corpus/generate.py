@@ -17,6 +17,7 @@ FUNCS = {
     "rot13": ["rot13_char", "rot13"],
     "check": ["pw_hash", "check_pw"],
     "calc": ["clamp_i32", "sum_range", "scale_buf"],
+    "filewrite": ["xform_byte"],
 }
 COMPILERS = ["gcc", "clang"]
 OPTS = ["-O0", "-O1", "-O2"]

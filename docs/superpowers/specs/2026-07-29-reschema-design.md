@@ -138,5 +138,4 @@ Packed/protected binaries, anti-emulation countermeasures, multi-arch beyond x86
 - `status` replay-%/coverage/readiness fields — v1 status reports recorded-case count + ledger only.
 - `corpus_build(seed_ids, matrix)` signature — v1 builds the full fixed seed set, no filtering.
 - fd-ordinal and absolute-host-path normalization — v1 canonicalizer does ADDR ordinals + argv[0] basename only (corpus binaries use fds 0/1/2 + static paths, so the drift §3 promised is unobserved here).
-- `files_written` capture/validation — recorder emits the field as `{}`; no gate compares file writes (seeds don't write files).
 - §5 tool-table exact signatures — the shipped 5 tools match in behavior, not in every literal parameter name; see `mcp/server.py`.

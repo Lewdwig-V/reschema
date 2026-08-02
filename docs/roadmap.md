@@ -5,6 +5,23 @@ land; **phases 2+ are deliberately vague** — each gets brainstormed → specce
 planned → broken into issues only when it becomes the active phase. A phase's
 prerequisite is that the one before it holds.
 
+## Architecture direction: two agents, not one monolith
+
+Steering note (2026-08, from external review): solve **decompilation for the
+foreign architecture** and **refactoring for the current architecture** as
+separate agents, not one stitched pipeline.
+
+- **Reverse-engineering agent** — what the current harness trains and judges:
+  foreign-arch binary → behavior-faithful world-model C (canonical traces,
+  hidden tests, differential fuzz as its truth source).
+- **Refactoring agent** — takes a verified-faithful world-model and rewrites
+  it into idiomatic, current-arch C (structure, naming, idiom, perf), with
+  correctness re-verified against the same judge. Composition of the two is the
+  product; conflating them inside one model/solver is the failure mode.
+
+Phases 2+ shape the judge/coaching toward the RE agent's solve rate; the
+refactoring agent rides on the same verified substrate once it exists.
+
 ## Phase 1.5 — Engine Hardening & Spec Alignment
 
 Close the MVP-sweep issues (raised 2026-08-01, ISSUE-01 … ISSUE-10, P0–P2):

@@ -104,23 +104,27 @@ def submit_program(store: TaskStore, c_source: str) -> dict:
     """Anti-hardcoding gate: replay recorded cases, then freshly-recorded hidden ones."""
     rec = store.recorded()
     model = store.dir / "model"
+    led = store.ledger()
+    led["submissions"] += 1
+
+    def reject(**kw):
+        led["rejections"] += 1
+        store.save_ledger(led)
+        return {"accepted": False, **kw}
+
     ok, err = compile_model(c_source, model)
     if not ok:
-        return {"accepted": False, "reason": "compile", "detail": err}
+        return reject(reason="compile", detail=err)
     v = replay_against(model, rec)
     if not v.ok:
-        return {
-            "accepted": False,
-            "reason": v.reason,
-            "stage": "recorded",
-            "divergence": v.divergence,
-        }
+        return reject(reason=v.reason, stage="recorded", divergence=v.divergence)
     modes = _hidden_modes(store.meta["seed"])
     known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in rec}
     # Hidden ground truth: fresh unguessable inputs (new entropy every submission),
     # double-recorded like stored cases. A flaky or crashing draw invalidates the
     # INPUT (redraw), never the model — a crash trace is not a behavior spec.
-    rng = random.Random(f"hidden:{store.meta['task_id']}:{secrets.token_hex(16)}")
+    hidden_seed = f"hidden:{store.meta['task_id']}:{secrets.token_hex(16)}"
+    rng = random.Random(hidden_seed)
     fresh = []
     for (argv, stdin), _attempt in zip(
         hidden_input_stream(rng, modes), range(10 * HIDDEN_N), strict=False
@@ -137,21 +141,20 @@ def submit_program(store: TaskStore, c_source: str) -> dict:
         fresh.append(t)
     if len(fresh) < HIDDEN_N:
         # Loud failure over vacuous pass: too few distinct usable hidden inputs.
-        return {
-            "accepted": False,
-            "reason": "hidden-starvation",
-            "detail": f"{len(fresh)}/{HIDDEN_N} usable hidden inputs after 80 draws",
-        }
+        return reject(
+            reason="hidden-starvation",
+            detail=f"{len(fresh)}/{HIDDEN_N} usable hidden inputs after 80 draws",
+        )
     v = replay_against(model, fresh)
     if not v.ok:
-        return {
-            "accepted": False,
-            "reason": v.reason,
-            "stage": "hidden",
-            "divergence": v.divergence,
-        }
-    led = store.ledger()
+        return reject(reason=v.reason, stage="hidden", divergence=v.divergence)
+    # Accept marker is idempotent (re-accept re-records one), audit keeps the
+    # effective hidden seed so the passing suite is traceable like function mode.
+    led["accepted"] = [
+        x for x in led["accepted"] if not (isinstance(x, str) and x == "program")
+    ]
     led["accepted"].append("program")
+    led.setdefault("audit", {})["program"] = {"hidden_seed": hidden_seed}
     store.save_ledger(led)
     return {"accepted": True, "replay_pct": 100}
 

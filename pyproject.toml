@@ -10,11 +10,17 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = [
-    "qiling==1.4.6",
+    "qiling>=1.4.6,<1.5",  # recorder/calling rely on 1.4.x hook & dispatch APIs (see their comments); <1.5 guards that surface
     "capstone",
     "pyelftools",
     "mcp==2.0.*",  # tests import private mcp.client._memory; narrowed until that API settles
 ]
+
+[tool.uv]
+# python-fx (qiling dep) demands pillow<11; pillow<=10.4.0 is CVE-pinned with no
+# patch in-window. python-fx's image/TUI paths are never exercised (headless
+# emulation only), so force the patched line over its cap.
+override-dependencies = ["pillow>=12.3.0"]
 
 [dependency-groups]
 dev = [

@@ -53,7 +53,7 @@ def _record_stable(binary: str | Path, argv: list[str], stdin: bytes) -> dict | 
 
 
 class TaskStore:
-    def __init__(self, task_id: str):
+    def __init__(self, task_id: str) -> None:
         man = load_manifest()
         self.meta = next((t for t in man if t["task_id"] == task_id), None)
         if self.meta is None:
@@ -90,7 +90,7 @@ class TaskStore:
             else {"accepted": [], "submissions": 0, "rejections": 0}
         )
 
-    def save_ledger(self, led: dict):
+    def save_ledger(self, led: dict) -> None:
         tmp = self._path(".ledger.json.tmp")
         tmp.write_text(json.dumps(led, indent=2))
         os.replace(tmp, self._path("ledger.json"))  # same-dir rename is atomic
@@ -120,7 +120,9 @@ def status_snapshot(store: TaskStore) -> dict:
     n_sub = led.get("submissions", 0)
     accepted_any = bool(led["accepted"])
     e_value = (
-        math.exp(-(E_ALPHA * max(0, n_exp - 1) + E_BETA * (n_sub - 1)))
+        # both counters clamped at their baseline: legacy accepted ledgers with
+        # submissions == 0 predate the bookkeeping fix and must not score > 1
+        math.exp(-(E_ALPHA * max(0, n_exp - 1) + E_BETA * max(0, n_sub - 1)))
         if accepted_any
         else 0.0
     )

@@ -376,6 +376,17 @@ def test_status_snapshot_efficiency_metric():
     st.save_ledger(led)
     eff = status_snapshot(st)["efficiency"]
     assert eff["E"] == pytest.approx(math.exp(-(0.15 * 6 + 0.4 * 2)))
+
+    # legacy accepted ledger with submissions == 0: E must cap at the
+    # baseline-one-submission state, never exceed 1
+    led["probes"], led["submissions"] = 1, 0
+    st.save_ledger(led)
+    assert status_snapshot(st)["efficiency"]["E"] == 1.0
+    led["probes"] = 11
+    st.save_ledger(led)
+    assert status_snapshot(st)["efficiency"]["E"] == pytest.approx(
+        math.exp(-(0.15 * 10))
+    )
     assert eff == {
         "E": eff["E"],
         "n_exp": 7,

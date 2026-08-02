@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import random
 import string
-import subprocess
 from collections.abc import Iterator
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
 
+from ..driver import podrun
 from ..exec.canonical import canonicalize
 from ..exec.recorder import record
 
@@ -24,20 +24,28 @@ class Verdict:
 
 
 def compile_model(c_source: str, out: Path) -> tuple[bool, str]:
-    src = out.with_suffix(".c")
-    src.write_text(c_source)
+    out.with_suffix(".c").write_text(c_source)  # debug artifact lands in the task dir
     try:
-        p = subprocess.run(
-            [*CFLAGS, str(src), "-o", str(out)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
+        r = podrun.run_worker(
+            {
+                "mode": "compile",
+                "jobs": [
+                    {
+                        "c_source": c_source,
+                        "out": out.name,
+                        "compiler": "gcc",
+                        "flags": CFLAGS[1:],
+                    }
+                ],
+            },
+            out.parent,
         )
-    except (subprocess.TimeoutExpired, OSError) as e:
-        # Infra failure (hung/missing cc), not a model bug — report as reject reason.
-        return False, f"compile infra: {type(e).__name__}: {e}"
-    return p.returncode == 0, p.stderr
+    except RuntimeError as e:  # missing podman/image: mandatory containment
+        return False, f"compile infra: {e}"
+    if "stage" in r:
+        return False, f"compile infra: {r['detail']}"
+    res = r["results"][0]
+    return res["rc"] == 0, res["stderr"]
 
 
 # Observable channel: write-family + exit_group only. Address tokens are wildcards:

@@ -164,15 +164,16 @@ def test_files_mismatch_reasons(tmp_path, monkeypatch):
 
 
 def test_compile_infra_errors_rejected(tmp_path, monkeypatch):
-    import subprocess
     from unittest.mock import Mock
 
-    for exc in (subprocess.TimeoutExpired(cmd="gcc", timeout=60), OSError("no gcc")):
-        monkeypatch.setattr(
-            "reschema.validate.program.subprocess.run", Mock(side_effect=exc)
-        )
-        ok, err = compile_model(GOOD, tmp_path / "infra")
-        assert not ok and err.startswith("compile infra:")
+    from reschema.driver import podrun
+
+    def boom(job, workdir):
+        raise RuntimeError("level-B worker image missing; build it: podman build")
+
+    monkeypatch.setattr(podrun, "run_worker", Mock(side_effect=boom))
+    ok, err = compile_model(GOOD, tmp_path / "infra")
+    assert not ok and err.startswith("compile infra:")
 
 
 def test_io_mismatch_decoded_previews_and_actual_fault(tmp_path, monkeypatch):

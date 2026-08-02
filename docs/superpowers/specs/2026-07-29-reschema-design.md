@@ -101,7 +101,7 @@ docs/superpowers/specs/  this spec
 - Run timeout on model replay = reject with the timed-out case.
 - Ground-truth double recording mismatch = task flagged flaky/unusable.
 - Byte-exact diffs always apply to *canonicalized* traces; sanitizer rules are versioned in the repo (a rule change = corpus re-record).
-- Function-mode models execute natively (ctypes) as a throughput decision; v1 corpus + model code is harness-compiled from C we can inspect, so no additional sandboxing in v1.
+- Function-mode models execute natively as a throughput decision, **contained**: agent C compiles and runs only inside one-shot rootless podman containers (spec 2026-08-02-level-b-containment); missing container runtime hard-fails (no native fallback). Corpus and both levels' model compiles all run inside the one pinned toolchain image — ambient host toolchains are out of the trust surface.
 - v1 scope: x86-64 ELF produced by our own compile matrix. Dynamic-library resolution beyond libc, anti-emulation tricks, packing, multi-process targets, and symbolic (angr-style) equivalence are **explicit non-goals for v1**.
 
 ## 9. Testing

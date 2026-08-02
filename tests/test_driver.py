@@ -5,7 +5,8 @@ import subprocess
 import pytest
 
 from reschema.corpus.generate import _symtab, build
-from reschema.driver.calling import call_model_native, call_original, gen_inputs
+from reschema.driver.calling import call_original, gen_inputs
+from reschema.driver.podrun import run_worker
 from reschema.driver.spec import Param
 
 MODEL = r"""
@@ -53,7 +54,18 @@ def probe_bin(tmp_path_factory):
     # -fno-stack-protector: the canary read (fs:[0x28] TLS) is unmapped when qiling jumps
     # straight to a function address — orthogonal to the frame-placement bug under test.
     subprocess.run(
-        ["gcc", "-O1", "-static", "-fno-pie", "-no-pie", "-fno-stack-protector", "-g0", str(src), "-o", str(binp)],
+        [
+            "gcc",
+            "-O1",
+            "-static",
+            "-fno-pie",
+            "-no-pie",
+            "-fno-stack-protector",
+            "-g0",
+            str(src),
+            "-o",
+            str(binp),
+        ],
         check=True,
     )
     return str(binp), _symtab(binp)
@@ -125,20 +137,24 @@ def test_scale_buf_in_out_buffer(manifest):
     assert out["mem"]["buf"] == [3, -100, 30, 15]
 
 
-def test_sum_range_matches_native_model(manifest, tmp_path):
+def test_sum_range_matches_worker_model(manifest, tmp_path):
     binary, addr = _slot(manifest, "calc", "sum_range")
-    so = tmp_path / "m.so"
-    subprocess.run(
-        ["gcc", "-O1", "-shared", "-fPIC", "-x", "c", "-", "-o", str(so)],
-        input=MODEL.encode(),
-        check=True,
-    )
     params = [Param("lo", "i32", range=(-20, 10)), Param("hi", "i32", range=(10, 30))]
-    for case in gen_inputs(params, random.Random(1), 4):
+    cases = gen_inputs(params, random.Random(1), 4)
+    r = run_worker(
+        {
+            "mode": "validate",
+            "c_source": MODEL,
+            "fname": "sum_range",
+            "params": [p.to_json() for p in params],
+            "cases": cases,
+        },
+        tmp_path,
+    )
+    assert r["ok"] is True
+    for case, got in zip(cases, r["results"]):
         assert case["lo"] <= case["hi"]
-        a = call_original(binary, addr, params, case)
-        b = call_model_native(str(so), "sum_range", params, case)
-        assert a["ret"] == b["ret"]
+        assert call_original(binary, addr, params, case)["ret"] == got["ret"]
 
 
 # Pinned: addresses come from the manifest pre-strip, so both slots must work.
@@ -181,16 +197,19 @@ def test_emulation_crash_returns_fault(probe_bin):
 
 def test_model_state_isolated_per_call(tmp_path):
     """Two identical calls must give identical results; stale .so images must not bleed statics."""
-    so = tmp_path / "stateful.so"
-    subprocess.run(
-        ["gcc", "-O1", "-shared", "-fPIC", "-x", "c", "-", "-o", str(so)],
-        input=STATEFUL.encode(),
-        check=True,
-    )
     params = [Param("x", "i32")]
-    a = call_model_native(str(so), "bump", params, {"x": 5})
-    b = call_model_native(str(so), "bump", params, {"x": 5})
-    assert (a["ret"], b["ret"]) == (5, 5)
+    r = run_worker(
+        {
+            "mode": "validate",
+            "c_source": STATEFUL,
+            "fname": "bump",
+            "params": [p.to_json() for p in params],
+            "cases": [{"x": 5}, {"x": 5}],
+        },
+        tmp_path,
+    )
+    assert r["ok"] is True
+    assert (r["results"][0]["ret"], r["results"][1]["ret"]) == (5, 5)
 
 
 def test_beyond_six_args_raises(probe_bin):
@@ -199,5 +218,3 @@ def test_beyond_six_args_raises(probe_bin):
     case = {p.name: i for i, p in enumerate(params)}
     with pytest.raises(NotImplementedError):
         call_original(binary, syms["bigframe_sum"][0], params, case)
-    with pytest.raises(NotImplementedError):
-        call_model_native("/nonexistent.so", "bump", params, case)

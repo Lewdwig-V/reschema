@@ -4,21 +4,20 @@ v1 compares per-field: spec-declared memory + return value (no syscalls); void s
 skip ret (eax is register garbage, mem is their channel). The fuzz draw is
 fresh-entropy by default (mirrors submit_program: nothing precomputable); tests pin
 `seed` for determinism.
+
+Containment: agent source compiles and executes ONLY inside the level-B podman
+worker (spec 2026-08-02-level-b-containment) — never in this process.
 """
 
 from __future__ import annotations
 
-import ctypes
-import os
 import random
 import secrets
-import shutil
-import subprocess
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..driver.calling import BAREGS, call_model_native, call_original, gen_inputs
+from ..driver import podrun
+from ..driver.calling import BAREGS, call_original, gen_inputs
 from ..driver.spec import Param
 
 N_FUZZ = 64
@@ -31,6 +30,21 @@ class FnVerdict:
     compared: int = 0
     skipped: int = 0
     seed: int | str | None = None  # effective fuzz seed (entropy-drawn if unpinned)
+
+
+def _preview(case: dict) -> dict:
+    return {
+        k: (v if not isinstance(v, (bytes, list)) else str(v)[:80])
+        for k, v in case.items()
+    }
+
+
+def _crash_text(crash: dict) -> str:
+    if "signal" in crash:
+        return f"signal {crash['signal']}"
+    if "timeout" in crash:
+        return "timeout"
+    return str(crash)
 
 
 def validate_function(
@@ -46,10 +60,15 @@ def validate_function(
     if len(params) > len(BAREGS):
         return FnVerdict(
             False,
-            {"stage": "arity", "detail": f"{len(params)} params exceed {len(BAREGS)} register-passed args"},
+            {
+                "stage": "arity",
+                "detail": f"{len(params)} params exceed {len(BAREGS)} register-passed args",
+            },
         )
-    if params and params[0].ret == "void" and not any(
-        p.kind in ("buffer_i32", "cstring") for p in params
+    if (
+        params
+        and params[0].ret == "void"
+        and not any(p.kind in ("buffer_i32", "cstring") for p in params)
     ):
         # Exploit floor: a scalar-only void compares {} == {} — a no-op would pass.
         # Readback is direction-agnostic, so ANY buffer/cstring param counts as a channel.
@@ -61,67 +80,24 @@ def validate_function(
                 "scalar-only compares nothing",
             },
         )
-    tmp = so_path.with_suffix(".c")
-    tmp.write_text(c_source)
-    try:
-        r = subprocess.run(
-            ["gcc", "-O1", "-shared", "-fPIC", str(tmp), "-o", str(so_path)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-    except (subprocess.TimeoutExpired, OSError) as e:
-        return FnVerdict(False, {"stage": "compile", "stderr": f"compile infra: {type(e).__name__}: {e}"})
-    if r.returncode != 0:
-        return FnVerdict(False, {"stage": "compile", "stderr": r.stderr})
-    # Symbol check against a temp copy, not the submission path: dlopen path-caches,
-    # so a resubmission to the same so_path would pass hasattr on the FIRST image and
-    # blow up as a bare AttributeError later (same ponytail leak as call_model_native).
-    fd, so_tmp = tempfile.mkstemp(suffix=".so")
-    os.close(fd)
-    try:
-        # RTLD_NOW: gcc -shared permits unresolved externals; eager binding surfaces them
-        # at load as a catchable OSError (lazy binding can abort the process at first call).
-        lib = ctypes.CDLL(shutil.copyfile(str(so_path), so_tmp), mode=os.RTLD_NOW)
-    except OSError as e:
-        os.unlink(so_tmp)
-        return FnVerdict(False, {"stage": "link", "detail": f"{type(e).__name__}: {e}"})
-    os.unlink(so_tmp)
-    if not hasattr(lib, func):
-        return FnVerdict(False, {"stage": "symbol", "detail": f"'{func}' not defined by submission"})
     effective_seed = seed if seed is not None else secrets.token_hex(16)
     rng = random.Random(effective_seed)
     # ret is function-level, carried on params[0]: void functions compare mem only
     # (eax is a register scrape; mem is their channel).
     fields = ("mem",) if params and params[0].ret == "void" else ("mem", "ret")
-    compared = skipped = 0
+    kinds = {p.name: p.kind for p in params}
+
+    # Originals (trusted corpus code) run on the host under qiling; a crash is not
+    # a behavior spec — skip. Model results come back in one worker round trip.
+    kept: list[tuple[dict, dict]] = []
+    skipped = 0
     for case in gen_inputs(params, rng, n_fuzz):
         want = call_original(binary, addr, params, case)
         if want["exit_code"] == -1:
-            # Original faults on adversarial input: a crash is not a behavior spec.
             skipped += 1
             continue
-        compared += 1
-        got = call_model_native(str(so_path), func, params, case)
-        for field in fields:
-            if want[field] != got[field]:
-                return FnVerdict(
-                    False,
-                    {
-                        "input": {
-                            k: (v if not isinstance(v, (bytes, list)) else str(v)[:80])
-                            for k, v in case.items()
-                        },
-                        "field": field,
-                        "expected": str(want[field])[:400],
-                        "actual": str(got[field])[:400],
-                        "seed": effective_seed,
-                    },
-                    compared=compared,
-                    skipped=skipped,
-                )
-    if compared == 0:
+        kept.append((case, want))
+    if not kept:
         # No case compared: never pass vacuously.
         return FnVerdict(
             False,
@@ -132,4 +108,66 @@ def validate_function(
             },
             skipped=skipped,
         )
+    try:
+        r = podrun.run_worker(
+            {
+                "mode": "validate",
+                "c_source": c_source,
+                "fname": func,
+                "params": [p.to_json() for p in params],
+                "cases": [
+                    {
+                        k: (v.hex() if isinstance(v, (bytes, bytearray)) else v)
+                        for k, v in case.items()
+                    }
+                    for case, _ in kept
+                ],
+            },
+            so_path.parent,
+        )
+    except (
+        RuntimeError
+    ) as e:  # missing podman/image: mandatory containment, no fallback
+        return FnVerdict(False, {"stage": "infra", "detail": str(e)})
+    if "stage" in r:
+        return FnVerdict(False, r)  # compile/link/symbol/infra payloads pass through
+
+    compared = 0
+    for (case, want), got in zip(kept, r["results"]):
+        compared += 1
+        if "crash" in got:
+            # Model crash/hang is the model's fault — reject, never wedge or die.
+            return FnVerdict(
+                False,
+                {
+                    "input": _preview(case),
+                    "field": "crash",
+                    "expected": "no crash",
+                    "actual": _crash_text(got["crash"]),
+                    "seed": effective_seed,
+                },
+                compared=compared,
+                skipped=skipped,
+            )
+        got_cmp = {
+            "ret": got["ret"],
+            "mem": {
+                k: (bytes.fromhex(v) if kinds[k] == "cstring" else v)
+                for k, v in got["mem"].items()
+            },
+        }
+        for field in fields:
+            if want[field] != got_cmp[field]:
+                return FnVerdict(
+                    False,
+                    {
+                        "input": _preview(case),
+                        "field": field,
+                        "expected": str(want[field])[:400],
+                        "actual": str(got_cmp[field])[:400],
+                        "seed": effective_seed,
+                    },
+                    compared=compared,
+                    skipped=skipped,
+                )
     return FnVerdict(True, compared=compared, skipped=skipped, seed=effective_seed)

@@ -31,9 +31,10 @@ the matrix).
   (`secrets.token_hex(16)`); tests pin explicit seeds. Fuzz budgets are
   harness-controlled (`N_FUZZ` floor at the MCP boundary — the agent cannot
   tune its own judge).
-- **Trust model is deliberate:** agent C is compiled and executed (ctypes
-  native with full host privileges; qiling runs against a fresh empty rootfs —
-  guest file ops are contained). See README "Trust model".
+- **Trust model is deliberate:** agent C is compiled and executed — level A
+  (qiling vs a fresh empty rootfs), level B (mandatory one-shot rootless podman
+  worker; podman is a hard dependency for level-B work/tests). Level-A model
+  compile still uses host gcc (parse-only). See README "Trust model".
 - On-disk state under `.reschema/` (gitignored) is shared runtime state; tests
   wipe what they own (see `tests/test_hidden.py` pattern). Single-process use
   is assumed (engine module docstring).

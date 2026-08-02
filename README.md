@@ -52,11 +52,17 @@ This is adversarial-by-design tooling: the engine compiles agent-authored C
   cannot touch the host fs by construction (`files_written` is scraped from the
   record rootfs — capture and containment are the same mechanism). Static ELF
   guests need nothing else from a rootfs.
-- **Level B (ctypes, native)**: runs with **full host process privileges** —
-  deliberate, since the harness must observe real behavior.
+- **Level B (differential function fuzzing)**: agent C compiles and executes
+  ONLY inside a one-shot rootless **podman** container (`--network none`,
+  `--read-only`, 1g memory, 128 pids, fork-per-case). Mandatory — there is no
+  native fallback; a missing image hard-fails with the build command
+  (`podman build -t localhost/reschema-levelb:1 -f Containerfile.levelb .`).
+  Model segfaults/hangs become structured rejects, not harness death.
 
-CPU spin is bounded by the emulation timeout; nothing else is bounded. Run
-submissions you don't trust inside a container or VM.
+Residuals that are *not* contained: the host `gcc` still parses program-mode
+(level-A) model sources (parse-only; all execution is contained as above), CPU
+within the emulation timeout, and image supply-chain (pin your base image
+digest if that matters to you).
 
 ## How to use
 

@@ -1,0 +1,7 @@
+FROM docker.io/library/python:3.12-slim-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /work
+# Worker module ships with the repo (mounted ro at run time), not baked in:
+# image rebuilds are only for toolchain changes.
+CMD ["python", "-m", "reschema.driver.native_worker"]

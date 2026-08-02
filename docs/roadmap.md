@@ -9,6 +9,7 @@ prerequisite is that the one before it holds.
 
 Close the MVP-sweep issues (raised 2026-08-01, ISSUE-01 … ISSUE-10, P0–P2):
 
+- **Level-B podman containment** (ISSUE-11 — mandatory worker, no native exec)
 - Canonicalizer v2 (FD ordinals, host-path stripping)
 - File-writing seed + `files_written` recording/validation
 - `task_open` ABI header, signature guess, known-callee extraction

@@ -1,4 +1,5 @@
-"""Invoke a function: original in qiling, model natively via ctypes.
+"""Invoke a function: original in qiling. (Model execution lives in the level-B
+podman worker — see validate/function.py and spec 2026-08-02-level-b-containment.)
 
 Traps (qiling 1.4.6):
 - SENTINEL is a mapped return-address trap: write it at [rsp], run until RIP == SENTINEL.
@@ -6,18 +7,16 @@ Traps (qiling 1.4.6):
   API-hook drivers (Windows etc.); ours run plain Linux user ELFs and never map there.
 - Read stack pointer BEFORE any stack writes; ql.stack_write is rsp-relative, so set rsp first.
 - 1.4.6 has no ql.os.stack_address / ql.reg — use ql.loader.stack_address / ql.arch.regs.
-- ponytail: model side runs in-process via ctypes with no timeout; a hanging model wedges the
-  submit gate; upgrade path = subprocess worker if it ever bites.
 """
 
 from __future__ import annotations
 
 import ctypes
-import os
 import random
 import shutil
 import struct
 import tempfile
+from pathlib import Path
 
 from qiling import Qiling
 
@@ -79,7 +78,13 @@ def call_original(binary: str, addr: int, params: list[Param], case: dict) -> di
     On timeout/emulation fault, mirrors recorder.py's fault convention:
     exit_code -1 + a trailing {"phase": "fault", ...} event."""
     _guard_arity(params)
-    ql = Qiling([binary], "/", verbose=0, console=False)
+    # Scratch rootfs + in-namespace binary copy (recorder.py pattern): originals
+    # are trusted corpus code, but any file op they perform stays contained.
+    # ponytail: rf cleans itself on CPython refcount drop at function exit
+    rf = tempfile.TemporaryDirectory(prefix="reschema-rootfs-")
+    guest = Path(rf.name) / Path(binary).name
+    shutil.copy2(binary, guest)
+    ql = Qiling([str(guest)], rf.name, verbose=0, console=False)
     ql.mem.map(SENTINEL, 0x1000)
     sp = ql.loader.stack_address  # initial stack top; read BEFORE any stack writes
     regs = ql.arch.regs
@@ -114,7 +119,9 @@ def call_original(binary: str, addr: int, params: list[Param], case: dict) -> di
             "mem": {},
             "exit_code": -1,
             # recorder.py convention: type name + message; qiling's QlErrorBase repr() recurses
-            "events": [{"phase": "fault", "sc": "crash", "args": [f"{type(e).__name__}: {e}"]}],
+            "events": [
+                {"phase": "fault", "sc": "crash", "args": [f"{type(e).__name__}: {e}"]}
+            ],
         }
     if regs.rip != SENTINEL:  # stopped anywhere but at the return trap = timed out
         return {
@@ -123,7 +130,12 @@ def call_original(binary: str, addr: int, params: list[Param], case: dict) -> di
             "exit_code": -1,
             "events": [{"phase": "fault", "sc": "timeout", "args": []}],
         }
-    out = {"ret": ctypes.c_int32(regs.rax).value, "mem": {}, "exit_code": 0, "events": []}
+    out = {
+        "ret": ctypes.c_int32(regs.rax).value,
+        "mem": {},
+        "exit_code": 0,
+        "events": [],
+    }
     for p in params:
         if p.kind == "buffer_i32" and p.name in ptrs:
             n = len(case[p.name]) if isinstance(case[p.name], list) else case[p.name]
@@ -134,40 +146,4 @@ def call_original(binary: str, addr: int, params: list[Param], case: dict) -> di
         # mis-declared spec, and the mem mismatch is how the validator catches it.
         if p.kind == "cstring" and p.name in ptrs:
             out["mem"][p.name] = bytes(ql.mem.read(ptrs[p.name], len(case[p.name])))
-    return out
-
-
-def call_model_native(so_path: str, func: str, params: list[Param], case: dict) -> dict:
-    _guard_arity(params)
-    # Fresh image per call: dlopen path-caches, so reusing so_path bleeds statics/globals
-    # across calls. ponytail: copied per call, never dlclosed — leak is one .so image per
-    # call, trivial at test scale.
-    fd, tmp = tempfile.mkstemp(suffix=".so")
-    os.close(fd)
-    lib = ctypes.CDLL(shutil.copyfile(so_path, tmp))
-    os.unlink(tmp)
-    fn = getattr(lib, func)
-    fn.restype = ctypes.c_int32
-    keep = []
-    args, watched = [], {}
-    for p in params:
-        if p.kind == "i32":
-            args.append(ctypes.c_int32(case[p.name]))
-        elif p.kind == "cstring":
-            b = ctypes.create_string_buffer(bytes(case[p.name]), len(case[p.name]))
-            keep.append(b)
-            args.append(ctypes.cast(b, ctypes.c_char_p))
-            watched[p.name] = (b, "cstring")
-        elif p.kind == "buffer_i32":
-            n = len(case[p.name]) if isinstance(case[p.name], list) else case[p.name]
-            arr = (ctypes.c_int32 * n)(
-                *(case[p.name] if isinstance(case[p.name], list) else [0] * n)
-            )
-            keep.append(arr)
-            args.append(arr)
-            watched[p.name] = (arr, "buffer_i32")
-    out = {"ret": fn(*args), "mem": {}}
-    for name, (buf, kind) in watched.items():
-        # Direction-agnostic (mirrors call_original's mem keys exactly, buffer_i32 included).
-        out["mem"][name] = list(buf) if kind == "buffer_i32" else bytes(buf)
     return out

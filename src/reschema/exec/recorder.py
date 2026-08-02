@@ -15,12 +15,49 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os as _os
 import shutil
 import tempfile
 from pathlib import Path
 
+import qiling.os.posix.syscall.fcntl as _qf
+import qiling.os.posix.syscall.unistd as _qu
 from qiling import Qiling
 from qiling.const import QL_INTERCEPT, QL_VERBOSE
+from qiling.os.posix.const import AT_FDCWD as _AT_FDCWD
+
+# ── Qiling 1.4.6 compatibility patch ─────────────────────────────────────────
+# virtual_abspath_at sign-extends dirfd using ql.arch.bits (64) instead of the
+# Linux syscall ABI width (32-bit int), so AT_FDCWD (0xFFFFFF9C as uint32 = -100
+# as int32) is misidentified as a large positive fd, causing every openat with a
+# relative path to fail with EPERM.  Patch both the definition and the copy
+# already imported into fcntl so all callsites are covered.
+
+
+def _virtual_abspath_at(ql, vpath: str, dirfd: int):
+    if ql.os.path.is_virtual_abspath(vpath):
+        return vpath
+    # The Linux openat dirfd is a 32-bit signed int; Qiling reads it as 64-bit
+    # unsigned, so large unsigned values that represent negative 32-bit fds
+    # (e.g. AT_FDCWD = 0xFFFFFF9C) must be re-signed with 32-bit width.
+    if dirfd >= 2**31:
+        dirfd -= 2**32
+    if dirfd == _AT_FDCWD:
+        basedir = ql.os.path.cwd
+    else:
+        f = _qu.get_opened_fd(ql.os, dirfd)
+        if f is None or not hasattr(f, "name"):
+            return None
+        hpath = f.name
+        if not _os.path.isdir(hpath):
+            return None
+        basedir = ql.os.path.host_to_virtual_path(hpath)
+    return str(ql.os.path.PureVirtualPath(basedir, vpath))
+
+
+_qu.virtual_abspath_at = _virtual_abspath_at
+_qf.virtual_abspath_at = _virtual_abspath_at
+# ─────────────────────────────────────────────────────────────────────────────
 
 LOG_SYSCALLS = (
     "read",

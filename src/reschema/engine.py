@@ -7,6 +7,7 @@ single-process (or out-of-band serialized) access is assumed.
 from __future__ import annotations
 
 import json
+import math
 import os
 import random
 import re
@@ -28,6 +29,9 @@ TASKS = ROOT / ".reschema" / "tasks"
 MANIFEST = ROOT / ".reschema" / "corpus" / "manifest.json"
 
 HIDDEN_N = 8  # distinct usable hidden inputs each submission must survive
+# Cost-shaped efficiency: E = accepted * exp(-(alpha*(probes-1)+beta*(subs-1)))
+# (roadmap phase 2 sizing: probe/submission counts only, no wall-clock flake).
+E_ALPHA, E_BETA = 0.15, 0.40
 
 
 def load_manifest() -> list[dict]:
@@ -63,7 +67,10 @@ class TaskStore:
         return self.dir / name
 
     def record_case(self, label: str, argv: list[str], stdin: bytes) -> dict:
-        """Record a ground-truth trace; double-record to catch flakiness."""
+        """Record a ground-truth trace (one probe); double-record to catch flakiness."""
+        led = self.ledger()
+        led["probes"] = led.get("probes", 0) + 1
+        self.save_ledger(led)
         a = _record_stable(self.meta["binary"], argv, stdin)
         if a is None:
             raise RuntimeError(f"task {self.meta['task_id']} flaky on {label}")
@@ -109,6 +116,14 @@ def _journal(led: dict, event: dict) -> None:
 def status_snapshot(store: TaskStore) -> dict:
     """Ledger+manifest status: readiness, coverage, validation telemetry."""
     led = store.ledger()
+    n_exp = led.get("probes", 0)
+    n_sub = led.get("submissions", 0)
+    accepted_any = bool(led["accepted"])
+    e_value = (
+        math.exp(-(E_ALPHA * max(0, n_exp - 1) + E_BETA * (n_sub - 1)))
+        if accepted_any
+        else 0.0
+    )
     accepted_fns = sorted(
         name for entry in led["accepted"] if isinstance(entry, dict) for name in entry
     )
@@ -128,6 +143,13 @@ def status_snapshot(store: TaskStore) -> dict:
         },
         "ledger": led,
         "recent": led.get("recent", []),
+        "efficiency": {
+            "E": e_value,
+            "n_exp": n_exp,
+            "n_sub": n_sub,
+            "alpha": E_ALPHA,
+            "beta": E_BETA,
+        },
     }
 
 
@@ -306,6 +328,9 @@ def experiment_function(
     unchanged for internal callers (driver tests call this with bytes directly)."""
     from .driver.calling import call_original
 
+    led = store.ledger()
+    led["probes"] = led.get("probes", 0) + 1
+    store.save_ledger(led)
     try:
         ps = [Param.from_json(p) for p in params]
     except KeyError as e:

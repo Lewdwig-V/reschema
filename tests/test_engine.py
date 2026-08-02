@@ -132,3 +132,29 @@ def test_program_accept_payload_is_rich(manifest):
     assert r["recorded_cases"] == 2
     assert r["hidden_cases"] == HIDDEN_N
     assert r["hidden_seed"].startswith("hidden:")
+
+
+def test_probes_counted_on_program_experiment(manifest):
+    st = TaskStore("rot13::gcc-O2-sym")
+    st._path("ledger.json").unlink(missing_ok=True)
+    for p in st.dir.glob("trace_*.json"):
+        p.unlink()
+    st.record_case("a", ["abcdefghijklmnopqrstuvwxyz"], b"")
+    st.record_case("b", ["zz"], b"")
+    led = st.ledger()
+    assert led.get("probes") == 2  # experiment call = one probe, one tally
+
+
+def test_probes_counted_on_function_experiment(manifest):
+    from reschema.engine import experiment_function
+
+    st = TaskStore("calc::gcc-O2-sym")
+    st._path("ledger.json").unlink(missing_ok=True)
+    ps = [
+        {"name": "v", "kind": "i32"},
+        {"name": "lo", "kind": "i32"},
+        {"name": "hi", "kind": "i32"},
+    ]
+    experiment_function(st, "clamp_i32", ps, {"v": 5, "lo": 0, "hi": 10})
+    experiment_function(st, "clamp_i32", ps, {"v": -5, "lo": 0, "hi": 10})
+    assert st.ledger().get("probes") == 2

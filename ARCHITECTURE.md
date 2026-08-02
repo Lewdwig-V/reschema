@@ -59,8 +59,13 @@ capped `recent` submission journal). Ledger writes are atomic
   `compile-link` mode; duplicate externally-visible symbols map to a
   structured "declare helpers static" reject. Not exposed as an MCP tool.
 - **status_snapshot** computes readiness (recorded cases vs the hidden-gate
-  minimum), coverage (accepted/total manifest functions), and the `recent`
-  journal from ledger/manifest only.
+  minimum), coverage (accepted/total manifest functions), the `recent`
+  journal, and the cost-shaped `efficiency` metric
+  (`E = accepted * exp(-(0.15*(probes-1) + 0.4*(submissions-1)))`, probe and
+  submission counts only — wall-clock noise is deliberately excluded) from
+  ledger/manifest only. Probe accounting lives on both experiment paths
+  (program-path records and function-path cases), stored as a lazy
+  `probes` ledger key.
 - **_abi_template / open_function_task** emit a compile-ready header skeleton
   plus the capstone-derived facts and a labeled signature guess.
 

@@ -15,6 +15,7 @@ from pathlib import Path
 from elftools.elf.elffile import ELFFile
 
 from ..driver import podrun
+from ..exec.canonical import CANONICALIZER_VERSION
 
 ROOT = Path(__file__).resolve().parents[3]
 SEEDS = ROOT / "src" / "reschema" / "corpus" / "seeds"
@@ -101,6 +102,9 @@ def build(out_root: Path = OUT_ROOT) -> list[dict]:
             }
         )
     (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    # Machine-checkable canonicalizer stamp: engine refuses to load a corpus
+    # recorded under different sanitizer rules (rules change = corpus re-record).
+    (out_root / "canonicalizer_version").write_text(CANONICALIZER_VERSION)
     return manifest
 
 

@@ -137,5 +137,4 @@ Packed/protected binaries, anti-emulation countermeasures, multi-arch beyond x86
 - Program-mode input-space spec field — input space stays implicit in the hidden-stream generator.
 - `status` replay-%/coverage/readiness fields — v1 status reports recorded-case count + ledger only.
 - `corpus_build(seed_ids, matrix)` signature — v1 builds the full fixed seed set, no filtering.
-- fd-ordinal and absolute-host-path normalization — v1 canonicalizer does ADDR ordinals + argv[0] basename only (corpus binaries use fds 0/1/2 + static paths, so the drift §3 promised is unobserved here).
 - §5 tool-table exact signatures — the shipped 5 tools match in behavior, not in every literal parameter name; see `mcp/server.py`.

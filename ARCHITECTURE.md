@@ -142,6 +142,20 @@ leading accumulator-init; callees from direct `call rel32` targets resolved
 against manifest addresses. Validated against the full corpus matrix by test;
 labeled a guess in payload.
 
+## memory.py — deduction cache
+Per-family deduction cache at `.reschema/memory/<seed>.jsonl` (temp file +
+atomic replace, single-process like the task ledger). Two tiers:
+`verified_fact` — written only by the harness on gate acceptance (function
+mode: `{fn, params, c_source, n_fuzz, audit_seed}`; program mode: `fn:
+"__main__"`); `unverified_hypothesis` — agent notes via
+`submit_model(notes=[...])`, promoted only if the annotated submission itself
+is accepted. `task_open` injects family-matched entries (`{seed, function}`
+or `__main__`) with their tier tags; the hidden gate's strictness is
+unchanged — memory accelerates pathfinding only. The cost-shaped effect is
+asserted by the reference benchmark: later family slots reach acceptance with
+zero probes when the cache carries the verified source
+(`[exp(-0.75), 1.0, 1.0]` vs the flat probe-heavier baseline).
+
 # Key Architectural Decisions
 
 1. **Single pinned toolchain image for everything binary** — corpus

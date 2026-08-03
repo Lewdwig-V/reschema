@@ -293,3 +293,42 @@ def test_status_corrupt_ledger_returns_internal_error():
 def test_corpus_build_targeted_passthrough():
     ids = call("corpus_build", seed_ids=["rot13"])
     assert len(ids) == 12 and all(i.startswith("rot13::") for i in ids)
+
+
+def test_submit_model_notes_flow_through(tmp_path, monkeypatch):
+    monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
+
+    call("corpus_build")
+    call(
+        "experiment",
+        task_id="calc::gcc-O2-sym",
+        function="sum_range",
+        params=PARAMS,
+        case={"lo": 1, "hi": 3},
+    )
+    r = call(
+        "submit_model",
+        task_id="calc::gcc-O2-sym",
+        function="sum_range",
+        params=PARAMS,
+        c_source=RIGHT,
+        notes=["this subtraction chain converges"],
+    )
+    assert r["accepted"], r
+
+    from reschema.memory import read_family
+
+    notes = [
+        e
+        for e in read_family("calc", fn="sum_range", root=tmp_path)
+        if e["tier"] == "unverified_hypothesis"
+    ]
+    assert notes == [
+        {
+            "tier": "unverified_hypothesis",
+            "fn": "sum_range",
+            "task_id": "calc::gcc-O2-sym",
+            "note": "this subtraction chain converges",
+            "promoted": True,
+        }
+    ]

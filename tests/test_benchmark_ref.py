@@ -46,3 +46,44 @@ def test_reference_family_trajectory_flat_without_memory():
     traj = run_family_baseline()
     want = math.exp(-0.15 * (len(PROBE_INPUTS) - 1))
     assert traj == pytest.approx([want] * len(ROT13_FAMILY), abs=1e-9)
+
+
+def test_family_memory_bends_trajectory_up(monkeypatch, tmp_path):
+    """ISSUE-2B-4: play rot13 O0->O1->O2 with the cache primed by an accepted
+    first slot; later slots submit the cached verified source with ZERO probes
+    and pass in one submission: E=1.0 vs the flat baseline exp(-0.75)."""
+    from reschema.memory import read_family
+
+    monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
+    build()
+    first = TaskStore("rot13::gcc-O0-sym")
+    for p in first.dir.glob("trace_*.json"):
+        p.unlink()
+    first._path("ledger.json").unlink(missing_ok=True)
+    for i, word in enumerate(["alpha", "Beta", "zzz", "hello", "world!", "rot13"]):
+        first.record_case(f"e{i:02d}", [word], b"")
+    r = submit_program(first, GOOD_ROT13)
+    assert r["accepted"] and status_snapshot(first)["efficiency"]["E"] == pytest.approx(
+        math.exp(-0.75)
+    )
+    cached = read_family("rot13", fn="__main__", root=tmp_path)
+    assert (
+        cached
+        and cached[0]["tier"] == "verified_fact"
+        and cached[0]["promoted"] is True
+    )
+
+    traj = [math.exp(-0.75)]
+    for slot in ("rot13::gcc-O1-sym", "rot13::gcc-O2-sym"):
+        st = TaskStore(slot)
+        for p in st.dir.glob("trace_*.json"):
+            p.unlink()
+        st._path("ledger.json").unlink(missing_ok=True)
+        # no probing: the family memory carries both the verified source AND the
+        # proven ABI shape — submit from the cache, not from experiments
+        res = submit_program(st, cached[0]["c_source"])
+        assert res["accepted"] is not None
+        e = status_snapshot(st)["efficiency"]
+        assert e["n_exp"] == 0 and e["n_sub"] == 1 and e["E"] == 1.0
+        traj.append(e["E"])
+    assert traj == [math.exp(-0.75), 1.0, 1.0]

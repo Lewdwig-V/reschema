@@ -4,3 +4,4 @@ __pycache__/
 .reschema/
 build/
 dist/
+.worktrees/

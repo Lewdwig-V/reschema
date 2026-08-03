@@ -22,6 +22,7 @@ from ..engine import (
     submit_function,
     submit_program,
 )
+from ..memory import read_family
 from ..validate.function import N_FUZZ
 
 server = MCPServer("reschema")
@@ -85,6 +86,7 @@ def task_open(task_id: str, function: str | None = None) -> dict:
             "stripped": m["stripped"],
             "functions": m["functions"],
             "input": "stdin" if m["seed"] in STDIN_DRIVEN else "argv",
+            "memory": read_family(m["seed"], fn="__main__"),
         }
     except KeyError as e:
         return _err(e)
@@ -145,6 +147,7 @@ def submit_model(
     params: list[dict] | None = None,
     seed: int | None = None,
     n_fuzz: int | None = None,
+    notes: list[str] | None = None,
 ) -> dict:
     """Submit a C world-model for judgment. COMPARISON CONTRACT:
 
@@ -169,7 +172,12 @@ def submit_model(
     case is rejected as a crash. Wrong memory direction or a no-op against a
     void spec with no memory channel is rejected too.
     Accepted models enter the task ledger (see status) and compose per-TU at
-    compose time: helpers used by one function must be `static`."""
+    compose time: helpers used by one function must be `static`.
+    `notes` (optional strings) are recorded in the family deduction cache as
+    unverified_hypothesis entries, PROMOTED only if THIS submission is
+    accepted — later family slots see them via task_open's injected `memory`.
+    Accepted models also auto-write a verified_fact entry (your params =>
+    source mapping) other family slots can reuse verbatim."""
     try:
         st = TaskStore(task_id)
         if function:
@@ -180,8 +188,10 @@ def submit_model(
                 if n_fuzz is None
                 else {"n_fuzz": max(N_FUZZ, min(n_fuzz, 4 * N_FUZZ))}
             )
-            return submit_function(st, function, params or [], c_source, **kw)
-        return submit_program(st, c_source)
+            return submit_function(
+                st, function, params or [], c_source, notes=notes, **kw
+            )
+        return submit_program(st, c_source, notes=notes)
     except KeyError as e:
         return _err(e)
     except Exception as e:  # noqa: BLE001 — catch-all at the tool boundary: faults become structured answers

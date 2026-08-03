@@ -193,3 +193,20 @@ def test_program_task_open_injects_main_memory(manifest, monkeypatch, tmp_path):
     assert len(facts) == 1
     assert facts[0]["fn"] == "__main__" and facts[0]["promoted"] is True
     assert facts[0]["c_source"] == GOOD_ROT13_PROG
+
+
+def test_malformed_non_object_lines_skipped(tmp_path):
+    # valid JSON but not a mapping (null/[]/text/number): the hint source must
+    # degrade to the good entries, never raise through task_open paths
+    (tmp_path / "calc.jsonl").write_text(
+        "null\n[]\n"
+        '"just a string"\n42\n'
+        + json.dumps(
+            {"tier": "verified_fact", "fn": "sum_range", "task_id": "calc::gcc-O2-sym"}
+        )
+        + "\n"
+    )
+    entries = read_family("calc", root=tmp_path)
+    assert entries == [
+        {"tier": "verified_fact", "fn": "sum_range", "task_id": "calc::gcc-O2-sym"}
+    ]

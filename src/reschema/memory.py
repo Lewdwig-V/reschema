@@ -37,6 +37,8 @@ def read_family(
             e = json.loads(line)
         except json.JSONDecodeError:
             continue  # a hint source degrades to "no memory", never crashes
+        if not isinstance(e, dict):
+            continue  # valid JSON but not an entry (null/[]/scalar) — skip quietly
         if fn is None or e.get("fn") == fn:
             out.append(e)
     return out

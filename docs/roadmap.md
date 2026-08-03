@@ -62,6 +62,31 @@ rebuilt), with 2C benchmarking on top. Design decisions of record:
 - **Strictness invariant:** the hidden gate stays the only judge; memory must
   never relax acceptance semantics, only accelerate reaching them.
 
+### Research-derived slots (RE-literature sweep, 2026-08)
+
+Four ideas from 2025–26 neural-decompile research, refactored to ReSchema
+primitives (assessment in this branch's worktree). Each lands where its
+dependency already lives; none expands settled scope.
+
+- **Two-pass repair directive** (Skeleton→Skin refactored): Level B
+  rejection-repair prompts split abstract bit-logic repair (fixed-width ints,
+  no semantic naming) from later idiomatic-type annotation. Coaching-context
+  only — zero validator code. **Slot: 2B** `task_open` injection payload.
+- **Syscall dependency slice** (backward slicing refactored): `divergence`
+  payloads gain the fd/buffer-linked backward syscall chain
+  (`open → read → write[FAIL]`), sliced from the recorded Qiling trace — no
+  disassembly-level slicing. Cuts repair-context tokens per rejection.
+  **Slot: 2B**, ships alongside cache injection (both are reject-context
+  quality for E).
+- **Call topology digest** (graph grounding refactored): `verified_fact`
+  JSONL entries may carry a small call-graph digest (depth, callee list) so
+  stripped slots map `fn_0x…` back to family names via topology, not
+  symtab. **Slot: 2B**, optional field in the JSONL schema.
+- **Single-input probe** (micro-assertion refactored): Level B `experiment`
+  gains a `single_input` mode — one ctypes run against the original slice
+  before a full campaign — keeping early-hypothesis N_exp cheap. 2A's probe
+  accounting already covers both paths. **Slot: 2B** Level B tooling.
+
 ### 2A — Telemetry & reference benchmark (ISSUE-2A)
 - Ledger probes counter (experiment accounting, both program and function
   paths) next to the submissions/rejections counters.

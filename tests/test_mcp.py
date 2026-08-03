@@ -332,3 +332,38 @@ def test_submit_model_notes_flow_through(tmp_path, monkeypatch):
             "promoted": True,
         }
     ]
+
+
+def test_experiment_single_input_is_cheap_scout_contract(tmp_path, monkeypatch):
+    # ISSUE-2B-8: one call_original round, no trace-json persisted, identical
+    # {ret, mem} shape to the full case path, and exactly ONE probe accounted.
+    build()
+    task = "calc::gcc-O2-sym"
+    st = TaskStore(task)
+    st._path("ledger.json").unlink(missing_ok=True)
+    for p in st.dir.glob("trace_*.json"):
+        p.unlink()
+
+    case = {"lo": -5, "hi": 20}
+    full = call(
+        "experiment", task_id=task, function="sum_range", params=PARAMS, case=case
+    )
+    cheap = call(
+        "experiment",
+        task_id=task,
+        function="sum_range",
+        params=PARAMS,
+        case=case,
+        single_input=True,
+    )
+
+    assert set(cheap.keys()) == set(full.keys())
+    assert cheap["ret"] == full["ret"] and cheap["mem"] == full["mem"]
+    assert len(list(st.dir.glob("trace_*.json"))) == 0  # no case persisted
+    assert st.ledger().get("probes") == 2  # one probe each (not more, not fewer)
+
+
+def test_experiment_single_input_rejected_on_program_mode():
+    build()
+    r = call("experiment", task_id="rot13::gcc-O2-sym", argv=["abc"], single_input=True)
+    assert r.get("error") == "spec"

@@ -74,6 +74,91 @@ def _obs_events(trace: dict) -> list[dict]:
     return evs
 
 
+# Backward dependency slicing (research slot 2B-6): attach a small fd-linked
+# chain (fd-producing open-family syscall + the writes that followed it) to
+# event-divergence and files-mismatch payloads. io-mismatch stays slice-less
+# (stdout errors are already covered by decoded previews + fault markers).
+_OPEN_FAMILY = ("openat", "open", "creat")
+
+
+def _fd_table(events: list[dict]) -> dict[str, str]:
+    """Literal fd -> FD_<n> for write-intent opens, mirroring canonicalize's walk."""
+    from ..exec.canonical import _write_intent
+
+    fds: dict[str, str] = {}
+    pending = False
+    for e in events:
+        sc, phase = e["sc"], e["phase"]
+        if sc in _OPEN_FAMILY and phase == "enter":
+            pending = _write_intent(sc, e["args"])
+        elif sc in _OPEN_FAMILY and phase == "exit":
+            res = e.get("result")
+            if pending and isinstance(res, str) and res.startswith("0x"):
+                fds.setdefault(res, f"FD_{len(fds)}")
+            pending = False
+    return fds
+
+
+def _dep_slice(trace: dict, focus_index: int) -> list[dict] | None:
+    """Chain for an event-divergence focus: opener pair for the focus fd, then
+    every write event on that fd up to (and incl) the focus, capped at 6."""
+    evs = trace["events"]
+    if not (0 <= focus_index < len(evs)):
+        return None
+    focus = evs[focus_index]
+    fd = focus["args"][0] if focus["args"] else None
+    if fd is None:
+        return None
+    inv = {v: k for k, v in _fd_table(evs).items()}
+    literal = inv.get(fd, fd)  # canonical FD_<n> -> original literal
+    chain, enter = [], None
+    for e in evs[: focus_index + 1]:
+        if e["sc"] in _OPEN_FAMILY and e["phase"] == "enter":
+            enter = e
+        elif (
+            e["sc"] in _OPEN_FAMILY
+            and e["phase"] == "exit"
+            and e.get("result") == literal
+        ):
+            chain = [x for x in (enter, e) if x]
+            break
+    chain.extend(
+        e
+        for e in evs[: focus_index + 1]
+        if e["sc"] in ("write", "writev") and e["args"] and e["args"][0] == fd
+    )
+    return (chain or None) and chain[-6:]
+
+
+def _dep_slice_for_files(trace: dict) -> list[dict] | None:
+    """Chain for a files_written mismatch: the fd-producing open + its writes.
+
+    ponytail: last write-intent open is the file in question (works for the
+    single-writer corpus; a multi-file seed needs path-aware slicing later).
+    """
+    evs, table = trace["events"], _fd_table(trace["events"])
+    if not table:
+        return None
+    literal, fd = next(reversed(list(table.items())))  # last write-open
+    chain, enter = [], None
+    for e in evs:
+        if e["sc"] in _OPEN_FAMILY and e["phase"] == "enter":
+            enter = e
+        elif (
+            e["sc"] in _OPEN_FAMILY
+            and e["phase"] == "exit"
+            and e.get("result") == literal
+        ):
+            chain = [x for x in (enter, e) if x]
+            break
+    chain.extend(
+        e
+        for e in evs
+        if e["sc"] in ("write", "writev") and e["args"] and e["args"][0] == fd
+    )
+    return (chain or None) and chain[-6:]
+
+
 def replay_against(model_bin: Path, traces: list[dict]) -> Verdict:
     for tr in traces:
         argv = tr["argv"][
@@ -110,30 +195,38 @@ def replay_against(model_bin: Path, traces: list[dict]) -> Verdict:
         if got["files_written"] != tr["files_written"]:
             # File channel: path set + content hex compared byte-exact. Hex is
             # authoritative (files may be binary) — no decoded previews here.
-            return Verdict(
-                False,
-                "files-mismatch",
-                {
-                    "argv": argv,
-                    "expected": tr["files_written"],
-                    "actual": got["files_written"],
-                },
-            )
+            divergence = {
+                "argv": argv,
+                "expected": tr["files_written"],
+                "actual": got["files_written"],
+            }
+            sl = _dep_slice_for_files(tr)
+            if sl:
+                divergence["dep_slice"] = sl
+            return Verdict(False, "files-mismatch", divergence)
         ge, te = _obs_events(got), _obs_events(tr)
         for i, (e, a) in enumerate(
             zip(te, ge)
         ):  # te=stored(expected), ge=model(actual)
             if a != e:
-                return Verdict(
-                    False,
-                    "event-divergence",
-                    {
-                        "argv": argv,
-                        "first_diverging_event_index": i,
-                        "expected": e,
-                        "actual": a,
-                    },
+                divergence = {
+                    "argv": argv,
+                    "first_diverging_event_index": i,
+                    "expected": e,
+                    "actual": a,
+                }
+                full_idx = next(
+                    pos
+                    for pos, n in zip(
+                        (j for j, x in enumerate(tr["events"]) if x["sc"] in OBS),
+                        range(len(te)),
+                    )
+                    if n == i
                 )
+                sl = _dep_slice(tr, full_idx)
+                if sl:
+                    divergence["dep_slice"] = sl
+                return Verdict(False, "event-divergence", divergence)
         if len(ge) != len(te):
             return Verdict(
                 False,

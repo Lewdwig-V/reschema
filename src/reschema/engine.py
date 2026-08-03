@@ -18,6 +18,7 @@ from .driver import podrun
 from .driver.spec import Param
 from .exec.canonical import CANONICALIZER_VERSION, canonicalize
 from .exec.recorder import record
+from .memory import read_family
 from .validate.function import N_FUZZ, validate_function
 from .validate.program import compile_model, hidden_input_stream, replay_against
 
@@ -107,6 +108,28 @@ def _hidden_modes(seed: str) -> tuple:
     return ("stdin",) if seed in STDIN_DRIVEN else ("argv",)
 
 
+def _record_notes(
+    store: TaskStore, fn: str, notes: list[str] | None, promoted: bool
+) -> None:
+    """Agent-declared notes land as unverified_hypothesis entries, promoted only
+    if the submission they annotate is accepted (never by later submissions)."""
+    if not notes:
+        return
+    from .memory import append_fact
+
+    for note in notes:
+        append_fact(
+            store.meta["seed"],
+            {
+                "tier": "unverified_hypothesis",
+                "fn": fn,
+                "task_id": store.meta["task_id"],
+                "note": note,
+                "promoted": promoted,
+            },
+        )
+
+
 def _journal(led: dict, event: dict) -> None:
     """Capped per-submission event log for status telemetry (last 16)."""
     led.setdefault("recent", []).append(event)
@@ -155,7 +178,9 @@ def status_snapshot(store: TaskStore) -> dict:
     }
 
 
-def submit_program(store: TaskStore, c_source: str) -> dict:
+def submit_program(
+    store: TaskStore, c_source: str, notes: list[str] | None = None
+) -> dict:
     """Anti-hardcoding gate: replay recorded cases, then freshly-recorded hidden ones."""
     rec = store.recorded()
     model = store.dir / "model"
@@ -164,6 +189,7 @@ def submit_program(store: TaskStore, c_source: str) -> dict:
 
     def reject(**kw):
         led["rejections"] += 1
+        _record_notes(store, "__main__", notes, promoted=False)
         _journal(
             led,
             {
@@ -219,7 +245,20 @@ def submit_program(store: TaskStore, c_source: str) -> dict:
     led["accepted"].append("program")
     led.setdefault("audit", {})["program"] = {"hidden_seed": hidden_seed}
     _journal(led, {"mode": "program", "outcome": "accept"})
+    _record_notes(store, "__main__", notes, promoted=True)
     store.save_ledger(led)
+    from .memory import append_fact
+
+    append_fact(
+        store.meta["seed"],
+        {
+            "tier": "verified_fact",
+            "promoted": True,
+            "fn": "__main__",
+            "task_id": store.meta["task_id"],
+            "c_source": c_source,
+        },
+    )
     return {
         "accepted": True,
         "replay_pct": 100,
@@ -314,6 +353,7 @@ def open_function_task(store: TaskStore, func: str) -> dict:
         },
         "callees": facts["callees"],
         "abi_template": _abi_template(func, facts),
+        "memory": read_family(store.meta["seed"], fn=func),
     }
 
 
@@ -370,6 +410,7 @@ def submit_function(
     c_source: str,
     seed: int | None = None,
     n_fuzz: int = N_FUZZ,
+    notes: list[str] | None = None,
 ) -> dict:
     # ret:"void" is agent-supplied and unverifiable from the spec: the validator floors it
     # at >=1 memory-channel param (scalar-only void compares {}=={}, a no-op would pass).
@@ -406,6 +447,7 @@ def submit_function(
         n_fuzz=n_fuzz,
     )
     led["submissions"] += 1
+    _record_notes(store, func, notes, promoted=v.ok)
     if not v.ok:
         led["rejections"] += 1
         _journal(
@@ -432,6 +474,21 @@ def submit_function(
     led.setdefault("audit", {})[func] = {"seed": v.seed, "n_fuzz": n_fuzz}
     _journal(led, {"mode": "function", "outcome": "accept", "function": func})
     store.save_ledger(led)
+    from .memory import append_fact
+
+    append_fact(
+        store.meta["seed"],
+        {
+            "tier": "verified_fact",
+            "promoted": True,
+            "fn": func,
+            "task_id": store.meta["task_id"],
+            "params": [p.to_json() for p in ps],
+            "c_source": c_source,
+            "n_fuzz": n_fuzz,
+            "audit_seed": v.seed,
+        },
+    )
     return {
         "accepted": True,
         "compared": v.compared,

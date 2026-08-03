@@ -240,11 +240,33 @@ __attribute__((sysv_abi)) void scale_buf(int32_t *buf,int32_t n,int32_t factor){
     )
     assert r["accepted"]
     e = read_family("calc", fn="scale_buf", root=tmp_path)[0]
-    assert e["topology"]["callees"] == ["clamp_i32"]
+    assert e["topology"]["callee_count"] == 1
+    assert e["topology"]["child_depths"] == [0]
     assert e["topology"]["call_depth"] == 1
+    assert e["topology"]["arity_hint"] == 3
     # jsonl roundtrip keeps the digest intact
     on_disk = (tmp_path / "calc.jsonl").read_text()
-    assert '"call_depth": 1' in on_disk and "clamp_i32" in on_disk
+    assert '"call_depth": 1' in on_disk and '"callee_count": 1' in on_disk
+
+
+def test_topology_shape_is_stable_across_all_slots(manifest):
+    # codex P2's purpose: the same function must produce the SAME name-independent
+    # shape across every compiler/opt/strip slot of its family — otherwise a
+    # symbol-less slot can never match its sibling's verified facts
+    from reschema.engine import TaskStore as TS
+    from reschema.engine import _topology_digest
+
+    seen: dict[tuple, dict] = {}
+    for slot in manifest:
+        for fn in slot["functions"]:
+            t = TS(slot["task_id"])
+            d = _topology_digest(t, fn)
+            shape = {k: (tuple(v) if isinstance(v, list) else v) for k, v in d.items()}
+            key = (slot["seed"], fn)
+            if key in seen:
+                assert seen[key] == shape, (key, seen[key], shape)
+            else:
+                seen[key] = shape
 
 
 def test_program_fact_omits_topology(manifest, monkeypatch, tmp_path):

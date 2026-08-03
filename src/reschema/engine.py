@@ -109,9 +109,10 @@ def _hidden_modes(seed: str) -> tuple:
 
 
 def _topology_digest(store: TaskStore, func: str) -> dict:
-    """Call-shape digest for the manifest fn: direct callees + its chain depth
-    in the manifest call graph. Lets stripped/exotic slots map family facts by
-    structure where the symtab doesn't help."""
+    """Call-shape digest for the manifest fn: NAME-INDEPENDENT call structure
+    — callee count, per-child chain depths, chain depth, arity hint. Names are
+    intentionally excluded so a symbol-less slot maps family facts by the same
+    shape (callee names are slot-local conventions; the structure is the identity)."""
     from .disasm.analyze import analyze_function
 
     facts = analyze_function(store.meta["binary"], store.meta["functions"])
@@ -129,7 +130,17 @@ def _topology_digest(store: TaskStore, func: str) -> dict:
         seen = seen | {fn}
         return 1 + max(depth(k, seen) for k in kids)
 
-    return {"callees": graph.get(func, []), "call_depth": depth(func, frozenset())}
+    return {
+        # name-independent call shape: callee COUNT + per-child chain depths +
+        # THIS fn's own chain depth. Names are intentionally absent — a symbol-less
+        # slot renames all of them, the shape survives per codex P2.
+        "callee_count": len(graph.get(func, [])),
+        "child_depths": sorted(
+            depth(k, frozenset((func,))) for k in graph.get(func, [])
+        ),
+        "call_depth": depth(func, frozenset()),
+        "arity_hint": facts[func]["arity_guess"],
+    }
 
 
 def _record_notes(

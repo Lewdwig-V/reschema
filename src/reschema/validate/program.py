@@ -111,17 +111,23 @@ def _dep_slice(trace: dict, focus_index: int) -> list[dict] | None:
         return None
     inv = {v: k for k, v in _fd_table(evs).items()}
     literal = inv.get(fd, fd)  # canonical FD_<n> -> original literal
+    from ..exec.canonical import _write_intent
+
+    # fd reuse: an earlier read-only open can return the same literal the real
+    # write-open reuses — the anchor must be the WRITE-INTENT open, not any
+    # syscall that happened to yield the same fd number (keeps collecting: the
+    # LAST qualifying opener before the focus owns the fd at divergence time).
     chain, enter = [], None
     for e in evs[: focus_index + 1]:
         if e["sc"] in _OPEN_FAMILY and e["phase"] == "enter":
-            enter = e
+            enter = e if _write_intent(e["sc"], e["args"]) else None
         elif (
             e["sc"] in _OPEN_FAMILY
             and e["phase"] == "exit"
             and e.get("result") == literal
+            and enter is not None
         ):
-            chain = [x for x in (enter, e) if x]
-            break
+            chain = [enter, e]
     chain.extend(
         e
         for e in evs[: focus_index + 1]
@@ -140,17 +146,19 @@ def _dep_slice_for_files(trace: dict) -> list[dict] | None:
     if not table:
         return None
     literal, fd = next(reversed(list(table.items())))  # last write-open
+    from ..exec.canonical import _write_intent
+
     chain, enter = [], None
     for e in evs:
         if e["sc"] in _OPEN_FAMILY and e["phase"] == "enter":
-            enter = e
+            enter = e if _write_intent(e["sc"], e["args"]) else None
         elif (
             e["sc"] in _OPEN_FAMILY
             and e["phase"] == "exit"
             and e.get("result") == literal
+            and enter is not None
         ):
-            chain = [x for x in (enter, e) if x]
-            break
+            chain = [enter, e]
     chain.extend(
         e
         for e in evs

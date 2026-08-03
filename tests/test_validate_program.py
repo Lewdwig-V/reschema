@@ -195,6 +195,99 @@ def _filewrite_style_events(write_count_arg="0x4", exit_code=0):
     return [o_e, o_x, w_f, w_f_x, w_1, w_1_x, x_e]
 
 
+def test_event_divergence_slice_tolerates_fd_reuse(tmp_path, monkeypatch):
+    # read-only open returns fd 3 and closes it; the real write-open reuses fd 3.
+    # Slice must anchor at the WRITE-INTENT opener (canonicalizer agrees: FD_0),
+    # not the earlier read-only open of the same literal.
+    ro_e = {
+        "phase": "enter",
+        "sc": "openat",
+        "args": ["ADDR_5", "ADDR_6", "0x0", "0x0"],
+    }
+    ro_x = {
+        "phase": "exit",
+        "sc": "openat",
+        "args": ["ADDR_5", "ADDR_6", "0x0", "0x0"],
+        "result": "0x3",
+    }
+    c_x = {"phase": "enter", "sc": "close", "args": ["0x3"]}
+    o_e = {
+        "phase": "enter",
+        "sc": "openat",
+        "args": ["ADDR_5", "ADDR_7", "0x241", "0x1b6"],
+    }
+    o_x = {
+        "phase": "exit",
+        "sc": "openat",
+        "args": ["ADDR_5", "ADDR_7", "0x241", "0x1b6"],
+        "result": "0x3",
+    }
+    w_e = {"phase": "enter", "sc": "write", "args": ["FD_0", "ADDR_8", "0x4"]}
+    w_x = {
+        "phase": "exit",
+        "sc": "write",
+        "args": ["FD_0", "ADDR_8", "0x4"],
+        "result": "0x4",
+    }
+    stored = canonicalize(
+        {
+            **_trace(
+                "6f6f0a",
+                0,
+                [
+                    ro_e,
+                    ro_x,
+                    c_x,
+                    o_e,
+                    o_x,
+                    w_e,
+                    w_x,
+                    {"phase": "enter", "sc": "write", "args": ["0x1", "ADDR_9", "0xa"]},
+                    {
+                        "phase": "exit",
+                        "sc": "write",
+                        "args": ["0x1", "ADDR_9", "0xa"],
+                        "result": "0xa",
+                    },
+                    {"phase": "enter", "sc": "exit_group", "args": ["0x0"]},
+                ],
+            ),
+            "files_written": {"out.bin": "61626364"},
+        }
+    )
+    monkeytrace = {
+        **_trace(
+            "6f6f0a",
+            0,
+            [
+                ro_e,
+                ro_x,
+                c_x,
+                o_e,
+                o_x,
+                w_e,
+                w_x,
+                {"phase": "enter", "sc": "write", "args": ["0x1", "ADDR_9", "0xa"]},
+                {
+                    "phase": "exit",
+                    "sc": "write",
+                    "args": ["0x1", "ADDR_9", "0xa"],
+                    "result": "0xa",
+                },
+                {"phase": "enter", "sc": "exit_group", "args": ["0x0"]},
+            ],
+        ),
+        "files_written": {"out.bin": "deadbeef"},
+    }
+    monkeypatch.setattr("reschema.validate.program.record", lambda *a, **k: monkeytrace)
+    v = replay_against(tmp_path / "m", [stored])
+    assert not v.ok and v.reason == "files-mismatch"
+    sl = v.divergence["dep_slice"]
+    enters = [e for e in sl if e["sc"] == "openat" and e["phase"] == "enter"]
+    assert [e["args"][2] for e in enters] == ["0x241"]  # write-intent opener ONLY
+    assert sl[-1]["sc"] == "write" and sl[-1]["args"][0] == "FD_0"
+
+
 def test_event_divergence_carries_dependency_slice(tmp_path, monkeypatch):
     # stored: one 4-byte write to out.bin; model: same bytes in two 2-byte
     # writes — same content/stdout (io/files clean), OBS chunk shape diverges.

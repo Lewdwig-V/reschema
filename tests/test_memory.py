@@ -210,3 +210,70 @@ def test_malformed_non_object_lines_skipped(tmp_path):
     assert entries == [
         {"tier": "verified_fact", "fn": "sum_range", "task_id": "calc::gcc-O2-sym"}
     ]
+
+
+def test_verified_fact_carries_topology_digest(manifest, monkeypatch, tmp_path):
+    monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
+    st = _store("calc::gcc-O2-sym")
+    SCALE_PARAMS_JSON = [
+        {
+            "name": "buf",
+            "kind": "buffer_i32",
+            "direction": "in_out",
+            "length_param": "n",
+            "range": [51, 100],
+            "ret": "void",
+        },
+        {"name": "n", "kind": "i32", "range": [3, 4]},
+        {"name": "factor", "kind": "i32", "range": [2, 5]},
+    ]
+    GOOD_SCALE = r"""
+#include <stdint.h>
+static int32_t clamp_it(int32_t v, int32_t lo, int32_t hi){
+    return v < lo ? lo : v > hi ? hi : v;
+}
+__attribute__((sysv_abi)) void scale_buf(int32_t *buf,int32_t n,int32_t factor){
+    for(int32_t i=0;i<n;i++){ int32_t v=buf[i]*factor; buf[i]=clamp_it(v,-100,100); }
+}"""
+    r = submit_function(
+        st, "scale_buf", SCALE_PARAMS_JSON, GOOD_SCALE, seed=3, n_fuzz=8
+    )
+    assert r["accepted"]
+    e = read_family("calc", fn="scale_buf", root=tmp_path)[0]
+    assert e["topology"]["callees"] == ["clamp_i32"]
+    assert e["topology"]["call_depth"] == 1
+    # jsonl roundtrip keeps the digest intact
+    on_disk = (tmp_path / "calc.jsonl").read_text()
+    assert '"call_depth": 1' in on_disk and "clamp_i32" in on_disk
+
+
+def test_program_fact_omits_topology(manifest, monkeypatch, tmp_path):
+    monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
+    st = _store("rot13::gcc-O2-sym")
+    for p in st.dir.glob("trace_*.json"):
+        p.unlink()
+    st.record_case("a", ["hello"], b"")
+    r = submit_program(st, GOOD_ROT13_PROG)
+    assert r["accepted"]
+    e = read_family("rot13", fn="__main__", root=tmp_path)[0]
+    assert "topology" not in e  # digest optional; program-mode facts skip it
+
+
+def test_older_facts_without_topology_payload_ok(
+    manifest, monkeypatch, tmp_path, capfd=None
+):
+    # JSONL written before the digest field existed still reads and injects fine
+    (tmp_path / "calc.jsonl").write_text(
+        json.dumps(
+            {
+                "tier": "verified_fact",
+                "fn": "sum_range",
+                "task_id": "calc::gcc-O2-sym",
+                "c_source": "x",
+            }
+        )
+        + "\n"
+    )
+    monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
+    e = read_family("calc", fn="sum_range", root=tmp_path)[0]
+    assert "topology" not in e  # absence is absence, not error

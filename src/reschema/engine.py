@@ -108,6 +108,30 @@ def _hidden_modes(seed: str) -> tuple:
     return ("stdin",) if seed in STDIN_DRIVEN else ("argv",)
 
 
+def _topology_digest(store: TaskStore, func: str) -> dict:
+    """Call-shape digest for the manifest fn: direct callees + its chain depth
+    in the manifest call graph. Lets stripped/exotic slots map family facts by
+    structure where the symtab doesn't help."""
+    from .disasm.analyze import analyze_function
+
+    facts = analyze_function(store.meta["binary"], store.meta["functions"])
+    graph = {
+        fn: sorted({c["name"] for c in f["callees"] if c["name"] in facts})
+        for fn, f in facts.items()
+    }
+
+    def depth(fn: str, seen: frozenset) -> int:
+        if fn in seen:
+            return 0
+        kids = graph.get(fn, [])
+        if not kids:
+            return 0
+        seen = seen | {fn}
+        return 1 + max(depth(k, seen) for k in kids)
+
+    return {"callees": graph.get(func, []), "call_depth": depth(func, frozenset())}
+
+
 def _record_notes(
     store: TaskStore, fn: str, notes: list[str] | None, promoted: bool
 ) -> None:
@@ -487,6 +511,7 @@ def submit_function(
             "c_source": c_source,
             "n_fuzz": n_fuzz,
             "audit_seed": v.seed,
+            "topology": _topology_digest(store, func),
         },
     )
     return {

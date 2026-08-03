@@ -38,7 +38,9 @@ int main(void){ char buf[64];
 
 PROBE_ARGS = {
     "rot13": ["alpha", "Beta", "zzz", "hello", "world!", "rot13"],
-    "check": ["a", "hello", "hunter2", "preimage", "zzzzz", "pw123"],
+    # txy"od is the known-check pre-image: no always-reject model can complete a
+    # protocol whose probe set proves the seed ACCEPTS anything at all.
+    "check": ["a", "hello", "hunter2", "preimage", "zzzzz", 'txy"od'],
 }
 SEEDS = {"rot13": GOOD_ROT13, "check": GOOD_CHECK_PROG}
 SLOTS = ["gcc-O0-sym", "gcc-O1-sym", "gcc-O2-sym"]
@@ -60,6 +62,10 @@ def _run_family(seed, primed, monkeypatch, tmp_path):
     primed_source = None
     for k, slot in enumerate(SLOTS):
         st = _store(f"{seed}::{slot}")
+        mem_root = tmp_path if primed else tmp_path / slot  # cold isolation per slot
+        monkeypatch.setattr("reschema.memory.MEMORY", mem_root)
+        if not primed:
+            assert read_family(seed, root=mem_root) == []  # cold slot: no facts yet
         priming_done = primed and k > 0
         if not priming_done:
             # UNPRIMED probes every slot; primed pays probes only at slot 0
@@ -71,7 +77,7 @@ def _run_family(seed, primed, monkeypatch, tmp_path):
         src = primed_source if priming_done else src
         r = submit_program(st, src)
         if k == 0 and primed:
-            primed_source = read_family(seed, fn="__main__", root=tmp_path)[0][
+            primed_source = read_family(seed, fn="__main__", root=mem_root)[0][
                 "c_source"
             ]
         assert r["accepted"], (seed, slot, k, r)
@@ -99,3 +105,23 @@ def test_transfer_protocol_rot13_and_check(monkeypatch, tmp_path):
         assert primed[1:] == [1.0, 1.0]
         score = phi(baseline, primed)
         assert score == pytest.approx(1.0), f"{seed} transfer delta {score}"
+        # protocol coldness pin: unprimed slots isolate memory per slot, so a
+        # live agent following this protocol opens a COLD slot every time
+        for slot in SLOTS:
+            assert len(read_family(seed, root=up / slot)) == 1  # its own, post hoc
+
+
+def test_check_family_rejects_always_nope_attack(tmp_path):
+    # P1 pin: an always-"NOPE" model is a completed protocol only if the check
+    # probe set lacks an accepting case. Shows the pre-image probe is load-bearing.
+    build()
+    st = _store("check::gcc-O0-sym")
+    st.record_case("e00", [], b"nope\n")
+    st.record_case("e01", [], b'txy"od\n')  # the known-accepting pre-image
+    hard = r"""
+#include <stdio.h>
+int main(void){ puts("NOPE"); return 1; }
+"""
+    r = submit_program(st, hard)
+    assert not r["accepted"]
+    assert r["reason"] == "io-mismatch"  # dies on the accepting pre-image case

@@ -71,8 +71,13 @@ def task_open(task_id: str, function: str | None = None) -> dict:
       `input`: "argv" or "stdin" — where ground-truth input goes for this seed.
     - function mode (function given): one function in the binary. Returns the
       disasm slice, a heuristic signature_guess (arity/returns, labeled a
-      guess — declare the falsifiable spec yourself), known callees, and an
-      `abi_template` skeleton with the param-spec schema and compose rules."""
+      guess — declare the falsifiable spec yourself), known callees, an
+      `abi_template` skeleton with the param-spec schema and compose rules,
+      `memory` (family deduction-cache matches for this {seed, function}, each
+      with provenance tier), and when the task has rejection history,
+      `repair_directive` (two-pass coaching: abstract bit-logic repair FIRST,
+      idiomatic/semantic refinement only after acceptance — guidance, not a
+      verified fact)."""
     try:
         st = TaskStore(task_id)
         if function:

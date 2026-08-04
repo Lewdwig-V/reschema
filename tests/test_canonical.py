@@ -137,7 +137,6 @@ def test_absolute_hostpaths_ordinal_mapped():
     assert c["events"][1]["args"] == ["again PATH_0 and PATH_1"]
 
 
-from reschema.corpus.generate import build
 from reschema.exec.recorder import record
 
 
@@ -171,8 +170,8 @@ def _v1(trace):
     return t
 
 
-def test_v2_byte_identical_for_no_open_seeds():
-    m = build()
+def test_v2_byte_identical_for_no_open_seeds(built_corpus):
+    m = built_corpus
     for seed, argv, stdin in (
         ("rot13", ["hello"], b""),
         ("check", [], b"hunter2\n"),
@@ -191,8 +190,8 @@ def test_v2_byte_identical_for_no_open_seeds():
         assert canonicalize(tr) == _v1(tr), f"v2 changed canonical bytes for {seed}"
 
 
-def test_v2_fd_ordinals_on_real_filewrite_trace():
-    m = build()
+def test_v2_fd_ordinals_on_real_filewrite_trace(built_corpus):
+    m = built_corpus
     binary = next(
         x["binary"]
         for x in m

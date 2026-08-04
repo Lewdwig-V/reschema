@@ -30,13 +30,12 @@ def test_memory_jsonl_roundtrip(tmp_path):
     ]
 
 
-from reschema.corpus.generate import build
 from reschema.engine import TaskStore, submit_function, submit_program
 
 
 @pytest.fixture(scope="module")
-def manifest():
-    return build()
+def manifest(built_corpus):
+    return built_corpus
 
 
 RIGHT = r"""

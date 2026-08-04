@@ -12,8 +12,14 @@ refers to for live-agent reruns.
 
 import pytest
 
-from reschema.corpus.generate import build
 from reschema.engine import TaskStore, status_snapshot, submit_program
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _corpus_once(built_corpus):
+    pass
+
+
 from reschema.memory import read_family
 
 GOOD_ROT13 = r"""
@@ -56,7 +62,6 @@ def _store(task_id):
 
 def _run_family(seed, primed, monkeypatch, tmp_path):
     monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
-    build()
     src = SEEDS[seed]
     e_traj = []
     primed_source = None
@@ -114,7 +119,6 @@ def test_transfer_protocol_rot13_and_check(monkeypatch, tmp_path):
 def test_check_family_rejects_always_nope_attack(tmp_path):
     # P1 pin: an always-"NOPE" model is a completed protocol only if the check
     # probe set lacks an accepting case. Shows the pre-image probe is load-bearing.
-    build()
     st = _store("check::gcc-O0-sym")
     st.record_case("e00", [], b"nope\n")
     st.record_case("e01", [], b'txy"od\n')  # the known-accepting pre-image

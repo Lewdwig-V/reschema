@@ -3,7 +3,6 @@ from unittest.mock import Mock
 import pytest
 
 import reschema.engine as eng
-from reschema.corpus.generate import build
 from reschema.engine import STDIN_DRIVEN, TaskStore, submit_program
 from reschema.validate.program import gen_hidden_inputs
 
@@ -38,9 +37,13 @@ def _wipe(st):
     st._path("ledger.json").unlink(missing_ok=True)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _corpus_once(built_corpus):
+    pass
+
+
 @pytest.fixture(scope="module")
 def store():
-    build()
     st = TaskStore("rot13::gcc-O1-sym")  # separate slot: other modules share the O2 dir
     _wipe(st)
     st.record_case("a", ["hello"], b"")
@@ -49,7 +52,6 @@ def store():
 
 @pytest.fixture(scope="module")
 def check_store():
-    build()
     st = TaskStore(
         "check::gcc-O1-sym"
     )  # stdin-driven; no other module owns a check dir
@@ -119,7 +121,6 @@ int main(void){
 
 @pytest.fixture(scope="module")
 def fw_store():
-    build()
     st = TaskStore("filewrite::gcc-O1-sym")  # no other module owns a filewrite dir
     _wipe(st)
     st.record_case("a", [], b"hello\n")

@@ -1,6 +1,5 @@
 import pytest
 
-from reschema.corpus.generate import build
 from reschema.driver.spec import Param
 from reschema.validate.function import validate_function
 
@@ -120,8 +119,8 @@ def _slot(manifest, seed, func):
 
 
 @pytest.fixture(scope="module")
-def manifest():
-    return build()
+def manifest(built_corpus):
+    return built_corpus
 
 
 def test_missing_worker_image_is_structured_infra(manifest, tmp_path, monkeypatch):

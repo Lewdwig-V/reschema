@@ -1,13 +1,12 @@
 import pytest
 
-from reschema.corpus.generate import build
 from reschema.driver.spec import Param
 from reschema.engine import TaskStore, open_function_task, submit_function
 
 
 @pytest.fixture(scope="module")
-def manifest():
-    return build()
+def manifest(built_corpus):
+    return built_corpus
 
 
 def _store(task_id):

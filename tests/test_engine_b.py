@@ -3,7 +3,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from reschema.corpus.generate import build
 from reschema.driver.spec import Param
 from reschema.engine import (
     TaskStore,
@@ -41,8 +40,8 @@ CLAMP_PARAMS = [
 
 
 @pytest.fixture(scope="module")
-def manifest():
-    return build()
+def manifest(built_corpus):
+    return built_corpus
 
 
 @pytest.fixture
@@ -299,8 +298,12 @@ def test_submit_function_clamps_n_fuzz(store, monkeypatch):
     assert store.ledger()["rejections"] == 1
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _corpus_once(built_corpus):
+    pass
+
+
 def _status_store():
-    build()
     st = TaskStore("calc::gcc-O1-sym")  # own slot: engine_b's shared store is O2
     st._path("ledger.json").unlink(missing_ok=True)
     return st

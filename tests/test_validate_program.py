@@ -1,6 +1,5 @@
 import pytest
 
-from reschema.corpus.generate import build
 from reschema.engine import TaskStore
 from reschema.exec.canonical import canonicalize
 from reschema.validate.program import compile_model, replay_against
@@ -42,8 +41,8 @@ write(1, "\n", 1); return 0; }
 
 
 @pytest.fixture(scope="module")
-def manifest():
-    return build()
+def manifest(built_corpus):
+    return built_corpus
 
 
 @pytest.fixture(scope="module")

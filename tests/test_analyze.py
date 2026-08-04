@@ -1,6 +1,5 @@
 import pytest
 
-from reschema.corpus.generate import build
 from reschema.disasm.analyze import analyze_function
 
 # Ground truth from the seed sources: (arity, returns-value, callees in order).
@@ -17,8 +16,8 @@ EXPECT = {
 
 
 @pytest.fixture(scope="module")
-def manifest():
-    return build()
+def manifest(built_corpus):
+    return built_corpus
 
 
 def test_matrix_arity_returns_callees(manifest):

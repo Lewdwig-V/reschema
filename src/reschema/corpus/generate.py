@@ -12,6 +12,7 @@ byte-identical to its full-build counterpart.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from elftools.elf.elffile import ELFFile
@@ -19,8 +20,9 @@ from elftools.elf.elffile import ELFFile
 from ..driver import podrun
 from ..exec.canonical import CANONICALIZER_VERSION
 
-ROOT = Path(__file__).resolve().parents[3]
-SEEDS = ROOT / "src" / "reschema" / "corpus" / "seeds"
+# RESCHEMA_HOME: see engine.py (xdist per-worker isolation); default unchanged.
+ROOT = Path(os.environ.get("RESCHEMA_HOME", Path(__file__).resolve().parents[3]))
+SEEDS = Path(__file__).resolve().parent / "seeds"
 OUT_ROOT = ROOT / ".reschema" / "corpus"
 
 FUNCS = {

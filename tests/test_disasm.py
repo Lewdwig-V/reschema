@@ -1,12 +1,11 @@
 import pytest
 
-from reschema.corpus.generate import build
 from reschema.disasm.slice import disasm_function
 
 
 @pytest.fixture(scope="module")
-def manifest():
-    return build()
+def manifest(built_corpus):
+    return built_corpus
 
 
 def test_slice_content(manifest):
@@ -36,9 +35,7 @@ def test_all_slots_all_functions_slicable(manifest):
 
 def test_sym_and_stripped_slices_identical(manifest):
     # Addresses are captured pre-strip, so both variants slice the same .text.
-    seen = {
-        (x["seed"], x["compiler"], x["opt"], x["stripped"]): x for x in manifest
-    }
+    seen = {(x["seed"], x["compiler"], x["opt"], x["stripped"]): x for x in manifest}
     for (seed, cc, opt, stripped), sym_slot in seen.items():
         if stripped:
             continue

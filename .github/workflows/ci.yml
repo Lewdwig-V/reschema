@@ -1,5 +1,10 @@
 name: ci
-on: [push, pull_request]
+# push: main only (post-merge verification); PR branches run via pull_request
+# (in-repo branches otherwise trigger BOTH events = identical duplicate runs).
+on:
+  push:
+    branches: [main]
+  pull_request:
 permissions:
   contents: read
 jobs:
@@ -12,4 +17,4 @@ jobs:
       - run: uv sync
       - run: podman build -t localhost/reschema-toolchain:1 -f Containerfile .
       - run: uv run ruff check src tests
-      - run: uv run pytest -x -q
+      - run: uv run pytest -x -q -n auto

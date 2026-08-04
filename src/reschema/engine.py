@@ -25,7 +25,9 @@ from .validate.program import compile_model, hidden_input_stream, replay_against
 # plan said parents[1]; that lands at src/ — engine.py sits at src/reschema/, so root is parents[2]
 # ponytail: correct for src-layout dev runs; pip-installed this lands under
 # site-packages (upgrade: platformdirs/importlib.resources when packaging matters)
-ROOT = Path(__file__).resolve().parents[2]
+# RESCHEMA_HOME override: test isolation (pytest-xdist gives each worker its own
+# root so shared .reschema state can't race); default keeps production shape.
+ROOT = Path(os.environ.get("RESCHEMA_HOME", Path(__file__).resolve().parents[2]))
 TASKS = ROOT / ".reschema" / "tasks"
 MANIFEST = ROOT / ".reschema" / "corpus" / "manifest.json"
 

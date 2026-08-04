@@ -56,7 +56,10 @@ the project's own words, used everywhere and defined nowhere else:
 - **event** — one observed syscall in a trace: `{sc, phase, args, result?}`
   where `phase` is `enter` or `exit` (the recorder hooks both).
 - **probe** — one `experiment` call. Counted in the ledger's `probes` key and
-  priced in the efficiency metric.
+  priced in the efficiency metric. Function mode's `single_input` variant is
+  the cheap scout round: exactly one emulated call against the original, one
+  probe accounted, no trace persisted (program mode rejects it as spec
+  misuse).
 - **slot** — one cell of the corpus build matrix, e.g. `gcc-O2-sym`
   (compiler × optimization × symbols kept vs stripped). A `task_id` is
   `{seed}::{slot}`.
@@ -77,6 +80,10 @@ the project's own words, used everywhere and defined nowhere else:
   failure instead of a vacuous pass.
 - **event-split** — a model emitting output in different syscall-sized chunks
   than the original. Chunking is observable, so it diverges and rejects.
+- **dep_slice** — the fd-linked backward syscall chain attached to
+  event-divergence and files-mismatch rejects: the write-intent open pair
+  that produced the diverging fd, plus every write on it up to the
+  divergence, capped at 6 raw events.
 - **poison-filled** — fuzz out-buffers pre-loaded with random bytes, so a
   no-op model leaves detectable garbage instead of matching a
   memory-preserving original.
@@ -164,7 +171,12 @@ Control flow across the tour sections below, as it actually happens.
    job): `gcc -O1 -shared -fPIC` in the container, RTLD_NOW load + symbol
    presence check, then fork-per-case ctypes calls under the 5s case budget.
    A model segfault/hang surfaces as a per-case `crash` result (first crash
-   stops the round), never a wedged harness.
+   stops the round), never a wedged harness. Comparison is `{ret, mem}` only
+   — level-B never compares syscalls (scope guardrail).
+
+Note the deliberate substrate asymmetry: the *original* always executes under
+emulation (fidelity), while the *model* `.so` always executes native inside
+the container (containment for untrusted code). They never share a substrate.
 6. Per case, `{ret, mem}` is compared (`ret` skipped for void specs — eax is
    register residue; mem is their channel). First mismatch rejects with
    `{input, field, expected, actual, seed}`.
@@ -223,6 +235,10 @@ the exception class; it is a structured report, not a traceback page.
 `corpus_build(seed_ids?, matrix?)`, `task_open`, `experiment`, `submit_model`,
 `status`. No business logic; errors are mapped to `{error: not_found|spec|internal}`
 dicts. A contract test pins the term coverage of every tool description.
+`experiment`'s `single_input` flag (function tasks only) deliberately skips
+case persistence: one emulated call against the original, one ledger probe,
+no `trace_*.json` — the cheap scout round before an agent commits recorded
+cases.
 
 ### engine.py — task state, gates, ledger
 
@@ -262,8 +278,26 @@ exercising yet.
   of their justification. Probe accounting lives on both experiment paths
   (program-path records and function-path cases), stored as a lazy
   `probes` ledger key.
-- **_abi_template / open_function_task** emit a compile-ready header skeleton
-  plus the capstone-derived facts and a labeled signature guess.
+- **_abi_template** renders a compile-ready function-mode header from the
+  driver's own constants (`KINDS` + `Param` defaults, so the docs can't drift
+  from the schema): the `RESCHEMA_FN` macro (`__attribute__((sysv_abi,
+  noinline))` — SysV lowering is an attribute, not a flag), the param-spec
+  JSON sketch, the sketched signature, and the compose rule (single-function
+  helpers must be `static`).
+- **open_function_task** assembles the function-mode `task_open` payload:
+  disasm slice, capstone facts + labeled signature guess, known callees,
+  `abi_template`, family memory — and **repair_directive** when the task
+  ledger's journal shows rejection history (research slot 2B-5): two-pass
+  coaching answering rejections FIRST with abstract bit-logic repair
+  (fixed-width ints, exact byte behavior, no idiomatic attempts), idiomatic
+  annotation only after acceptance. It is provenance-tagged as coaching
+  derived from the rejection history, never a verified fact.
+- **_topology_digest** fingerprints an accepted function by name-independent
+  call shape — callee count, per-child chain depths, own call depth, arity
+  hint (names deliberately excluded: a symbol-less slot renames them all,
+  the shape survives) — recorded on each function-mode `verified_fact`
+  (docs/roadmap.md research slot). Write-side only today; matching stripped
+  slots' `fn_0x…` back to family names by shape is the intended consumer.
 
 ### exec/recorder.py — ground-truth records
 
@@ -326,6 +360,14 @@ the first mismatch only.
 `hidden_input_stream` yields text charset draws by mode and `stdin-bytes`
 draws (random bytes with a guaranteed NUL and ≥0x80 byte) for binary-safe
 seeds; `STDIN_DRIVEN`/`STDIN_BYTES_DRIVEN` select modes per seed.
+
+Event-divergence and files-mismatch payloads carry a `dep_slice`
+([Terms](#terms)): the validator searches backward from the focus event for
+the LAST write-intent open pair that produced the focus fd (an earlier
+read-only open can reuse the same literal — the anchor must be the
+write-intent one), then collects every write/writev on that fd up to and
+including the focus, capped at 6 events. io-mismatch delivers no slice — the
+decoded stdout previews already localize those.
 
 ### driver/ — marshaling, original calls, container boundary
 
@@ -468,6 +510,12 @@ against the (non-public) original plans is kept as history, subordinate.
 - **The tool table is exactly five tools, matching spec behavior** — some
   literal parameter names diverge from the spec's §5 table; `compose()` is
   deliberately not exposed.
+- **Research slots landed as primitives, not pipelines** — four ideas from
+  the 2025–26 RE-literature sweep (docs/roadmap.md), each refactored onto an
+  existing surface rather than adding a subsystem: the two-pass repair
+  directive (coaching context in `task_open`), syscall dependency slices
+  (`dep_slice` in event/files divergences), name-independent topology
+  digests on `verified_fact` entries, and the `single_input` scout probe.
 - **Scope guardrails observed** — x86-64 static ELFs only, ≤6 register
   integer args (no stack args, no structs/floats), no multi-arch, packing, or
   symbolic equivalence; no branch coverage (explicitly cut).
@@ -475,7 +523,8 @@ against the (non-public) original plans is kept as history, subordinate.
 ## Verification & maintenance
 
 This document is verified against the delivered codebase; the last full
-line-by-line pass was 2026-08-02 (commit `ad06b37`) with a partial refresh on
-2026-08-04. It rots by default — policy: any PR that changes behavior
+line-by-line pass was 2026-08-02 (commit `ad06b37`), with partial refreshes
+on 2026-08-04 (test-suite infrastructure in #70; research-slot features in
+#69). It rots by default — policy: any PR that changes behavior
 described here must update this file in the same commit; a dated claim a
 reviewer can falsify from `src/` is a doc bug, file it.

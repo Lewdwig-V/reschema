@@ -13,10 +13,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
-      # Deliberately NO build-essential: this job is the clean-runner proof that
-      # no host compiler is needed anywhere (#61/#65 moved every compile into the
-      # pinned image). If a future dep needs a host toolchain, add it back WITH a
-      # comment naming the dep — never silently.
+      # ubuntu-latest ships gcc/clang/binutils preinstalled — amputate them so
+      # this job is a genuine compiler-less runner, the live proof that no host
+      # toolchain is needed anywhere (#61/#65 moved every compile into the
+      # pinned image). Any stray host-compile shell-out fails loudly here.
+      - name: amputate the preinstalled host toolchain
+        run: |
+          sudo rm -f /usr/bin/gcc* /usr/bin/g++* /usr/bin/cc /usr/bin/c++ \
+                     /usr/bin/clang* /usr/bin/strip /usr/bin/as /usr/bin/ld \
+                     /usr/bin/objcopy /usr/bin/objdump
+          ! command -v gcc && ! command -v cc && ! command -v clang && ! command -v strip
       - run: uv sync
       - run: podman build -t localhost/reschema-toolchain:1 -f Containerfile .
       - run: uv run ruff check src tests

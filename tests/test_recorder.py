@@ -5,7 +5,32 @@ from pathlib import Path
 import pytest
 
 from reschema.corpus.generate import OUT_ROOT, build
+from reschema.driver.podrun import run_worker
 from reschema.exec.recorder import record
+
+
+def _compile_probe(workdir: Path, name: str, c_source: str) -> Path:
+    """Probe binaries compile inside the pinned image like every other artifact —
+    the documented flows require podman + the toolchain image, never a host gcc.
+    -O0 keeps the spin probe looping under any compiler."""
+    r = run_worker(
+        {
+            "mode": "compile",
+            "jobs": [
+                {
+                    "c_source": c_source,
+                    "out": name,
+                    "compiler": "gcc",
+                    "flags": ["-O0", "-static"],
+                }
+            ],
+        },
+        workdir,
+    )
+    assert r.get("results"), r  # infra failure surfaces the podrun stage detail
+    res = r["results"][0]
+    assert res["rc"] == 0, res["stderr"]
+    return workdir / name
 
 
 @pytest.fixture(scope="module")
@@ -100,12 +125,7 @@ def test_guest_filesystem_mutation_contained(tmp_path):
 #include <sys/stat.h>
 int main(void){{ remove("{victim}"); mkdir("/reschema_probe_dir", 0777); return 0; }}
 """
-    prog = tmp_path / "probe"
-    subprocess.run(
-        ["gcc", "-static", "-x", "c", "-", "-o", str(prog)],
-        input=src.encode(),
-        check=True,
-    )
+    prog = _compile_probe(tmp_path, "probe", src)
     try:
         t = record(prog, [])
         assert t["exit_code"] == 0
@@ -124,12 +144,7 @@ def test_record_nonexistent_binary_reports_crash():
 
 
 def test_record_timeout_reports_fault(tmp_path):
-    prog = tmp_path / "spin"
-    subprocess.run(
-        ["gcc", "-static", "-x", "c", "-", "-o", str(prog)],
-        input=b"int main(void){for(;;){}}\n",
-        check=True,
-    )
+    prog = _compile_probe(tmp_path, "spin", "int main(void){for(;;){}}\n")
     t = record(prog, [], timeout_us=300_000)
     assert t["exit_code"] == -1
     assert any(e["sc"] == "timeout" for e in t["events"])

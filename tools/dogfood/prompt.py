@@ -6,18 +6,20 @@ from __future__ import annotations
 
 import hashlib
 
+# Stems, not words: morphology must not evade the lint ("submission"
+# vs "submissions", "prime/primed/priming"). Short stems like "prim"
+# and "cach" are deliberate.
 FORBIDDEN_TERMS = [
-    "primed",
-    "unprimed",
-    "cache",
-    " φ",
+    "prim",
+    "probe",
+    "submission",
+    "cach",
+    "φ",
     "phi",
-    "transfer protocol",
+    "transfer",
     "benchmark",
     "protocol",
     "hidden",
-    "6 probes",
-    "submissions",
 ]
 
 _TEMPLATE = """You are given exactly one binary-analysis task: "{task_id}".

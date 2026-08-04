@@ -45,6 +45,7 @@ the matrix).
 
 ## Non-goals (v1)
 
-See `ARCHITECTURE.md` §"Critical Constraints & Deviations" scope guardrails
-(multi-arch, packing, symbolic checks, struct-by-value, float/vector regs,
-level-B syscall comparison, >6 int args, ...). Don't build them speculatively.
+See `ARCHITECTURE.md` §"Decision records", last entry ("Scope guardrails
+observed"): multi-arch, packing, symbolic checks, struct-by-value,
+float/vector regs, level-B syscall comparison, >6 int args, ... Don't build
+them speculatively.

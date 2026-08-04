@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import random
+import shutil
 import string
+import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
 from itertools import islice
@@ -25,27 +27,33 @@ class Verdict:
 
 def compile_model(c_source: str, out: Path) -> tuple[bool, str]:
     out.with_suffix(".c").write_text(c_source)  # debug artifact lands in the task dir
-    try:
-        r = podrun.run_worker(
-            {
-                "mode": "compile",
-                "jobs": [
-                    {
-                        "c_source": c_source,
-                        "out": out.name,
-                        "compiler": "gcc",
-                        "flags": CFLAGS[1:],
-                    }
-                ],
-            },
-            out.parent,
-        )
-    except RuntimeError as e:  # missing podman/image: mandatory containment
-        return False, f"compile infra: {e}"
-    if "stage" in r:
-        return False, f"compile infra: {r['detail']}"
-    res = r["results"][0]
-    return res["rc"] == 0, res["stderr"]
+    # ISSUE-61: the worker mount holds ONLY the model source's scratch dir —
+    # gcc's diagnostic quoting makes any other file in the mount an agent-readable
+    # channel into recorded ground truth.
+    with tempfile.TemporaryDirectory(prefix="reschema-build-") as scratch:
+        try:
+            r = podrun.run_worker(
+                {
+                    "mode": "compile",
+                    "jobs": [
+                        {
+                            "c_source": c_source,
+                            "out": out.name,
+                            "compiler": "gcc",
+                            "flags": CFLAGS[1:],
+                        }
+                    ],
+                },
+                Path(scratch),
+            )
+        except RuntimeError as e:  # missing podman/image: mandatory containment
+            return False, f"compile infra: {e}"
+        if "stage" in r:
+            return False, f"compile infra: {r['detail']}"
+        res = r["results"][0]
+        if res["rc"] == 0:
+            shutil.copy2(Path(scratch) / out.name, out)
+        return res["rc"] == 0, res["stderr"]
 
 
 # Observable channel: write-family + exit_group only. Address tokens are wildcards:

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import random
 import secrets
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -108,29 +110,38 @@ def validate_function(
             },
             skipped=skipped,
         )
-    try:
-        r = podrun.run_worker(
-            {
-                "mode": "validate",
-                "c_source": c_source,
-                "fname": func,
-                "params": [p.to_json() for p in params],
-                "cases": [
-                    {
-                        k: (v.hex() if isinstance(v, (bytes, bytearray)) else v)
-                        for k, v in case.items()
-                    }
-                    for case, _ in kept
-                ],
-            },
-            so_path.parent,
-        )
-    except (
-        RuntimeError
-    ) as e:  # missing podman/image: mandatory containment, no fallback
-        return FnVerdict(False, {"stage": "infra", "detail": str(e)})
-    if "stage" in r:
-        return FnVerdict(False, r)  # compile/link/symbol/infra payloads pass through
+    # ISSUE-61: compile AND fork-per-case ctypes execution run against a scratch
+    # dir holding only the model source — the task dir (traces/ledger/accepts)
+    # is never inside the container's writable mount.
+    with tempfile.TemporaryDirectory(prefix="reschema-validate-") as scratch:
+        try:
+            r = podrun.run_worker(
+                {
+                    "mode": "validate",
+                    "c_source": c_source,
+                    "fname": func,
+                    "params": [p.to_json() for p in params],
+                    "cases": [
+                        {
+                            k: (v.hex() if isinstance(v, (bytes, bytearray)) else v)
+                            for k, v in case.items()
+                        }
+                        for case, _ in kept
+                    ],
+                },
+                Path(scratch),
+            )
+        except (
+            RuntimeError
+        ) as e:  # missing podman/image: mandatory containment, no fallback
+            return FnVerdict(False, {"stage": "infra", "detail": str(e)})
+        if "stage" in r:
+            return FnVerdict(
+                False, r
+            )  # compile/link/symbol/infra payloads pass through
+        built = Path(scratch) / f"{func}.so"
+        if built.exists():
+            shutil.copy2(built, so_path)  # debug artifact parity with prior layout
 
     compared = 0
     for (case, want), got in zip(kept, r["results"]):

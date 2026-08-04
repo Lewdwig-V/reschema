@@ -36,6 +36,18 @@ def _suite_time_budget():
         )
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """Setup-time checks can't catch a budget-busting FINAL test (no later
+    setup to trigger them) — the suite-end verdict lives here."""
+    over = time.monotonic() - _STARTED - BUDGET_S
+    if over > 0:
+        print(
+            f"\ntest suite exceeded its documented {BUDGET_S}s wall-clock "
+            f"budget (+{over:.1f}s)"
+        )
+        session.exitstatus = 2
+
+
 @pytest.fixture(scope="session")
 def built_corpus():
     """The 48-slot corpus, built once per test session."""

@@ -12,8 +12,10 @@ uv lock                   # after touching pyproject
 ```
 
 Run pytest **via `uv run` only** — the venv (`.venv`, Python 3.12) carries native
-deps. `gcc`+`strip` on PATH are required for corpus builds (clang also used in
-the matrix).
+deps. Rootless **podman** is the hard dependency: every compile (corpus matrix,
+model checks, `strip`) runs inside the pinned `localhost/reschema-toolchain:1`
+image — build it once with `podman build -t localhost/reschema-toolchain:1 -f
+Containerfile .`. No host `gcc`/`strip` is needed (or used) anywhere.
 
 ## Conventions
 
@@ -23,7 +25,7 @@ the matrix).
   unfinished.
 - **Canonicalize before diffing.** Address-shaped tokens → `ADDR_<n>` ordinals,
   `argv[0]` → basename. Changing `exec/canonical.py` rules = corpus re-record
-  (see "rules v1" in its docstring).
+  (see "rules v2" in its docstring; `CANONICALIZER_VERSION = "2.1"`).
 - **Structured rejects, never tracebacks**, at every agent-facing boundary:
   `{accepted: False, reason, divergence}`. The engine is the only logic owner;
   `mcp/server.py` is dispatch-only.
@@ -33,9 +35,9 @@ the matrix).
   tune its own judge).
 - **Trust model is deliberate:** agent C is compiled and executed — level A
   (qiling vs a fresh empty rootfs), level B (mandatory one-shot rootless podman
-  worker; podman is a hard dependency for level-B work/tests). ALL compiles —
-  corpus matrix and both levels' models — run inside the one pinned toolchain
-  image (`Containerfile`); host gcc is never used. See README "Trust model".
+  worker; podman is a hard dependency for all build/validate/test flows).
+  ALL compiles — corpus matrix and both levels' models — run inside the one
+  pinned toolchain image (`Containerfile`); host gcc is never used. See README "Trust model".
 - On-disk state under `.reschema/` (gitignored) is shared runtime state; tests
   wipe what they own (see `tests/test_hidden.py` pattern). Single-process use
   is assumed (engine module docstring).

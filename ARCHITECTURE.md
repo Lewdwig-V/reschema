@@ -145,12 +145,13 @@ Control flow across the tour sections below, as it actually happens.
 ### Function mode (`submit_model(function=f)`)
 
 1. Dispatch to `engine.submit_function`. The agent-declared param spec is
-   parsed first — a malformed spec is a counted `reason: "spec"` reject
-   before anything compiles.
-2. Spec floors: more than 6 register args rejects (stage `arity`); `ret:
-   "void"` without at least one memory-channel param (`buffer_i32`/`cstring`)
-   rejects — a scalar-only void would compare `{} == {}` and a no-op would
-   pass.
+   parsed first; a malformed spec JSON is a counted reject here, at top level:
+   `{accepted: false, reason: "spec", detail}`.
+2. Spec floors live inside the validator: more than 6 register args rejects
+   (stage `arity`); `ret: "void"` without at least one memory-channel param
+   (`buffer_i32`/`cstring`) rejects (stage `spec`) — a scalar-only void would
+   compare `{} == {}` and a no-op would pass. Floor rejects nest inside the
+   divergence slot: `{accepted: false, divergence: {stage, detail}}`.
 3. `validate/function.validate_function` draws the fuzz seed (fresh entropy
    unless tests pin it) and builds `n_fuzz` cases (`N_FUZZ=64`, floored at
    the MCP boundary — the agent cannot tune its own judge down; capped at
@@ -198,10 +199,17 @@ Every agent-facing verdict is a typed dict. There are three shapes:
   `stage: recorded|hidden` and a `divergence` payload describing the FIRST
   divergence (decoded previews for io, hex elsewhere, plus a `dep_slice`
   fd-chain for event/files divergences).
-- Mechanical rejects: `compile`, `hidden-starvation`, and (function mode)
-  `spec`/arity floors — carry a human-readable `detail`, no divergence.
-- Function-mode divergences: `{accepted: false, divergence: {input, field,
-  expected, actual, seed}}` with `field` in `ret|mem|crash`.
+- Behavior divergences (function gate): `{accepted: false, divergence:
+  {input, field, expected, actual, seed}}` with `field` in `ret|mem|crash`.
+- Mechanical rejects carry a human-readable `detail`, but its nesting depends
+  on the path: program-gate mechanical rejects (`compile`,
+  `hidden-starvation`) return top-level `{accepted: false, reason, detail}`;
+  function-gate floor verdicts from the validator (arity, void-without-
+  memory-channel, skip-starvation, infra) nest it as `{accepted: false,
+  divergence: {stage, detail}}` (skip-starvation also carries the fuzz
+  `seed`); a malformed spec JSON fails before validation as top-level
+  `{accepted: false, reason: "spec", detail}`. Clients should read the reason
+  from `divergence.stage` first and fall back to top-level `reason`.
 
 **Tool-boundary errors (not verdicts):** `{error: not_found|spec|internal,
 detail}` — unknown task/function, malformed params crossing the wire, or

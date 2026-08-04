@@ -1,0 +1,44 @@
+"""Session-wide test wiring: wall-clock budget and one shared corpus build.
+
+Budget: the docs promise the full suite in ~2 minutes. The autouse fixture
+makes that a hard bound — a suite that burns past it exits failed
+(RESCHEMA_TEST_BUDGET_S overrides the default for profiling runs).
+
+Corpus: build() is ALWAYS a full rebuild (48 slots, two container rounds,
+~9s); one session-scoped build replaces the per-module copies.
+"""
+
+import os
+import tempfile
+import time
+
+import pytest
+
+# pytest-xdist: give each worker its own .reschema root so task dirs, ledgers,
+# memory, and the corpus manifest can't race across processes. Must run at
+# conftest import time — reschema's ROOT constants read the env at THEIR import.
+if "PYTEST_XDIST_WORKER" in os.environ:
+    os.environ["RESCHEMA_HOME"] = tempfile.mkdtemp(
+        prefix=f"reschema-{os.environ['PYTEST_XDIST_WORKER']}-"
+    )
+
+BUDGET_S = int(os.environ.get("RESCHEMA_TEST_BUDGET_S", "120"))
+_STARTED = time.monotonic()
+
+
+@pytest.fixture(autouse=True)
+def _suite_time_budget():
+    """The documented 2-minute wall-clock budget is a hard failure."""
+    if time.monotonic() - _STARTED > BUDGET_S:
+        pytest.exit(
+            f"test suite exceeded its documented {BUDGET_S}s wall-clock budget",
+            returncode=2,
+        )
+
+
+@pytest.fixture(scope="session")
+def built_corpus():
+    """The 48-slot corpus, built once per test session."""
+    from reschema.corpus.generate import build
+
+    return build()

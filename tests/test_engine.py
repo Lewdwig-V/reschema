@@ -1,13 +1,12 @@
 import pytest
 
-from reschema.corpus.generate import build
 from reschema.engine import TaskStore
 from reschema.exec.canonical import CANONICALIZER_VERSION
 
 
 @pytest.fixture(scope="module")
-def manifest():
-    return build()
+def manifest(built_corpus):
+    return built_corpus
 
 
 def test_record_case_saves_canonical_trace(manifest):

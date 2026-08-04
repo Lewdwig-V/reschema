@@ -6,10 +6,17 @@ project-local override/context.
 ## Commands
 
 ```bash
-uv run pytest -q          # full suite (~2 min; qiling emulation is the cost)
+uv run pytest -q -n auto  # full suite: 120s HARD wall-clock budget (conftest
+                          # enforces, per xdist worker); exceeding it fails the run
 uv run ruff check src tests
 uv lock                   # after touching pyproject
 ```
+
+Tests run under **pytest-xdist** (`-n auto`): every worker gets its own
+`.reschema/` root via `RESCHEMA_HOME`, and the 48-slot corpus builds once per
+session (never per module — `build()` is always a full rebuild). A test that
+only passes in a specific ordering or with a specific worker layout is a bug:
+fix the test, not the scheduler.
 
 Run pytest **via `uv run` only** — the venv (`.venv`, Python 3.12) carries native
 deps. Rootless **podman** is the hard dependency: every compile (corpus matrix,

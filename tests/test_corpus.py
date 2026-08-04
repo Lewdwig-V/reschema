@@ -3,12 +3,10 @@ import re
 import pytest
 from elftools.elf.elffile import ELFFile
 
-from reschema.corpus.generate import build
-
 
 @pytest.fixture(scope="module")
-def manifest():
-    return build()
+def manifest(built_corpus):
+    return built_corpus
 
 
 def _gcc_slot(m, seed, opt, stripped):

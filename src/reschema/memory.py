@@ -16,7 +16,8 @@ import json
 import os
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+# RESCHEMA_HOME: see engine.py (xdist per-worker isolation); default unchanged.
+ROOT = Path(os.environ.get("RESCHEMA_HOME", Path(__file__).resolve().parents[2]))
 MEMORY = ROOT / ".reschema" / "memory"
 
 

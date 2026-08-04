@@ -11,7 +11,6 @@ import pytest
 from mcp.client._memory import InMemoryTransport
 from mcp.client.session import ClientSession
 
-from reschema.corpus.generate import build
 from reschema.engine import TaskStore
 from reschema.mcp.server import server
 
@@ -41,8 +40,7 @@ def _wipe(task_id):
 
 
 @pytest.fixture(scope="module", autouse=True)
-def corpus():
-    build()
+def corpus(built_corpus):
     _wipe("rot13::gcc-O2-sym")
     _wipe("calc::gcc-O2-sym")
 
@@ -337,7 +335,6 @@ def test_submit_model_notes_flow_through(tmp_path, monkeypatch):
 def test_experiment_single_input_is_cheap_scout_contract(tmp_path, monkeypatch):
     # ISSUE-2B-8: one call_original round, no trace-json persisted, identical
     # {ret, mem} shape to the full case path, and exactly ONE probe accounted.
-    build()
     task = "calc::gcc-O2-sym"
     st = TaskStore(task)
     st._path("ledger.json").unlink(missing_ok=True)
@@ -364,6 +361,5 @@ def test_experiment_single_input_is_cheap_scout_contract(tmp_path, monkeypatch):
 
 
 def test_experiment_single_input_rejected_on_program_mode():
-    build()
     r = call("experiment", task_id="rot13::gcc-O2-sym", argv=["abc"], single_input=True)
     assert r.get("error") == "spec"

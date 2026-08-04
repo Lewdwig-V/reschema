@@ -1,10 +1,9 @@
 import random
 import re
-import subprocess
 
 import pytest
 
-from reschema.corpus.generate import _symtab, build
+from reschema.corpus.generate import _symtab
 from reschema.driver.calling import call_original, gen_inputs
 from reschema.driver.podrun import run_worker
 from reschema.driver.spec import Param
@@ -41,33 +40,40 @@ int32_t bump(int32_t x){ static int32_t n = 0; n += x; return n; }
 
 
 @pytest.fixture(scope="module")
-def manifest():
-    return build()
+def manifest(built_corpus):
+    return built_corpus
 
 
 @pytest.fixture(scope="module")
 def probe_bin(tmp_path_factory):
     d = tmp_path_factory.mktemp("probe")
-    src = d / "probe.c"
-    src.write_text(PROBE)
-    binp = d / "probe"
     # -fno-stack-protector: the canary read (fs:[0x28] TLS) is unmapped when qiling jumps
     # straight to a function address — orthogonal to the frame-placement bug under test.
-    subprocess.run(
-        [
-            "gcc",
-            "-O1",
-            "-static",
-            "-fno-pie",
-            "-no-pie",
-            "-fno-stack-protector",
-            "-g0",
-            str(src),
-            "-o",
-            str(binp),
-        ],
-        check=True,
+    r = run_worker(
+        {
+            "mode": "compile",
+            "jobs": [
+                {
+                    "c_source": PROBE,
+                    "out": "probe",
+                    "compiler": "gcc",
+                    "flags": [
+                        "-O1",
+                        "-static",
+                        "-fno-pie",
+                        "-no-pie",
+                        "-fno-stack-protector",
+                        "-g0",
+                    ],
+                }
+            ],
+        },
+        d,
     )
+    assert r.get("results"), r  # infra failure surfaces the podrun stage detail
+    res = r["results"][0]
+    assert res["rc"] == 0, res["stderr"]
+    binp = d / "probe"
     return str(binp), _symtab(binp)
 
 

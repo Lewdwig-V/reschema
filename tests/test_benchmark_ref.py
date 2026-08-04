@@ -8,8 +8,13 @@ import math
 
 import pytest
 
-from reschema.corpus.generate import build
 from reschema.engine import TaskStore, status_snapshot, submit_program
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _corpus_once(built_corpus):
+    pass
+
 
 GOOD_ROT13 = r"""
 #include <stdio.h>
@@ -24,7 +29,6 @@ PROBE_INPUTS = ["alpha", "Beta", "zzz", "hello", "world!", "rot13"]
 
 
 def run_family_baseline():
-    build()
     trajectory = []
     for slot in ROT13_FAMILY:
         st = TaskStore(f"rot13::{slot}")
@@ -55,7 +59,6 @@ def test_family_memory_bends_trajectory_up(monkeypatch, tmp_path):
     from reschema.memory import read_family
 
     monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
-    build()
     first = TaskStore("rot13::gcc-O0-sym")
     for p in first.dir.glob("trace_*.json"):
         p.unlink()

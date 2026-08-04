@@ -25,6 +25,7 @@ override-dependencies = ["pillow>=12.3.0"]
 [dependency-groups]
 dev = [
     "pytest",
+    "pytest-xdist>=3.8.0",
     "ruff",
 ]
 

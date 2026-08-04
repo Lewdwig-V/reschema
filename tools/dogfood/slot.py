@@ -1,0 +1,146 @@
+"""One live-agent run of one corpus slot (spec §slot.py)."""
+
+from __future__ import annotations
+
+import json
+import shutil
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+from .measure import slot_efficiency
+from .prompt import render, template_hash
+from .runners.base import AgentRunner, RunnerConfig, SlotSpec
+
+
+@dataclass
+class SlotGuard:
+    timeout_s: int = 2700  # 45 min
+    probe_ceiling: int = 30
+    poll_s: int = 30
+
+
+def layout_root(spec: SlotSpec, runs_dir: Path, corpus_source: Path) -> Path:
+    """Primed chains share one root across slots; unprimed gets a fresh root
+    per slot — memory-cold-by-filesystem, the CI isolation invariant."""
+    chain = (
+        f"{spec.family}-primed-r{spec.rep}"
+        if spec.condition == "primed"
+        else f"{spec.family}-{spec.condition}-{spec.slot}-r{spec.rep}"
+    )
+    root = runs_dir / chain
+    corp = root / ".reschema/corpus"
+    if not corp.exists():
+        corp.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(corpus_source, corp)
+    (root / ".reschema/tasks").mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _read_ledger(root: Path, task_id: str) -> dict:
+    p = root / ".reschema/tasks" / task_id.replace("::", "__") / "ledger.json"
+    return json.loads(p.read_text()) if p.exists() else {}
+
+
+def run_slot(
+    spec: SlotSpec,
+    *,
+    campaign_dir: Path,
+    runner: AgentRunner,
+    corpus_source: Path,
+    guards: SlotGuard | None = None,
+    poll_s: int | None = None,
+    run_header: dict | None = None,
+) -> Path:
+    guards = guards or SlotGuard()
+    poll = poll_s if poll_s is not None else guards.poll_s
+    root = layout_root(spec, campaign_dir, corpus_source)
+    out = campaign_dir.parent / "results" / f"{spec.result_stem}.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    cfg = RunnerConfig(
+        model=(run_header or {}).get("model", "unknown"),
+        endpoint=(run_header or {}).get("endpoint"),
+        sandbox=root / "sandbox",
+        run_root=root,
+    )
+    cfg.sandbox.mkdir(parents=True, exist_ok=True)
+    run_header = run_header or {}
+    preflight = getattr(runner, "preflight", None)
+    if preflight is not None:
+        try:
+            run_header = {**run_header, **preflight(cfg)}
+        except RuntimeError as e:
+            rec = {
+                "slot_id": spec.slot_id,
+                "family": spec.family,
+                "condition": spec.condition,
+                "slot": spec.slot,
+                "slot_index": spec.slot_index,
+                "rep": spec.rep,
+                "outcome": "infra-error",
+                "abort_reason": str(e),
+                "E": 0.0,
+                "n_exp": 0,
+                "n_sub": 0,
+                "accepted": False,
+                "wall_s": 0.0,
+                "run_header": run_header,
+            }
+            out.write_text(json.dumps(rec) + "\n")
+            return out
+    runner.prepare(cfg)
+    started = time.monotonic()
+    runner.spawn(render(spec.task_id))
+
+    outcome, abort = "aborted: agent-exit", None
+    while True:
+        led = _read_ledger(root, spec.task_id)
+        probes = led.get("probes", 0)
+        print(
+            f"[{spec.result_stem}] {time.monotonic() - started:.0f}s probes={probes}",
+            flush=True,
+        )  # heartbeat
+        if "program" in led.get("accepted", []):
+            outcome = "accepted"
+            break
+        if runner.exited():  # natural exit without acceptance: typed below
+            outcome = "aborted: agent-exit"
+            break
+        if time.monotonic() - started > guards.timeout_s:
+            runner.kill()
+            outcome, abort = "aborted: timeout", "wall-clock guard"
+            break
+        if probes > guards.probe_ceiling:
+            runner.kill()
+            outcome, abort = "aborted: probe-ceiling", f"probes>{guards.probe_ceiling}"
+            break
+        time.sleep(poll)
+    res = runner.wait()  # after kill() or natural exit; must return promptly
+    led = _read_ledger(root, spec.task_id)
+    accepted = "program" in led.get("accepted", [])
+    if accepted:
+        outcome = "accepted"
+    subs, probes = led.get("submissions", 0), led.get("probes", 0)
+    rec = {
+        "slot_id": spec.slot_id,
+        "family": spec.family,
+        "condition": spec.condition,
+        "slot": spec.slot,
+        "slot_index": spec.slot_index,
+        "rep": spec.rep,
+        "outcome": outcome,
+        "abort_reason": abort,
+        "E": slot_efficiency(accepted, probes, subs),
+        "n_exp": probes,
+        "n_sub": subs,
+        "accepted": accepted,
+        "wall_s": round(time.monotonic() - started, 1),
+        "run_header": {
+            **(run_header or {}),
+            "prompt_sha256": template_hash(),
+            "agent_exit": res.exit_kind,
+        },
+    }
+    out.write_text(json.dumps(rec) + "\n")
+    return out

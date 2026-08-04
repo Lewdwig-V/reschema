@@ -370,13 +370,33 @@ def _abi_template(func: str, facts: dict) -> str:
 """
 
 
+def _repair_directive(store: TaskStore) -> dict | None:
+    """Two-pass repair coaching (research slot 2B-5): rejections are answered
+    FIRST with abstract bit-logic repair, idiomatic annotation after acceptance.
+    Guidance only, attached when the task ledger shows rejection history."""
+    led = store.ledger()
+    rej = [e for e in led.get("recent", []) if e.get("outcome") == "reject"]
+    if not rej:
+        return None
+    last = rej[-1]
+    stage = last.get("stage") or last.get("reason", "divergence")
+    return {
+        "trigger": f"{len(rej)} recent rejection(s); last stage: {stage}",
+        "order": [
+            "1) abstract bit-logic repair: fixed-width integers and exact byte-level behavior, no idiomatic or semantic attempts; satisfy the verifier bare-minimum",
+            "2) idiomatic annotation and semantic refinement (types, names, structure): only AFTER the submission is accepted",
+        ],
+        "provenance": "coaching guidance derived from your rejection history, not a verified fact",
+    }
+
+
 def open_function_task(store: TaskStore, func: str) -> dict:
     from .disasm.analyze import analyze_function
     from .disasm.slice import disasm_function
 
     f = _fn_meta(store, func)
     facts = analyze_function(store.meta["binary"], store.meta["functions"])[func]
-    return {
+    out = {
         "task_id": store.meta["task_id"],
         "function": func,
         "address": hex(f["addr"]),
@@ -390,6 +410,10 @@ def open_function_task(store: TaskStore, func: str) -> dict:
         "abi_template": _abi_template(func, facts),
         "memory": read_family(store.meta["seed"], fn=func),
     }
+    d = _repair_directive(store)
+    if d is not None:
+        out["repair_directive"] = d
+    return out
 
 
 def experiment_function(

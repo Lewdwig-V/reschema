@@ -394,3 +394,32 @@ def test_status_snapshot_efficiency_metric():
         "alpha": 0.15,
         "beta": 0.4,
     }
+
+
+def test_task_open_repair_directive_only_after_rejection():
+    st = _status_store()
+    st._path("ledger.json").unlink(missing_ok=True)
+    t = open_function_task(st, "sum_range")
+    assert "repair_directive" not in t  # nothing to repair yet
+
+    submit_function(st, "sum_range", PARAMS, WRONG, seed=1, n_fuzz=8)
+    t = open_function_task(st, "sum_range")  # re-open: directive appears
+    d = t["repair_directive"]
+    assert "divergence" in d["trigger"]
+    assert d["order"][0].startswith("1)") and "bit-logic" in d["order"][0]
+    assert d["order"][1].startswith("2)") and "idiomatic" in d["order"][1].lower()
+    assert "guidance" in d["provenance"]
+
+    # directive is additive coaching: every existing payload key still present
+    assert (
+        t["signature_guess"]
+        and t["callees"] is not None
+        and t["abi_template"]
+        and "memory" in t
+    )
+
+    # after acceptance the history (and its coaching) persist — no reversion
+    submit_function(st, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)
+    assert (
+        open_function_task(st, "sum_range")["repair_directive"]["order"] == d["order"]
+    )

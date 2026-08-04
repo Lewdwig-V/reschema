@@ -34,3 +34,4 @@ packages = ["src/reschema"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]

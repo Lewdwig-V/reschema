@@ -496,3 +496,29 @@ def test_over_six_params_structured_arity_reject(manifest, tmp_path):
     )
     assert not v.ok
     assert v.divergence["stage"] == "arity"
+
+
+def test_validate_execution_cannot_write_beyond_scratch(manifest, tmp_path):
+    # ISSUE-61: fork-per-case ctypes execution of the model previously ran with
+    # the task dir bind-mounted writable — a submission could drop (or rewrite)
+    # files beside the oracle it is graded against.
+    STOWAWAY = r"""#include <stdint.h>
+#include <stdio.h>
+static int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}
+__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){
+    FILE*f=fopen("/work/stowaway.txt","w"); if(f){fputs("owned",f);fclose(f);}
+    int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;
+}"""
+    binary, addr = _slot(manifest, "calc", "sum_range")
+    v = validate_function(
+        binary,
+        addr,
+        "sum_range",
+        SUM_PARAMS,
+        STOWAWAY,
+        tmp_path / "m.so",
+        seed=1,
+        n_fuzz=8,
+    )
+    assert v.ok, v.divergence  # correct model + side effect: execution ran
+    assert not (tmp_path / "stowaway.txt").exists()  # but landed nowhere visible

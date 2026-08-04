@@ -438,3 +438,14 @@ def test_event_length_reason_pinned(tmp_path, monkeypatch):
     assert not v.ok and v.reason == "event-length"
     assert v.divergence["expected_len"] == 2
     assert v.divergence["actual_len"] == 4
+
+
+def test_compile_mount_exposes_no_oracle_files(tmp_path):
+    # ISSUE-61: the worker mount must hold ONLY the model source. Pre-fix the
+    # task dir (traces/ledger) was bind-mounted rw, and gcc diagnostics quote
+    # offending source lines — #include of a trace leaked recorded ground truth
+    # through the returned stderr channel.
+    (tmp_path / "trace_a.json").write_text('{"argv": ["QzxCANARY7"]}\n')
+    ok, detail = compile_model('#include "/work/trace_a.json"\n', tmp_path / "model")
+    assert not ok
+    assert "QzxCANARY7" not in detail

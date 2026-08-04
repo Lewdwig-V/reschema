@@ -40,6 +40,11 @@ def ensure_image() -> None:
 def run_worker(job: dict, workdir: Path, timeout: int | None = None) -> dict:
     """One validation round inside a throwaway rootless container; returns result JSON.
 
+    MOUNT CONTRACT: workdir is bind-mounted rw as the container's only writable
+    tree, and its contents are fully visible (readable) to agent-authored C —
+    callers compiling/executing agent sources MUST pass a scratch dir holding
+    nothing but the model source (traces/ledger/accepts never enter the mount).
+
     Timeout scales with the fuzz budget: N cases can each burn a full per-case
     budget inside the worker (compile may also run); a fixed cap would kill the
     container mid-report and turn valid crash verdicts into infra failures.

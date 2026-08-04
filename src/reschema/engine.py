@@ -12,6 +12,8 @@ import os
 import random
 import re
 import secrets
+import shutil
+import tempfile
 from pathlib import Path
 
 from .driver import podrun
@@ -579,20 +581,27 @@ def compose(store: TaskStore) -> tuple[bool, str]:
         f"{name}.compose": src
         for name, src in [*entries, ("composed_main", "int main(void){return 0;}\n")]
     }
-    try:
-        r = podrun.run_worker(
-            {
-                "mode": "compile-link",
-                "sources": sources,
-                "objects": [*sources],
-                "out": "composed",
-            },
-            store.dir,
-        )
-    except RuntimeError as e:
-        return False, f"infra: {e}"
-    if "stage" in r:
-        return False, f"infra: {r['detail']}"
+    # ISSUE-61: compose compiles in a scratch dir like every agent-C compile;
+    # the composed binary is the only artifact worth copying back.
+    with tempfile.TemporaryDirectory(prefix="reschema-compose-") as scratch:
+        try:
+            r = podrun.run_worker(
+                {
+                    "mode": "compile-link",
+                    "sources": sources,
+                    "objects": [*sources],
+                    "out": "composed",
+                },
+                Path(scratch),
+            )
+        except RuntimeError as e:
+            return False, f"infra: {e}"
+        if "stage" in r:
+            return False, f"infra: {r['detail']}"
+        for f in Path(scratch).glob("*.compose.c"):
+            shutil.copy2(f, store.dir / f.name)  # debug artifacts, like model.c
+        if r["ok"]:
+            shutil.copy2(Path(scratch) / "composed", store.dir / "composed")
     if not r["ok"]:
         syms = sorted(
             set(re.findall(r"multiple definition of [‘'`](\w+)", r["stderr"]))

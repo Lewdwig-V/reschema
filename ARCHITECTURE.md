@@ -382,8 +382,12 @@ decoded stdout previews already localize those.
 - **podrun.py**: `ensure_image()` (hard refusal with the build command when
   podman/image is absent) + `run_worker(job, workdir)`: one-shot rootless
   container with `--network none --read-only --tmpfs /tmp:rw,size=64m
-  --memory 1g --pids-limit 128`, repo `src` mounted read-only, task dir
-  mounted rw, timeout sized from the case budget.
+  --memory 1g --pids-limit 128`, repo `src` mounted read-only, and `workdir`
+  mounted rw with a hard contract: its contents are fully readable by
+  agent-authored C, so callers compiling/executing agent sources pass a
+  per-round scratch dir holding ONLY the model source — the task dir
+  (traces, ledger, accepted entries) never enters the mount. Timeout is
+  sized from the case budget.
 - **native_worker.py** (pure stdlib, runs inside the container): `validate`
   (compile `gcc -O1 -shared -fPIC`, RTLD_NOW symbol check, fork-per-case
   ctypes calls with a 5s budget → per-case crash results instead of harness
@@ -510,6 +514,14 @@ against the (non-public) original plans is kept as history, subordinate.
 - **The tool table is exactly five tools, matching spec behavior** — some
   literal parameter names diverge from the spec's §5 table; `compose()` is
   deliberately not exposed.
+- **Agent-C compile/execution mounts scratch, not the oracle store** —
+  information isolation, not just host isolation: worker containers
+  bind-mount a per-round scratch directory holding only the model source.
+  (History: the task dir — recorded traces, ledger, accepted sources — was
+  itself the rw mount, and gcc's habit of quoting offending source lines in
+  diagnostics made `#include "trace_*.json"` an agent-readable channel into
+  ground truth; function-mode runtime `fopen` was the same channel. Issue
+  #61; closed structurally by mount, not by filtering stderr.)
 - **Research slots landed as primitives, not pipelines** — four ideas from
   the 2025–26 RE-literature sweep (docs/roadmap.md), each refactored onto an
   existing surface rather than adding a subsystem: the two-pass repair
@@ -525,6 +537,6 @@ against the (non-public) original plans is kept as history, subordinate.
 This document is verified against the delivered codebase; the last full
 line-by-line pass was 2026-08-02 (commit `ad06b37`), with partial refreshes
 on 2026-08-04 (test-suite infrastructure in #70; research-slot features in
-#69). It rots by default — policy: any PR that changes behavior
+#69; scratch-mount isolation in #61). It rots by default — policy: any PR that changes behavior
 described here must update this file in the same commit; a dated claim a
 reviewer can falsify from `src/` is a doc bug, file it.

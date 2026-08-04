@@ -27,8 +27,10 @@ Containerfile .`. No host `gcc`/`strip` is needed (or used) anywhere.
   `argv[0]` → basename. Changing `exec/canonical.py` rules = corpus re-record
   (see "rules v2" in its docstring; `CANONICALIZER_VERSION = "2.1"`).
 - **Structured rejects, never tracebacks**, at every agent-facing boundary:
-  `{accepted: False, reason, divergence}`. The engine is the only logic owner;
-  `mcp/server.py` is dispatch-only.
+  `{accepted: False, reason?, divergence?, detail?}` — exact keys vary by
+  path (see ARCHITECTURE.md §"The rejection payload"); function-floor rejects
+  nest `detail` under `divergence`, they are not top-level. The engine is the
+  only logic owner; `mcp/server.py` is dispatch-only.
 - **Entropy policy:** production validation/sampling draws fresh per call
   (`secrets.token_hex(16)`); tests pin explicit seeds. Fuzz budgets are
   harness-controlled (`N_FUZZ` floor at the MCP boundary — the agent cannot
@@ -47,6 +49,7 @@ Containerfile .`. No host `gcc`/`strip` is needed (or used) anywhere.
 
 ## Non-goals (v1)
 
-See `ARCHITECTURE.md` §"Critical Constraints & Deviations" scope guardrails
-(multi-arch, packing, symbolic checks, struct-by-value, float/vector regs,
-level-B syscall comparison, >6 int args, ...). Don't build them speculatively.
+See `ARCHITECTURE.md` §"Decision records", last entry ("Scope guardrails
+observed"): multi-arch, packing, symbolic checks, struct-by-value,
+float/vector regs, level-B syscall comparison, >6 int args, ... Don't build
+them speculatively.

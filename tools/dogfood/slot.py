@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,21 @@ from .prompt import render, template_hash
 from .runners.base import AgentRunner, RunnerConfig, SlotSpec
 
 DEFAULT_POLL_S = 30
+
+
+def _driver_revision() -> str:
+    """Short git SHA of the driver checkout; "unknown" when there is no git /
+    no repo — the evidence record must never crash on a missing checkout."""
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
 
 
 @dataclass
@@ -65,7 +81,13 @@ def _record(
 ) -> dict:
     """The ONE 15-key JSONL record shape — both the terminal path and the
     preflight infra-error path build here, so key parity holds by construction.
-    transcript_tail is "" when no agent ran (infra-error)."""
+    transcript_tail is "" when no agent ran (infra-error).
+
+    Evidence-key convention: an ACCEPTED run can carry
+    run_header.agent_exit == "timeout" — acceptance may land between the last
+    poll and a guard's kill, and the post-kill ledger re-read then flips the
+    outcome to accepted while the killed process's exit_kind stays as
+    evidence. That pairing is by design; do not "fix" it."""
     return {
         "slot_id": spec.slot_id,
         "family": spec.family,
@@ -118,14 +140,21 @@ def run_slot(
         run_root=root,
     )
     cfg.sandbox.mkdir(parents=True, exist_ok=True)
-    # corpus identity is comparability evidence (protocol §5) — merge before
-    # preflight so even an infra-error record carries it
+    # corpus identity + prompt + driver revision are comparability evidence
+    # (protocol §5) — merge before preflight so even an infra-error record
+    # carries them (an agent-dependent path can't be trusted to exist)
+    mounted = root / ".reschema/corpus"
     run_header = {
         **run_header,
         "manifest_sha256": hashlib.sha256(
-            (root / ".reschema/corpus/manifest.json").read_bytes()
+            (mounted / "manifest.json").read_bytes()
         ).hexdigest(),
+        "prompt_sha256": template_hash(),
+        "driver_revision": _driver_revision(),
     }
+    sidecar = mounted / "canonicalizer_version"
+    if sidecar.exists():  # stub corpora in tests carry no sidecar
+        run_header["canonicalizer_version"] = sidecar.read_text()
     preflight = getattr(runner, "preflight", None)
     if preflight is not None:
         try:
@@ -193,11 +222,7 @@ def run_slot(
         n_sub=subs,
         accepted=accepted,
         wall_s=round(time.monotonic() - started, 1),
-        run_header={
-            **run_header,
-            "prompt_sha256": template_hash(),
-            "agent_exit": res.exit_kind,
-        },
+        run_header={**run_header, "agent_exit": res.exit_kind},
         transcript_tail=res.transcript_tail,
     )
     out.write_text(json.dumps(rec) + "\n")

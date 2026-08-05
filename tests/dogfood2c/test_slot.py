@@ -1,8 +1,9 @@
 import hashlib
 import json
 
+from tools.dogfood.prompt import template_hash
 from tools.dogfood.runners.base import SlotSpec
-from tools.dogfood.slot import SlotGuard, layout_root, run_slot
+from tools.dogfood.slot import SlotGuard, _driver_revision, layout_root, run_slot
 
 from .fakes import FakeRunner, PreflightFakeRunner
 
@@ -202,6 +203,64 @@ def test_run_slot_accepted_kills_lingering_agent(tmp_path, stub_corpus):
     assert runner._killed  # the accepted path terminates the agent
 
 
+def test_run_header_carries_canonicalizer_version(tmp_path, stub_corpus):
+    # corpus comparability evidence: the mounted sidecar travels into the record
+    (stub_corpus / "canonicalizer_version").write_text("2.1")
+    out = run_slot(
+        _spec(),
+        campaign_dir=tmp_path / "runs",
+        runner=FakeRunner(
+            {
+                "ledger": {"accepted": ["program"], "submissions": 1, "probes": 1},
+            }
+        ),
+        corpus_source=stub_corpus,
+        guards=SlotGuard(timeout_s=30),
+        poll_s=0,
+    )
+    rec = json.loads(out.read_text())
+    assert rec["run_header"]["canonicalizer_version"] == "2.1"
+
+
+def test_run_header_carries_driver_revision(tmp_path, stub_corpus):
+    out = run_slot(
+        _spec(),
+        campaign_dir=tmp_path / "runs",
+        runner=FakeRunner(
+            {
+                "ledger": {"accepted": ["program"], "submissions": 1, "probes": 1},
+            }
+        ),
+        corpus_source=stub_corpus,
+        guards=SlotGuard(timeout_s=30),
+        poll_s=0,
+    )
+    rec = json.loads(out.read_text())
+    assert isinstance(rec["run_header"]["driver_revision"], str)
+    assert rec["run_header"]["driver_revision"]
+
+
+def test_driver_revision_is_unknown_outside_a_git_checkout(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # /tmp is no git repo: records must not crash
+    assert _driver_revision() == "unknown"
+
+
+def test_infra_error_record_carries_prompt_sha256(tmp_path, stub_corpus):
+    # pre-preflight hash: an endpoint-dead record still pins the prompt it ran
+    out = run_slot(
+        _spec(),
+        campaign_dir=tmp_path / "runs",
+        runner=PreflightFakeRunner({"task_id": "rot13::gcc-O0-sym"}),
+        corpus_source=stub_corpus,
+        guards=SlotGuard(timeout_s=30),
+        poll_s=0,
+    )
+    rec = json.loads(out.read_text())
+    assert rec["outcome"] == "infra-error"
+    assert rec["run_header"]["prompt_sha256"] == template_hash()
+
+
+>>>>>>> 652d3e0 (2C driver follow-ups (#77))
 def test_run_slot_wipes_stale_task_ledger_before_spawn(tmp_path, stub_corpus):
     # resume after a mid-slot driver crash: the reused run root still holds the
     # crashed agent's ledger. It must NOT launder into the fresh slot's record.

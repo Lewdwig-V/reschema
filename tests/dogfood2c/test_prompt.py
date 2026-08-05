@@ -19,7 +19,8 @@ def test_raw_template_is_neutral():
 
 def test_forbidden_list_is_nonvacuous_and_bites():
     assert len(FORBIDDEN_TERMS) >= 8
-    contaminated = (render("t") + " submission").lower()
+    assert "memory" in FORBIDDEN_TERMS  # protocol vocabulary contamination
+    contaminated = (render("t") + " submission memory").lower()
     assert any(t.lower() in contaminated for t in FORBIDDEN_TERMS)
 
 

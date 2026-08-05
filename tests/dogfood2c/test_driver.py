@@ -31,6 +31,25 @@ def test_expand_campaign_rejects_duplicate_result_stems(tmp_path):
         expand_campaign(cfg)
 
 
+@pytest.mark.parametrize(
+    "toml",
+    [
+        'family = "rot13"\n',  # no [[chains]] at all
+        'chains = "rot13"\n',  # chains not an array of tables
+        '[[chains]]\nfamily = "rot13"\nslots = "gcc-O0-sym"\n',  # slots not a list
+        '[[chains]]\nslots = ["gcc-O0-sym"]\n',  # chain without family
+        '[[chains]]\nfamily = "rot13"\nslots = ["s"]\nreps = "lots"\n',  # bad reps
+    ],
+)
+def test_expand_campaign_rejects_malformed_toml(tmp_path, toml):
+    # a hand-edited campaign must fail as a readable ValueError, not a
+    # KeyError/TypeError traceback from inside the expansion loop
+    cfg = tmp_path / "c.toml"
+    cfg.write_text(toml)
+    with pytest.raises(ValueError, match="campaign TOML"):
+        expand_campaign(cfg)
+
+
 def test_primed_chain_runs_sequentially_and_in_slot_order(tmp_path, stub_corpus):
     cfg = tmp_path / "c.toml"
     cfg.write_text(SMOKE)

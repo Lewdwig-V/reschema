@@ -161,3 +161,8 @@ def test_render_report_writes_markdown_and_excludes_infra_error(tmp_path):
     # rather than a number poisoned by the adapter-failure record.
     assert "1 infra-error" in text
     assert "unprimed trajectory: [" in text
+    # The discriminating pin: the infra record's E=0.0 must NOT enter the
+    # trajectory — mutation (drop the `measured` filter) grows this to
+    # [e, 0.0] and this assertion bites. Value computed via slot_efficiency
+    # so engine-constant drift moves both sides together.
+    assert f"unprimed trajectory: [{slot_efficiency(True, 6, 1)!r}]" in text

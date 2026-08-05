@@ -7,6 +7,35 @@ from tools.dogfood.slot import SlotGuard, layout_root, run_slot
 from .fakes import FakeRunner, PreflightFakeRunner
 
 
+class LateWriterFake(FakeRunner):
+    """A real agent publishes its ledger minutes into a run — spawn() is not
+    the write time. This fake publishes at the first exited() poll instead,
+    and records whether a ledger already existed at spawn (residue of a
+    crashed predecessor in a reused run root)."""
+
+    def __init__(self, script):
+        super().__init__(script)
+        self.stale_at_spawn = None
+        self._prompt = None
+        self._published = False
+
+    def spawn(self, prompt):
+        self._prompt = prompt
+        d = (
+            self.cfg.run_root
+            / ".reschema"
+            / "tasks"
+            / prompt.split('"')[1].replace("::", "__")
+        )
+        self.stale_at_spawn = (d / "ledger.json").exists()
+
+    def exited(self):
+        if not self._published:
+            self._published = True
+            super().spawn(self._prompt)  # the agent's life reaches disk now
+        return super().exited()
+
+
 def _spec(cond="unprimed", idx=0):
     return SlotSpec(
         family="rot13",
@@ -144,3 +173,35 @@ def test_run_header_carries_manifest_sha256(tmp_path, stub_corpus):
         rec["run_header"]["manifest_sha256"]
         == hashlib.sha256((stub_corpus / "manifest.json").read_bytes()).hexdigest()
     )
+
+
+def test_run_slot_wipes_stale_task_ledger_before_spawn(tmp_path, stub_corpus):
+    # resume after a mid-slot driver crash: the reused run root still holds the
+    # crashed agent's ledger. It must NOT launder into the fresh slot's record.
+    spec = _spec()
+    root = layout_root(spec, tmp_path / "runs", stub_corpus)
+    task_dir = root / ".reschema/tasks" / "rot13__gcc-O0-sym"
+    task_dir.mkdir(parents=True)
+    (task_dir / "ledger.json").write_text(
+        json.dumps({"accepted": ["program"], "submissions": 99, "probes": 99})
+    )
+    runner = LateWriterFake(
+        {
+            "task_id": "rot13::gcc-O0-sym",
+            "ledger": {"accepted": ["program"], "submissions": 1, "probes": 2},
+        }
+    )
+    out = run_slot(
+        spec,
+        campaign_dir=tmp_path / "runs",
+        runner=runner,
+        corpus_source=stub_corpus,
+        guards=SlotGuard(timeout_s=30, probe_ceiling=5),
+        poll_s=0,
+    )
+    rec = json.loads(out.read_text())
+    # the FRESH agent's counters, not the crashed predecessor's inflated ones
+    assert (rec["n_exp"], rec["n_sub"]) == (2, 1)
+    # and the dirty "accepted" must not survive to spawn: no instant
+    # pre-spawn acceptance off a ledger the fresh agent never wrote
+    assert runner.stale_at_spawn is False

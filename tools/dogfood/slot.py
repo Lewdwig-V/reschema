@@ -95,6 +95,15 @@ def run_slot(
     guards = guards or SlotGuard()
     poll = poll_s if poll_s is not None else DEFAULT_POLL_S
     root = layout_root(spec, campaign_dir, corpus_source)
+    # Resume honesty: layout_root REUSES roots, so a driver killed mid-slot
+    # leaves the crashed agent's ledger behind — the poll loop would launder a
+    # stale "accepted"/inflated counters into the fresh run's record. Wipe THIS
+    # task's dir before the agent spawns; chain memory and sibling slot
+    # ledgers are untouched.
+    shutil.rmtree(
+        root / ".reschema/tasks" / spec.task_id.replace("::", "__"),
+        ignore_errors=True,
+    )
     out = campaign_dir.parent / "results" / f"{spec.result_stem}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
 

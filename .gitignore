@@ -2,6 +2,8 @@ __pycache__/
 .ruff_cache/
 .pytest_cache/
 .reschema/
+.dogfood/
 build/
 dist/
 .worktrees/
+/results/

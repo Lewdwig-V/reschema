@@ -194,6 +194,7 @@ src/reschema/
   memory.py            # per-family deduction cache (.reschema/memory/<seed>.jsonl)
   engine.py            # TaskStore, ledger, submit_*, compose (single-process)
   mcp/server.py        # thin 1:1 tool wrapper over the engine
+tools/dogfood/         # phase-2C live-agent transfer driver (not in the package)
 ```
 
 (The `SENTINEL` trap is how a level-B call ends under emulation: the driver

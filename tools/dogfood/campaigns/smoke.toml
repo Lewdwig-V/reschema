@@ -1,0 +1,4 @@
+[[chains]]
+family = "rot13"
+slots = ["gcc-O0-sym", "gcc-O1-sym", "gcc-O2-sym"]
+reps = 1

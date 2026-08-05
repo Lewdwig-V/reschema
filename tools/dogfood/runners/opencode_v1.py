@@ -32,7 +32,7 @@ class OpenCodeV1Runner:
         return {
             "model": cfg.model,
             "endpoint": cfg.endpoint,
-            "digest": models.get("version", "unknown"),
+            "digest": models.get("version") or "unknown",
         }
 
     def _post(self, base: str, path: str, payload) -> tuple[int, dict]:

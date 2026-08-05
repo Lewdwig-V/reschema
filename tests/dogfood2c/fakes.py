@@ -27,12 +27,13 @@ class FakeRunner:
         # ledger path under run_root; write it directly.
         led = self.script.get("ledger")
         if led is not None:
-            d = (
-                self.cfg.run_root
-                / ".reschema"
-                / "tasks"
-                / self.script["task_id"].replace("::", "__")
-            )
+            # Like a real agent, the fake learns its task from the PROMPT:
+            # primed chain slots share one run root, so each slot's ledger
+            # must land under the CURRENT slot's task_id, not a stale script
+            # id. ponytail: split('"') couples to the one quoted slot in
+            # prompt.py's template — template_hash/test_prompt pin it.
+            task_id = prompt.split('"')[1]
+            d = self.cfg.run_root / ".reschema" / "tasks" / task_id.replace("::", "__")
             d.mkdir(parents=True, exist_ok=True)
             (d / "ledger.json").write_text(json.dumps(led))
 

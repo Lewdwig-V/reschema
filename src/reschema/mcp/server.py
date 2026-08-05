@@ -43,6 +43,12 @@ def _internal(e: Exception) -> dict:
     return {"error": "internal", "detail": f"{type(e).__name__}: {e}"}
 
 
+def _next_label(count: int) -> str:
+    """4-digit-padded trace label (#47): recorded() globs trace_<label>.json
+    and sorts lexicographically, so the pad must keep case order past 99."""
+    return f"e{count:04d}"
+
+
 @server.tool()
 def corpus_build(
     seed_ids: list[str] | None = None, matrix: list[str] | None = None
@@ -144,9 +150,7 @@ def experiment(
                 "error": "spec",
                 "detail": "single_input applies to function tasks only (program experiments always write cases)",
             }
-        # ponytail: zero-padded — recorded() globs trace_<label>.json and sorts
-        # lexicographically, so e10 must not precede e2 (upgrade: e04d at 100)
-        label = f"e{len(st.recorded()):02d}"
+        label = _next_label(len(st.recorded()))
         t = st.record_case(label, argv or [], stdin.encode())
         return {k: v for k, v in t.items() if k != "events"} if quiet else t
     except KeyError as e:  # unknown task (TaskStore) or function (_fn_meta)

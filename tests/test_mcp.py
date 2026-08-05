@@ -12,7 +12,7 @@ from mcp.client._memory import InMemoryTransport
 from mcp.client.session import ClientSession
 
 from reschema.engine import TaskStore
-from reschema.mcp.server import server
+from reschema.mcp.server import _next_label, server
 
 PARAMS = [
     {"name": "lo", "kind": "i32", "range": [-50, 0]},
@@ -330,6 +330,23 @@ def test_submit_model_notes_flow_through(tmp_path, monkeypatch):
             "promoted": True,
         }
     ]
+
+
+def test_recorded_order_and_next_label_hold_past_99_traces(built_corpus):
+    # #47: recorded() sorts trace_<label>.json lexicographically — the label
+    # pad must be wide enough that case order survives past 99 experiments
+    # (synthetic files, no 100 real recordings needed).
+    st = TaskStore("rot13::gcc-O2-sym")
+    try:
+        for i in range(105):
+            (st.dir / f"trace_e{i:04d}.json").write_text(json.dumps({"i": i}))
+        rec = st.recorded()
+        assert [t["i"] for t in rec] == list(range(105))
+        assert _next_label(len(rec)) == "e0105"
+        assert _next_label(7) == "e0007"
+    finally:  # the dir is shared runtime state; give it back empty
+        for p in st.dir.glob("trace_*.json"):
+            p.unlink()
 
 
 def test_experiment_single_input_is_cheap_scout_contract(tmp_path, monkeypatch):

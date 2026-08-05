@@ -19,6 +19,7 @@ from downstream statistics is the Task-7 render contract, not this module's.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -29,6 +30,7 @@ from pathlib import Path
 
 from .measure import render_report
 from .runners.base import AgentRunner, SlotSpec
+from .runners.opencode_v1 import OpenCodeV1Runner
 from .slot import SlotGuard, run_slot
 
 INFRA_STREAK_ABORT = 3
@@ -203,3 +205,43 @@ def run_campaign(
         for fam in families:
             render_report(out_dir, family=fam, out_dir=out_dir)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Human entry point for the smoke/floor campaigns — real opencode runner,
+    real repo corpus. Tests drive run_campaign directly; this is dispatch-only."""
+    ap = argparse.ArgumentParser(prog="python -m tools.dogfood.driver")
+    ap.add_argument("campaign", type=Path, help="TOML campaign plan")
+    ap.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="results dir — keep it INSIDE the repo (see AGENTS.md §2C smoke)",
+    )
+    ap.add_argument("--pool", type=int, default=4)
+    args = ap.parse_args(argv)
+    corpus = Path(".reschema/corpus")
+    if not (corpus / "manifest.json").exists():
+        raise SystemExit(
+            "no corpus manifest at .reschema/corpus/manifest.json — run "
+            "`uv run python -m reschema.corpus.generate` first"
+        )
+    if not os.environ.get("RESCHEMA_2C_ENDPOINT"):
+        raise SystemExit(
+            "RESCHEMA_2C_ENDPOINT is not set — point it at an OpenAI-compatible "
+            "base URL (preflight checks /models and /chat/completions)"
+        )
+    rc = run_campaign(
+        args.campaign,
+        runner_factory=OpenCodeV1Runner,
+        corpus_source=corpus,
+        pool_size=args.pool,
+        out_dir=args.out,
+    )
+    for md in sorted(args.out.glob("report-*.md")):
+        print(f"report: {md}")
+    return rc
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -53,6 +53,24 @@ Containerfile .`. No host `gcc`/`strip` is needed (or used) anywhere.
 - `tools/dogfood/` is benchmark tooling (phase 2C), NOT shipped in the
   `reschema` package; its tests live in `tests/dogfood2c/` and must stay
   CI-safe (no LLM, no podman, no endpoint).
+
+## 2C smoke campaign (manual)
+
+```bash
+uv run python -m tools.dogfood.driver tools/dogfood/campaigns/smoke.toml \
+    --out results/smoke          # [--pool N]; needs an opencode binary, an
+                                 # endpoint (RESCHEMA_2C_ENDPOINT), and
+                                 # .reschema/corpus (`uv run python -m
+                                 # reschema.corpus.generate` first)
+```
+
+Before trusting a run:
+- Keep `--out` INSIDE the repo: the slot's MCP server is `uv run` from the
+  sandbox under the results dir; an out-of-repo `--out` breaks launcher
+  discovery and masquerades as agent failure.
+- After the first smoke slot, read its transcript_tail: the 5 reschema tools
+  (corpus_build, task_open, experiment, submit_model, status) must be visible.
+- Review the report's abort classes BEFORE interpreting φ.
 - Commits: short imperative subject; quality-review fix rounds use
   `fix: ... (quality findings)`. Work happens on feature branches; `main`
   requires PR + green `test` check.

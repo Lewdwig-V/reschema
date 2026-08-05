@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from tools.dogfood.driver import expand_campaign, run_campaign
+from tools.dogfood.driver import expand_campaign, main, run_campaign
 from tools.dogfood.slot import SlotGuard
 
 from .fakes import FakeRunner, PreflightFakeRunner
@@ -149,6 +149,26 @@ def test_priming_failed_record_key_parity_with_accepted(tmp_path, stub_corpus):
     assert failed["run_header"]["manifest_sha256"] == (
         hashlib.sha256((stub_corpus / "manifest.json").read_bytes()).hexdigest()
     )
+
+
+def test_main_refuses_without_corpus_manifest(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # no .reschema/corpus here
+    cfg = tmp_path / "c.toml"
+    cfg.write_text(SMOKE)
+    with pytest.raises(SystemExit, match="corpus manifest"):
+        main([str(cfg), "--out", str(tmp_path / "out")])
+
+
+def test_main_refuses_without_endpoint(tmp_path, monkeypatch):
+    corpus = tmp_path / ".reschema/corpus"
+    corpus.mkdir(parents=True)
+    (corpus / "manifest.json").write_text("[]")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("RESCHEMA_2C_ENDPOINT", raising=False)
+    cfg = tmp_path / "c.toml"
+    cfg.write_text(SMOKE)
+    with pytest.raises(SystemExit, match="RESCHEMA_2C_ENDPOINT"):
+        main([str(cfg), "--out", str(tmp_path / "out")])
 
 
 def test_infra_flap_leaves_chain_resumable(tmp_path, stub_corpus):

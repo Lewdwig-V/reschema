@@ -196,6 +196,8 @@ def render_report(results_dir: Path, *, family: str, out_dir: Path) -> Path:
             "(protocol §4); these rows are the measurement.*"
         ),
     ]
-    md = Path(out_dir) / "report.md"
+    # per-family file: the floor campaign has two families — a bare report.md
+    # would clobber the first family's report with the second's
+    md = Path(out_dir) / f"report-{family}.md"
     md.write_text("\n".join(lines) + "\n")
     return md

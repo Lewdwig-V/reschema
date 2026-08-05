@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import pytest
@@ -91,7 +92,7 @@ def test_infra_streak_aborts_campaign(tmp_path, stub_corpus):
     with pytest.raises(RuntimeError, match="infra-error streak"):
         _run_smoke(tmp_path, stub_corpus, mk)
     # "campaign abort, report so far": the abort evidence report still renders
-    assert (tmp_path / "out/report.md").exists()
+    assert (tmp_path / "out/report-rot13.md").exists()
 
 
 def test_priming_failure_shortcircuits_the_chain(tmp_path, stub_corpus):
@@ -144,6 +145,10 @@ def test_priming_failed_record_key_parity_with_accepted(tmp_path, stub_corpus):
     # key parity pinned BOTH directions: no missing keys, no extras
     assert set(acc) <= set(failed)
     assert set(failed) <= set(acc)
+    # synthetic chain records pin the same corpus identity a real slot run does
+    assert failed["run_header"]["manifest_sha256"] == (
+        hashlib.sha256((stub_corpus / "manifest.json").read_bytes()).hexdigest()
+    )
 
 
 def test_infra_flap_leaves_chain_resumable(tmp_path, stub_corpus):

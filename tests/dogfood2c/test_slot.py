@@ -78,6 +78,8 @@ def test_run_slot_accepted_emits_jsonl(tmp_path, stub_corpus):
     rec = json.loads(out.read_text())
     assert rec["outcome"] == "accepted" and rec["n_exp"] == 3
     assert rec["E"] > 0 and rec["slot_id"].endswith("r1")
+    # wait()'s evidence tail lands in the record (guard-table promise)
+    assert rec["transcript_tail"] == "fake"
 
 
 def test_run_slot_timeout_is_typed_abort(tmp_path, stub_corpus):
@@ -150,6 +152,7 @@ def test_run_slot_preflight_failure_is_typed_infra_error(tmp_path, stub_corpus):
     rec = json.loads(out.read_text())
     assert rec["outcome"] == "infra-error"
     assert rec["abort_reason"] == "endpoint dead"
+    assert rec["transcript_tail"] == ""  # no agent ran: empty, but the key exists
     # key parity with a terminal record — pinned by the one record builder
     assert set(rec) == set(json.loads(normal.read_text()))
 

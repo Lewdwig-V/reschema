@@ -19,6 +19,7 @@ from downstream statistics is the Task-7 render contract, not this module's.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tomllib
@@ -105,6 +106,11 @@ def run_campaign(
     run_header = {
         "model": os.environ.get("RESCHEMA_2C_MODEL", "gemma4"),
         "endpoint": os.environ.get("RESCHEMA_2C_ENDPOINT"),
+        # corpus identity must reach even the SYNTHETIC priming-failed records
+        # (run_slot re-derives the same sha from its mounted manifest copy)
+        "manifest_sha256": hashlib.sha256(
+            (Path(corpus_source) / "manifest.json").read_bytes()
+        ).hexdigest(),
     }
     infra_streak = [0]
 
@@ -175,6 +181,7 @@ def run_campaign(
                         "accepted": False,
                         "wall_s": 0.0,
                         "run_header": run_header,
+                        "transcript_tail": "",  # no agent ran; key parity holds
                     },
                 )
             return
@@ -192,8 +199,7 @@ def run_campaign(
     finally:
         # "campaign abort, report so far": render whatever flat records exist
         # — on success AND on streak-abort, where the report IS the abort
-        # evidence. ponytail: one report.md per out_dir; a multi-family
-        # campaign's last family wins until a 2-family campaign exists.
+        # evidence. One report per family: the floor campaign has two.
         for fam in families:
             render_report(out_dir, family=fam, out_dir=out_dir)
     return 0

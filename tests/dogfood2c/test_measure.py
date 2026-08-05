@@ -223,6 +223,14 @@ def test_render_report_renders_per_slot_deltas_rows(tmp_path):
     assert "—" in text  # no unprimed baseline at slot 2: None renders as dash
 
 
+def test_render_report_uses_per_family_filename(tmp_path):
+    # the floor campaign has TWO families; a bare report.md would clobber #1
+    a = render_report(tmp_path, family="rot13", out_dir=tmp_path)
+    b = render_report(tmp_path, family="check", out_dir=tmp_path)
+    assert a.name == "report-rot13.md" and b.name == "report-check.md"
+    assert a.exists() and b.exists()
+
+
 def test_render_report_shows_phi_base_and_abort_classes(tmp_path):
     _write_rec(tmp_path, "rot13-unprimed-gcc-O0-sym-r1.jsonl", slot_index=0, n_exp=6)
     _write_rec(

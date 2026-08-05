@@ -61,9 +61,11 @@ def _record(
     accepted: bool,
     wall_s: float,
     run_header: dict,
+    transcript_tail: str = "",
 ) -> dict:
-    """The ONE 14-key JSONL record shape — both the terminal path and the
-    preflight infra-error path build here, so key parity holds by construction."""
+    """The ONE 15-key JSONL record shape — both the terminal path and the
+    preflight infra-error path build here, so key parity holds by construction.
+    transcript_tail is "" when no agent ran (infra-error)."""
     return {
         "slot_id": spec.slot_id,
         "family": spec.family,
@@ -79,6 +81,7 @@ def _record(
         "accepted": accepted,
         "wall_s": wall_s,
         "run_header": run_header,
+        "transcript_tail": transcript_tail,
     }
 
 
@@ -192,6 +195,7 @@ def run_slot(
             "prompt_sha256": template_hash(),
             "agent_exit": res.exit_kind,
         },
+        transcript_tail=res.transcript_tail,
     )
     out.write_text(json.dumps(rec) + "\n")
     return out

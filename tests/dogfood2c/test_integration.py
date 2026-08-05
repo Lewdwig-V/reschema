@@ -37,7 +37,7 @@ def test_mini_campaign_end_to_end(tmp_path, stub_corpus):
         poll_s=0,
     )
     assert rc == 0
-    md = tmp_path / "res" / "report.md"  # rendered by the driver itself
+    md = tmp_path / "res" / "report-rot13.md"  # rendered by the driver itself
     assert md.exists()
     text = md.read_text()
     assert "unprimed" in text and "primed" in text

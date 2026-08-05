@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import time
@@ -105,6 +106,14 @@ def run_slot(
         run_root=root,
     )
     cfg.sandbox.mkdir(parents=True, exist_ok=True)
+    # corpus identity is comparability evidence (protocol §5) — merge before
+    # preflight so even an infra-error record carries it
+    run_header = {
+        **run_header,
+        "manifest_sha256": hashlib.sha256(
+            (root / ".reschema/corpus/manifest.json").read_bytes()
+        ).hexdigest(),
+    }
     preflight = getattr(runner, "preflight", None)
     if preflight is not None:
         try:

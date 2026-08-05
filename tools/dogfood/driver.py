@@ -26,6 +26,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from .measure import render_report
 from .runners.base import AgentRunner, SlotSpec
 from .slot import SlotGuard, run_slot
 
@@ -91,9 +92,11 @@ def run_campaign(
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    specs = expand_campaign(cfg_path)
+    families = sorted({s.family for s in specs})
     primed_chains: dict[tuple[str, int], list[SlotSpec]] = {}
     singles: list[SlotSpec] = []
-    for s in expand_campaign(cfg_path):
+    for s in specs:
         if s.condition == "primed":
             primed_chains.setdefault((s.family, s.rep), []).append(s)
         else:
@@ -183,6 +186,14 @@ def run_campaign(
             one(job[0])
 
     jobs = list(primed_chains.values()) + [[s] for s in singles]
-    with ThreadPoolExecutor(max_workers=pool_size) as ex:
-        list(ex.map(work, jobs))
+    try:
+        with ThreadPoolExecutor(max_workers=pool_size) as ex:
+            list(ex.map(work, jobs))
+    finally:
+        # "campaign abort, report so far": render whatever flat records exist
+        # — on success AND on streak-abort, where the report IS the abort
+        # evidence. ponytail: one report.md per out_dir; a multi-family
+        # campaign's last family wins until a 2-family campaign exists.
+        for fam in families:
+            render_report(out_dir, family=fam, out_dir=out_dir)
     return 0

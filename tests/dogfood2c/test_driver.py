@@ -90,6 +90,8 @@ def test_infra_streak_aborts_campaign(tmp_path, stub_corpus):
 
     with pytest.raises(RuntimeError, match="infra-error streak"):
         _run_smoke(tmp_path, stub_corpus, mk)
+    # "campaign abort, report so far": the abort evidence report still renders
+    assert (tmp_path / "out/report.md").exists()
 
 
 def test_priming_failure_shortcircuits_the_chain(tmp_path, stub_corpus):

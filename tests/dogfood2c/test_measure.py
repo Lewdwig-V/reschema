@@ -1,3 +1,4 @@
+import json
 import math
 
 import pytest
@@ -6,6 +7,24 @@ from tools.dogfood.measure import phi_family, render_report, slot_efficiency
 
 E0 = math.exp(-0.75)  # unprimed cold-start reference (6 probes, 1 submission)
 HEADROOM = 1.0 - E0
+
+
+def _write_rec(d, name, **kw):
+    base = {
+        "slot_id": name,
+        "family": "rot13",
+        "condition": "unprimed",
+        "slot_index": 0,
+        "rep": 1,
+        "outcome": "accepted",
+        "E": 0.0,
+        "n_exp": 0,
+        "n_sub": 1,
+        "accepted": True,
+        "wall_s": 1.0,
+        "run_header": {},
+    }
+    (d / name).write_text(json.dumps({**base, **kw}) + "\n")
 
 
 def _rec(condition, slot_index, accepted, n_exp, n_sub=1, rep=None):
@@ -166,3 +185,104 @@ def test_render_report_writes_markdown_and_excludes_infra_error(tmp_path):
     # [e, 0.0] and this assertion bites. Value computed via slot_efficiency
     # so engine-constant drift moves both sides together.
     assert f"unprimed trajectory: [{slot_efficiency(True, 6, 1)!r}]" in text
+    # denominator honesty: records (not slots), with per-condition split
+    # over the measured population — the infra record is counted separately
+    assert "records: 2 total (primed 0, unprimed 1)" in text
+
+
+def test_render_report_renders_per_slot_deltas_rows(tmp_path):
+    # Ascending unprimed trajectory (8 probes at O0, 4 at O1) → non-flat →
+    # the deltas section must carry one ROW per primed later slot, including
+    # slot 2 whose unprimed baseline is missing (renders "—").
+    _write_rec(tmp_path, "rot13-unprimed-gcc-O0-sym-r1.jsonl", slot_index=0, n_exp=8)
+    _write_rec(tmp_path, "rot13-unprimed-gcc-O1-sym-r1.jsonl", slot_index=1, n_exp=4)
+    _write_rec(
+        tmp_path,
+        "rot13-primed-gcc-O0-sym-r1-s0.jsonl",
+        condition="primed",
+        slot_index=0,
+        n_exp=0,
+    )
+    _write_rec(
+        tmp_path,
+        "rot13-primed-gcc-O1-sym-r1-s1.jsonl",
+        condition="primed",
+        slot_index=1,
+        n_exp=0,
+    )
+    _write_rec(
+        tmp_path,
+        "rot13-primed-gcc-O2-sym-r1-s2.jsonl",
+        condition="primed",
+        slot_index=2,
+        n_exp=0,
+    )
+    text = render_report(tmp_path, family="rot13", out_dir=tmp_path).read_text()
+    assert "## per-slot deltas" in text
+    assert "- slot 1:" in text and "- slot 2:" in text
+    assert "—" in text  # no unprimed baseline at slot 2: None renders as dash
+
+
+def test_render_report_shows_phi_base_and_abort_classes(tmp_path):
+    _write_rec(tmp_path, "rot13-unprimed-gcc-O0-sym-r1.jsonl", slot_index=0, n_exp=6)
+    _write_rec(
+        tmp_path,
+        "rot13-primed-gcc-O0-sym-r1-s0.jsonl",
+        condition="primed",
+        slot_index=0,
+        n_exp=0,
+    )
+    _write_rec(
+        tmp_path,
+        "rot13-primed-gcc-O1-sym-r1-s1.jsonl",
+        condition="primed",
+        slot_index=1,
+        n_exp=0,
+        outcome="aborted: priming-failed",
+        accepted=False,
+    )
+    _write_rec(
+        tmp_path,
+        "rot13-unprimed-gcc-O1-sym-r1.jsonl",
+        condition="unprimed",
+        slot_index=1,
+        outcome="aborted: timeout",
+        accepted=False,
+    )
+    text = render_report(tmp_path, family="rot13", out_dir=tmp_path).read_text()
+    # thin population visible beside φ: one rep fed it
+    assert "1 rep(s) contributing" in text
+    # abort classes listed separately, not lumped into one "aborted" count
+    assert "aborted: priming-failed ×1" in text
+    assert "aborted: timeout ×1" in text
+
+
+def test_load_filters_family_and_skips_empty_records(tmp_path):
+    _write_rec(tmp_path, "rot13-unprimed-gcc-O0-sym-r1.jsonl", slot_index=0, n_exp=6)
+    # the "rot13-*" glob also matches the rot13-EXT stem: filter on the field
+    _write_rec(
+        tmp_path,
+        "rot13-ext-unprimed-gcc-O0-sym-r1.jsonl",
+        family="rot13-ext",
+        slot_index=0,
+        n_exp=6,
+    )
+    (tmp_path / "rot13-unprimed-gcc-O1-sym-r1.jsonl").write_text("")  # crashed write
+    text = render_report(tmp_path, family="rot13", out_dir=tmp_path).read_text()
+    assert "records: 1 total" in text
+
+
+def test_phi_family_within_rep_uses_mean_over_later_slots():
+    # Protocol §2: WITHIN a rep, φ is the MEAN over later slots; median/IQR
+    # is reserved for the across-rep spread. 3 later slots where mean differs
+    # from median — the 2-slot case masks the distinction.
+    recs = [_rec("unprimed", 0, True, 6, rep=1)]
+    recs += [
+        _rec("primed", 1, True, 0, rep=1),
+        _rec("primed", 2, True, 0, rep=1),
+        _rec("primed", 3, False, 0, rep=1),  # rejected -> E=0.0
+    ]
+    r = phi_family(recs)
+    expected_mean = (1.0 + 1.0 + (0.0 - E0) / HEADROOM) / 3
+    assert r["phi_median"] == pytest.approx(expected_mean)
+    assert r["phi_median"] != pytest.approx(1.0)  # the median would sit at 1.0

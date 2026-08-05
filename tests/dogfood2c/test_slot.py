@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 from tools.dogfood.runners.base import SlotSpec
@@ -122,3 +123,24 @@ def test_run_slot_preflight_failure_is_typed_infra_error(tmp_path, stub_corpus):
     assert rec["abort_reason"] == "endpoint dead"
     # key parity with a terminal record — pinned by the one record builder
     assert set(rec) == set(json.loads(normal.read_text()))
+
+
+def test_run_header_carries_manifest_sha256(tmp_path, stub_corpus):
+    # protocol §5: every live result pins the corpus manifest it ran against
+    out = run_slot(
+        _spec(),
+        campaign_dir=tmp_path / "runs",
+        runner=FakeRunner(
+            {
+                "ledger": {"accepted": ["program"], "submissions": 1, "probes": 1},
+            }
+        ),
+        corpus_source=stub_corpus,
+        guards=SlotGuard(timeout_s=30),
+        poll_s=0,
+    )
+    rec = json.loads(out.read_text())
+    assert (
+        rec["run_header"]["manifest_sha256"]
+        == hashlib.sha256((stub_corpus / "manifest.json").read_bytes()).hexdigest()
+    )

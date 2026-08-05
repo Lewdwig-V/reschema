@@ -3,7 +3,7 @@ import json
 from tools.dogfood.runners.base import SlotSpec
 from tools.dogfood.slot import SlotGuard, layout_root, run_slot
 
-from .fakes import FakeRunner
+from .fakes import FakeRunner, PreflightFakeRunner
 
 
 def _spec(cond="unprimed", idx=0):
@@ -21,6 +21,9 @@ def test_unprimed_layout_is_cold_and_copied_corpus(tmp_path, stub_corpus):
     root = layout_root(_spec(), tmp_path / "runs", stub_corpus)
     assert (root / ".reschema/corpus/manifest.json").exists()
     assert not (root / ".reschema/memory").exists()  # cold at slot open
+    # manifest binary paths resolve in the source corpus root — binaries are
+    # dead weight in the mount and must not be copied
+    assert not (root / ".reschema/corpus/rot13/fake-binary").exists()
 
 
 def test_primed_chain_shares_memory_root(tmp_path, stub_corpus):
@@ -51,9 +54,7 @@ def test_run_slot_timeout_is_typed_abort(tmp_path, stub_corpus):
     out = run_slot(
         _spec(),
         campaign_dir=tmp_path / "runs",
-        runner=FakeRunner(
-            {"task_id": "rot13::gcc-O0-sym", "hang": True, "ledger": None}
-        ),
+        runner=FakeRunner({"task_id": "rot13::gcc-O0-sym", "ledger": None}),
         corpus_source=stub_corpus,
         guards=SlotGuard(timeout_s=1, probe_ceiling=99),
         poll_s=0,
@@ -92,3 +93,32 @@ def test_run_slot_natural_exit_without_acceptance_is_typed_abort(tmp_path, stub_
         poll_s=0,
     )
     assert json.loads(out.read_text())["outcome"] == "aborted: agent-exit"
+
+
+def test_run_slot_preflight_failure_is_typed_infra_error(tmp_path, stub_corpus):
+    normal = run_slot(
+        _spec(),
+        campaign_dir=tmp_path / "runs",
+        runner=FakeRunner(
+            {
+                "task_id": "rot13::gcc-O0-sym",
+                "ledger": {"accepted": ["program"], "submissions": 1, "probes": 1},
+            }
+        ),
+        corpus_source=stub_corpus,
+        guards=SlotGuard(timeout_s=30, probe_ceiling=5),
+        poll_s=0,
+    )
+    out = run_slot(
+        _spec(),
+        campaign_dir=tmp_path / "runs",
+        runner=PreflightFakeRunner({"task_id": "rot13::gcc-O0-sym"}),
+        corpus_source=stub_corpus,
+        guards=SlotGuard(timeout_s=30, probe_ceiling=5),
+        poll_s=0,
+    )
+    rec = json.loads(out.read_text())
+    assert rec["outcome"] == "infra-error"
+    assert rec["abort_reason"] == "endpoint dead"
+    # key parity with a terminal record — pinned by the one record builder
+    assert set(rec) == set(json.loads(normal.read_text()))

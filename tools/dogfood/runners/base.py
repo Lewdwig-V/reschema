@@ -51,7 +51,11 @@ class AgentOutcome:
 
 
 class AgentRunner(Protocol):
-    """Harness adapter surface. Core code sees nothing harness-shaped."""
+    """Harness adapter surface. Core code sees nothing harness-shaped.
+
+    Optional member: `preflight(cfg) -> dict` (run-header evidence); slot.py
+    reaches it via getattr — adapters with endpoints implement it, absence
+    means skipped."""
 
     def prepare(self, cfg: RunnerConfig) -> None: ...
     def spawn(self, prompt: str) -> None: ...

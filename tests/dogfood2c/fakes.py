@@ -54,3 +54,11 @@ class FakeRunner:
 
     def kill(self):
         self._killed = True
+
+
+class PreflightFakeRunner(FakeRunner):
+    """FakeRunner variant whose optional preflight reports a dead endpoint
+    (exercises run_slot's infra-error path without spawning)."""
+
+    def preflight(self, cfg):
+        raise RuntimeError("endpoint dead")

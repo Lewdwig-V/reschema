@@ -12,12 +12,13 @@ from .measure import slot_efficiency
 from .prompt import render, template_hash
 from .runners.base import AgentRunner, RunnerConfig, SlotSpec
 
+DEFAULT_POLL_S = 30
+
 
 @dataclass
 class SlotGuard:
     timeout_s: int = 2700  # 45 min
     probe_ceiling: int = 30
-    poll_s: int = 30
 
 
 def layout_root(spec: SlotSpec, runs_dir: Path, corpus_source: Path) -> Path:
@@ -26,13 +27,19 @@ def layout_root(spec: SlotSpec, runs_dir: Path, corpus_source: Path) -> Path:
     chain = (
         f"{spec.family}-primed-r{spec.rep}"
         if spec.condition == "primed"
-        else f"{spec.family}-{spec.condition}-{spec.slot}-r{spec.rep}"
+        else spec.slot_id
     )
     root = runs_dir / chain
     corp = root / ".reschema/corpus"
     if not corp.exists():
-        corp.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(corpus_source, corp)
+        corp.mkdir(parents=True)
+        # Manifest "binary" paths are baked at corpus build time (generate.py)
+        # and resolve in the ORIGINAL corpus root, never in this mount — the
+        # mount is manifest(+sidecar) only; binaries would be dead weight.
+        shutil.copy2(corpus_source / "manifest.json", corp)
+        sidecar = corpus_source / "canonicalizer_version"
+        if sidecar.exists():
+            shutil.copy2(sidecar, corp)
     (root / ".reschema/tasks").mkdir(parents=True, exist_ok=True)
     return root
 
@@ -40,6 +47,38 @@ def layout_root(spec: SlotSpec, runs_dir: Path, corpus_source: Path) -> Path:
 def _read_ledger(root: Path, task_id: str) -> dict:
     p = root / ".reschema/tasks" / task_id.replace("::", "__") / "ledger.json"
     return json.loads(p.read_text()) if p.exists() else {}
+
+
+def _record(
+    spec: SlotSpec,
+    *,
+    outcome: str,
+    abort_reason: str | None,
+    e: float,
+    n_exp: int,
+    n_sub: int,
+    accepted: bool,
+    wall_s: float,
+    run_header: dict,
+) -> dict:
+    """The ONE 14-key JSONL record shape — both the terminal path and the
+    preflight infra-error path build here, so key parity holds by construction."""
+    return {
+        "slot_id": spec.slot_id,
+        "family": spec.family,
+        "condition": spec.condition,
+        "slot": spec.slot,
+        "slot_index": spec.slot_index,
+        "rep": spec.rep,
+        "outcome": outcome,
+        "abort_reason": abort_reason,
+        "E": e,
+        "n_exp": n_exp,
+        "n_sub": n_sub,
+        "accepted": accepted,
+        "wall_s": wall_s,
+        "run_header": run_header,
+    }
 
 
 def run_slot(
@@ -53,41 +92,40 @@ def run_slot(
     run_header: dict | None = None,
 ) -> Path:
     guards = guards or SlotGuard()
-    poll = poll_s if poll_s is not None else guards.poll_s
+    poll = poll_s if poll_s is not None else DEFAULT_POLL_S
     root = layout_root(spec, campaign_dir, corpus_source)
     out = campaign_dir.parent / "results" / f"{spec.result_stem}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    run_header = run_header or {}
     cfg = RunnerConfig(
-        model=(run_header or {}).get("model", "unknown"),
-        endpoint=(run_header or {}).get("endpoint"),
+        model=run_header.get("model", "unknown"),
+        endpoint=run_header.get("endpoint"),
         sandbox=root / "sandbox",
         run_root=root,
     )
     cfg.sandbox.mkdir(parents=True, exist_ok=True)
-    run_header = run_header or {}
     preflight = getattr(runner, "preflight", None)
     if preflight is not None:
         try:
             run_header = {**run_header, **preflight(cfg)}
         except RuntimeError as e:
-            rec = {
-                "slot_id": spec.slot_id,
-                "family": spec.family,
-                "condition": spec.condition,
-                "slot": spec.slot,
-                "slot_index": spec.slot_index,
-                "rep": spec.rep,
-                "outcome": "infra-error",
-                "abort_reason": str(e),
-                "E": 0.0,
-                "n_exp": 0,
-                "n_sub": 0,
-                "accepted": False,
-                "wall_s": 0.0,
-                "run_header": run_header,
-            }
-            out.write_text(json.dumps(rec) + "\n")
+            out.write_text(
+                json.dumps(
+                    _record(
+                        spec,
+                        outcome="infra-error",
+                        abort_reason=str(e),
+                        e=0.0,
+                        n_exp=0,
+                        n_sub=0,
+                        accepted=False,
+                        wall_s=0.0,
+                        run_header=run_header,
+                    )
+                )
+                + "\n"
+            )
             return out
     runner.prepare(cfg)
     started = time.monotonic()
@@ -119,28 +157,23 @@ def run_slot(
     res = runner.wait()  # after kill() or natural exit; must return promptly
     led = _read_ledger(root, spec.task_id)
     accepted = "program" in led.get("accepted", [])
-    if accepted:
-        outcome = "accepted"
+    if accepted:  # evidence of the aborted poll already lives in agent_exit
+        outcome, abort = "accepted", None
     subs, probes = led.get("submissions", 0), led.get("probes", 0)
-    rec = {
-        "slot_id": spec.slot_id,
-        "family": spec.family,
-        "condition": spec.condition,
-        "slot": spec.slot,
-        "slot_index": spec.slot_index,
-        "rep": spec.rep,
-        "outcome": outcome,
-        "abort_reason": abort,
-        "E": slot_efficiency(accepted, probes, subs),
-        "n_exp": probes,
-        "n_sub": subs,
-        "accepted": accepted,
-        "wall_s": round(time.monotonic() - started, 1),
-        "run_header": {
-            **(run_header or {}),
+    rec = _record(
+        spec,
+        outcome=outcome,
+        abort_reason=abort,
+        e=slot_efficiency(accepted, probes, subs),
+        n_exp=probes,
+        n_sub=subs,
+        accepted=accepted,
+        wall_s=round(time.monotonic() - started, 1),
+        run_header={
+            **run_header,
             "prompt_sha256": template_hash(),
             "agent_exit": res.exit_kind,
         },
-    }
+    )
     out.write_text(json.dumps(rec) + "\n")
     return out

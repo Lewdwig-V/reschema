@@ -72,20 +72,29 @@ def _marshal(p: Param, val, write):
     raise ValueError(f"unknown param kind: {p.kind}")
 
 
-def call_original(binary: str, addr: int, params: list[Param], case: dict) -> dict:
-    """Function-level trace {"ret": i32, "mem": {...}} — schema load-bearing for validate/function.
-
-    On timeout/emulation fault, mirrors recorder.py's fault convention:
-    exit_code -1 + a trailing {"phase": "fault", ...} event."""
-    _guard_arity(params)
-    # Scratch rootfs + in-namespace binary copy (recorder.py pattern): originals
-    # are trusted corpus code, but any file op they perform stays contained.
-    # ponytail: rf cleans itself on CPython refcount drop at function exit
+def _boot_vm(binary: str) -> Qiling:
+    """Scratch rootfs + in-namespace binary copy (recorder.py pattern): originals
+    are trusted corpus code, but any file op they perform stays contained."""
     rf = tempfile.TemporaryDirectory(prefix="reschema-rootfs-")
     guest = Path(rf.name) / Path(binary).name
     shutil.copy2(binary, guest)
     ql = Qiling([str(guest)], rf.name, verbose=0, console=False)
     ql.mem.map(SENTINEL, 0x1000)
+    # ponytail: ql owns rf via this attribute; cm self-cleans on CPython refcount
+    # drop at the caller's exit (same lifetime the inline version relied on).
+    ql._reschema_rf = rf
+    return ql
+
+
+def _run_case(ql: Qiling, addr: int, params: list[Param], case: dict) -> dict:
+    """Marshal + run + readback for ONE case on an already-booted VM.
+
+    Function-level trace {"ret": i32, "mem": {...}} — schema load-bearing for
+    validate/function. On timeout/emulation fault, mirrors recorder.py's fault
+    convention: exit_code -1 + a trailing {"phase": "fault", ...} event.
+
+    Callers must guarantee pristine VM state (fresh boot or full snapshot restore);
+    this function deliberately resets nothing itself."""
     sp = ql.loader.stack_address  # initial stack top; read BEFORE any stack writes
     regs = ql.arch.regs
     ptrs = {}
@@ -147,3 +156,29 @@ def call_original(binary: str, addr: int, params: list[Param], case: dict) -> di
         if p.kind == "cstring" and p.name in ptrs:
             out["mem"][p.name] = bytes(ql.mem.read(ptrs[p.name], len(case[p.name])))
     return out
+
+
+def call_original(binary: str, addr: int, params: list[Param], case: dict) -> dict:
+    """Fresh-VM trace for one case (see _run_case for schema/fault semantics)."""
+    _guard_arity(params)
+    return _run_case(_boot_vm(binary), addr, params, case)
+
+
+def batch_call_original(
+    binary: str, addr: int, params: list[Param], cases: list[dict]
+) -> list[dict]:
+    """call_original for a whole case list on ONE VM; same per-case trace schema.
+
+    Isolation: ql.save() after boot/SENTINEL map, ql.restore() before every case —
+    registers AND memory (incl. fsbase/gsbase) return to the pristine post-init
+    state, so case N cannot leave residue for case N+1. A fault only costs its own
+    case: restore before the next case wipes the wedged emulation state.
+    """
+    _guard_arity(params)
+    ql = _boot_vm(binary)
+    snap = ql.save()
+    outs = []
+    for case in cases:
+        ql.restore(snap)
+        outs.append(_run_case(ql, addr, params, case))
+    return outs

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..driver import podrun
-from ..driver.calling import BAREGS, call_original, gen_inputs
+from ..driver.calling import BAREGS, batch_call_original, gen_inputs
 from ..driver.spec import Param
 
 N_FUZZ = 64
@@ -90,11 +90,14 @@ def validate_function(
     kinds = {p.name: p.kind for p in params}
 
     # Originals (trusted corpus code) run on the host under qiling; a crash is not
-    # a behavior spec — skip. Model results come back in one worker round trip.
+    # a behavior spec — skip. One VM serves the whole round via snapshot/restore
+    # (issue #41); per-case results are provably identical to fresh VMs
+    # (test_batch_call_original_matches_fresh_per_case).
+    # Model results come back in one worker round trip.
+    cases = gen_inputs(params, rng, n_fuzz)
     kept: list[tuple[dict, dict]] = []
     skipped = 0
-    for case in gen_inputs(params, rng, n_fuzz):
-        want = call_original(binary, addr, params, case)
+    for case, want in zip(cases, batch_call_original(binary, addr, params, cases)):
         if want["exit_code"] == -1:
             skipped += 1
             continue

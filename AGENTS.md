@@ -49,7 +49,9 @@ Containerfile .`. No host `gcc`/`strip` is needed (or used) anywhere.
   pinned toolchain image (`Containerfile`); host gcc is never used. See README "Trust model".
 - On-disk state under `.reschema/` (gitignored) is shared runtime state; tests
   wipe what they own (see `tests/test_hidden.py` pattern). Single-process use
-  is assumed (engine module docstring).
+  is assumed (engine module docstring). `RESCHEMA_HOME` overrides the state
+  root — set it for installed-layout runs, where the default would land
+  `.reschema/` under site-packages (engine.py `ROOT`).
 - `tools/dogfood/` is benchmark tooling (phase 2C), NOT shipped in the
   `reschema` package; its tests live in `tests/dogfood2c/` and must stay
   CI-safe (no LLM, no podman, no endpoint).
@@ -70,7 +72,12 @@ Before trusting a run:
   discovery and masquerades as agent failure.
 - After the first smoke slot, read its transcript_tail: the 5 reschema tools
   (corpus_build, task_open, experiment, submit_model, status) must be visible.
-- Review the report's abort classes BEFORE interpreting φ.
+- Review the report's abort classes BEFORE interpreting φ. Mid-slot endpoint
+  death POST-preflight surfaces as `aborted: agent-exit` / `aborted: timeout`
+  — an abort-class signature to recognize, not agent failure.
+- Housekeeping: a killed driver leaves `<out>/runs` staging roots and stray
+  `opencode` processes behind; both are restart-free — kill/delete them
+  freely between campaigns.
 - Commits: short imperative subject; quality-review fix rounds use
   `fix: ... (quality findings)`. Work happens on feature branches; `main`
   requires PR + green `test` check.

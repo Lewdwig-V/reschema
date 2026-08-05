@@ -20,6 +20,7 @@ FORBIDDEN_TERMS = [
     "benchmark",
     "protocol",
     "hidden",
+    "memory",
 ]
 
 _TEMPLATE = """You are given exactly one binary-analysis task: "{task_id}".

@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from tools.dogfood.measure import phi_family, slot_efficiency
+from tools.dogfood.measure import phi_family, render_report, slot_efficiency
 
 E0 = math.exp(-0.75)  # unprimed cold-start reference (6 probes, 1 submission)
 HEADROOM = 1.0 - E0
@@ -139,3 +139,25 @@ def test_phi_family_zero_headroom_yields_deltas_without_phi():
     assert r["deltas"] == [
         {"slot_index": 1, "primed_e": 1.0, "unprimed_e": E0, "delta": 1.0 - E0}
     ]
+
+
+def test_render_report_writes_markdown_and_excludes_infra_error(tmp_path):
+    (tmp_path / "rot13-unprimed-gcc-O0-sym-r1.jsonl").write_text(
+        '{"slot_id":"a","family":"rot13","condition":"unprimed","slot_index":0,'
+        '"rep":1,"outcome":"accepted","E":0.5,"n_exp":6,"n_sub":1,'
+        '"accepted":true,"wall_s":1.0,"run_header":{}}\n'
+    )
+    (tmp_path / "rot13-unprimed-gcc-O1-sym-r1.jsonl").write_text(
+        '{"slot_id":"b","family":"rot13","condition":"unprimed","slot_index":1,'
+        '"rep":1,"outcome":"infra-error","E":0.0,"n_exp":0,"n_sub":0,'
+        '"accepted":false,"wall_s":0.0,"run_header":{}}\n'
+    )
+    md = render_report(tmp_path, family="rot13", out_dir=tmp_path)
+    text = md.read_text()
+    assert "rot13" in text and "infra-error" in text  # evidence shown...
+    # ...but its E=0.0 must NOT enter statistics: the accepted-only trajectory
+    # present, no crash on the mixed population. Visible markers: the counts
+    # line shows the infra-error tally, and φ renders "None" (no primed arm)
+    # rather than a number poisoned by the adapter-failure record.
+    assert "1 infra-error" in text
+    assert "unprimed trajectory: [" in text

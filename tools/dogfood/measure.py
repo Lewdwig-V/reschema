@@ -3,9 +3,11 @@ slot/driver code stays dumb."""
 
 from __future__ import annotations
 
+import json
 import math
 import statistics
 from collections.abc import Iterable
+from pathlib import Path
 
 from reschema.engine import E_ALPHA, E_BETA
 
@@ -102,3 +104,53 @@ def phi_family(records: list[dict]) -> dict:
         "deltas": deltas,
         "n_deltas": len(deltas),
     }
+
+
+def _load(results_dir: Path, family: str) -> list[dict]:
+    return [
+        json.loads(p.read_text().splitlines()[0])
+        for p in sorted(results_dir.glob(f"{family}-*.jsonl"))
+    ]
+
+
+def render_report(results_dir: Path, *, family: str, out_dir: Path) -> Path:
+    """Markdown summary of one family's campaign records.
+
+    infra-error records are EXCLUDED from every statistic (adapter failure is
+    not agent failure) but SHOWN in the counts line as evidence; a φ computed
+    on a thin population stays visibly thin — None renders as None, never a
+    dressed-up number.
+    """
+    recs = _load(results_dir, family)
+    measured = [r for r in recs if r.get("outcome") != "infra-error"]
+    accepted = [r for r in measured if r.get("accepted")]
+    aborted = [r for r in measured if r.get("outcome", "").startswith("aborted")]
+    infra = [r for r in recs if r.get("outcome") == "infra-error"]
+    stats = phi_family(measured)
+    lines = [
+        f"# 2C live-agent campaign — {family}",
+        "",
+        (
+            f"- slots: {len(recs)} total, {len(accepted)} accepted, "
+            f"{len(aborted)} aborted, {len(infra)} infra-error (excluded from stats)"
+        ),
+        f"- φ median: {stats['phi_median']}  IQR: {stats['phi_iqr']}",
+        (
+            f"- unprimed trajectory: {stats['unprimed_traj']} "
+            f"(flat: {stats['unprimed_flat']})"
+        ),
+        "",
+        (
+            "## per-slot deltas"
+            if not stats["unprimed_flat"]
+            else "## primed headroom recoveries"
+        ),
+        "",
+        (
+            "*reference-agent trajectories are instrument-wiring checks "
+            "(protocol §4); these rows are the measurement.*"
+        ),
+    ]
+    md = Path(out_dir) / "report.md"
+    md.write_text("\n".join(lines) + "\n")
+    return md

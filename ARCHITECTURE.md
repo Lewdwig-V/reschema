@@ -165,7 +165,8 @@ Control flow across the tour sections below, as it actually happens.
    4×). Poison-filled out buffers included.
 4. Ground truth per case: `driver/calling.batch_call_original` runs the round's
    cases through the original function under ONE qiling VM, restoring a pristine
-   post-init snapshot (registers + memory) before every case — provably identical
+   post-init snapshot (registers + memory) before every case — pinned
+   byte-identical by the batch-vs-fresh equivalence test
    to fresh VMs (tests/test_driver.py equivalence guard). Cases where the
    *original* faults are skipped — a crash is not a behavior spec.
 5. The model is compiled and executed in ONE worker round trip (`validate`

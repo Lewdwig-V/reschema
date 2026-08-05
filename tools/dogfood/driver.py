@@ -29,9 +29,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .measure import render_report
+from .prompt import template_hash
 from .runners.base import AgentRunner, SlotSpec
 from .runners.opencode_v1 import OpenCodeV1Runner
-from .slot import SlotGuard, run_slot
+from .slot import SlotGuard, _driver_revision, run_slot
 
 INFRA_STREAK_ABORT = 3
 BUDGET_CONSUMING = (
@@ -45,9 +46,9 @@ BUDGET_CONSUMING = (
 
 def expand_campaign(cfg_path: Path) -> list[SlotSpec]:
     """TOML `[[chains]]` -> per-slot specs: reps x {unprimed, primed} x slots."""
-    doc = tomllib.loads(Path(cfg_path).read_text())
     specs = []
     try:
+        doc = tomllib.loads(Path(cfg_path).read_text())
         for chain in doc["chains"]:
             if not isinstance(chain["slots"], list):
                 raise TypeError("expected `slots = [...]` as a list")
@@ -64,9 +65,9 @@ def expand_campaign(cfg_path: Path) -> list[SlotSpec]:
                                 task_id=f"{chain['family']}::{slot}",
                             )
                         )
-    except (KeyError, TypeError) as e:
+    except (KeyError, TypeError, tomllib.TOMLDecodeError) as e:
         # hand-edited campaign files must fail readably, not as a traceback
-        raise ValueError(f"campaign TOML: malformed [[chains]] structure ({e})") from e
+        raise ValueError(f"campaign TOML: malformed ({e})") from e
     stems = [s.result_stem for s in specs]
     dups = sorted({st for st in stems if stems.count(st) > 1})
     if dups:  # e.g. the same family listed twice — records would clobber
@@ -114,12 +115,18 @@ def run_campaign(
     run_header = {
         "model": os.environ.get("RESCHEMA_2C_MODEL", "gemma4"),
         "endpoint": os.environ.get("RESCHEMA_2C_ENDPOINT"),
-        # corpus identity must reach even the SYNTHETIC priming-failed records
-        # (run_slot re-derives the same sha from its mounted manifest copy)
+        # corpus identity + prompt + driver revision must reach even the
+        # SYNTHETIC priming-failed records (run_slot re-derives the same
+        # values from its mounted copies for real slot records)
         "manifest_sha256": hashlib.sha256(
             (Path(corpus_source) / "manifest.json").read_bytes()
         ).hexdigest(),
+        "prompt_sha256": template_hash(),
+        "driver_revision": _driver_revision(),
     }
+    sidecar = Path(corpus_source) / "canonicalizer_version"
+    if sidecar.exists():
+        run_header["canonicalizer_version"] = sidecar.read_text()
     infra_streak = [0]
 
     def one(spec: SlotSpec) -> Path:

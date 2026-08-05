@@ -12,17 +12,20 @@ import os
 import shutil
 import tempfile
 import time
-from pathlib import Path
 
 import pytest
 
 # pytest-xdist: give each worker its own .reschema root so task dirs, ledgers,
 # memory, and the corpus manifest can't race across processes. Must run at
 # conftest import time — reschema's ROOT constants read the env at THEIR import.
+# _OWN_ROOT is the ONE root this process made (#76): sessionfinish deletes
+# exactly it — never a path a user pointed RESCHEMA_HOME at.
+_OWN_ROOT: str | None = None
 if "PYTEST_XDIST_WORKER" in os.environ:
-    os.environ["RESCHEMA_HOME"] = tempfile.mkdtemp(
+    _OWN_ROOT = tempfile.mkdtemp(
         prefix=f"reschema-{os.environ['PYTEST_XDIST_WORKER']}-"
     )
+    os.environ["RESCHEMA_HOME"] = _OWN_ROOT
 
 BUDGET_S = int(os.environ.get("RESCHEMA_TEST_BUDGET_S", "120"))
 _STARTED = time.monotonic()
@@ -38,12 +41,6 @@ def _suite_time_budget():
         )
 
 
-def _worker_root_eligible_for_cleanup(path) -> bool:
-    """Safety predicate: only auto-delete the mkdtemp root this conftest made
-    (prefix `reschema-gw`); a user-set RESCHEMA_HOME is never touched (#76)."""
-    return Path(path).name.startswith("reschema-gw")
-
-
 def pytest_sessionfinish(session, exitstatus):
     """Setup-time checks can't catch a budget-busting FINAL test (no later
     setup to trigger them) — the suite-end verdict lives here."""
@@ -54,10 +51,9 @@ def pytest_sessionfinish(session, exitstatus):
             f"budget (+{over:.1f}s)"
         )
         session.exitstatus = 2
-    home = os.environ.get("RESCHEMA_HOME")
-    if home and _worker_root_eligible_for_cleanup(home):
+    if _OWN_ROOT:
         # otherwise each xdist run leaks a ~30MB corpus-carrying root in /tmp
-        shutil.rmtree(home, ignore_errors=True)
+        shutil.rmtree(_OWN_ROOT, ignore_errors=True)
 
 
 @pytest.fixture(scope="session")

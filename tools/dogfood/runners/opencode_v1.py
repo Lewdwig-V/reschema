@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import subprocess
+import urllib.error
 import urllib.request
 
 from .base import AgentOutcome, RunnerConfig
@@ -18,34 +19,46 @@ class OpenCodeV1Runner:
         self.binary = binary
         self._p: subprocess.Popen | None = None
         self._cfg: RunnerConfig | None = None
+        self._killed = False
 
     def preflight(self, cfg: RunnerConfig) -> dict:
         """Endpoint liveness + run-header facts; raises on a dead endpoint
-        (slot maps that to a typed infra-error, no rep consumed)."""
+        (slot maps that to a typed infra-error, no rep consumed).
+
+        ponytail: the 10s per-request timeout assumes a warm endpoint —
+        first weight-load on a cold server may exceed it, in which case
+        the slot is (correctly, if flakily) recorded as infra-error."""
         base = (cfg.endpoint or "").rstrip("/")
-        status, models = self._post(base, "/models", None)
+        status, _ = self._post(base, "/models", None)
         status2, _ = self._post(
-            base, "/chat/completions", {"max_tokens": 1, "model": cfg.model}
+            base,
+            "/chat/completions",
+            {"model": cfg.model, "messages": [], "max_tokens": 1},
         )
         if status != 200 or status2 != 200:
             raise RuntimeError(f"endpoint unavailable: {status}/{status2}")
+        # Ollama-shaped stacks publish their build at /api/version, NOT /v1/...
+        _, ver = self._post(base.removesuffix("/v1"), "/api/version", None)
         return {
             "model": cfg.model,
             "endpoint": cfg.endpoint,
-            "digest": models.get("version") or "unknown",
+            "digest": ver.get("version") or "unknown",
         }
 
     def _post(self, base: str, path: str, payload) -> tuple[int, dict]:
-        """urllib json POST to base+path; (status, decoded body or {})."""
+        """JSON request to base+path; GET when payload is None, POST otherwise.
+        Returns (status, decoded body or {}); 0 means transport-level dead."""
         req = urllib.request.Request(
             base + path,
-            data=json.dumps(payload or {}).encode(),
+            data=None if payload is None else json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"},
         )
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
                 return r.status, json.loads(r.read() or b"{}")
-        except (OSError, ValueError):  # net down / bad json: status 0
+        except urllib.error.HTTPError as e:  # live endpoint, real status
+            return e.code, {}
+        except (OSError, ValueError):  # connection refused / bad json
             return 0, {}
 
     def prepare(self, cfg: RunnerConfig) -> None:
@@ -59,23 +72,24 @@ class OpenCodeV1Runner:
                         "local": {
                             "npm": "@ai-sdk/openai-compatible",
                             "options": {"baseURL": cfg.endpoint},
+                            "models": {cfg.model: {}},
                         }
                     },
-                    "agent": {
-                        "tools": {
-                            "bash": False,
-                            "edit": False,
-                            "write": False,
-                            "read": False,
-                            "glob": False,
-                            "grep": False,
-                            "webfetch": False,
-                            "task": False,
-                            "skill": False,
-                            "todowrite": False,
-                            "question": False,
-                            "reschema_*": True,
-                        }
+                    # TOP-LEVEL switchboard: agent.<name>.tools would define an
+                    # agent NAMED "tools" and leave the built-ins ON.
+                    "tools": {
+                        "bash": False,
+                        "edit": False,
+                        "write": False,
+                        "read": False,
+                        "glob": False,
+                        "grep": False,
+                        "webfetch": False,
+                        "task": False,
+                        "skill": False,
+                        "todowrite": False,
+                        "question": False,
+                        "reschema_*": True,
                     },
                     "mcp": {
                         "reschema": {
@@ -98,6 +112,7 @@ class OpenCodeV1Runner:
 
     def spawn(self, prompt: str) -> None:
         cfg = self._cfg
+        self._killed = False
         with open(cfg.sandbox / TRANSCRIPT, "wb") as out:  # child dup's the fd
             self._p = subprocess.Popen(
                 [self.binary, "run", prompt],
@@ -111,14 +126,24 @@ class OpenCodeV1Runner:
         p = self._p
         rc = p.wait() if p else None
         tail = ""
-        tp = self._cfg.sandbox / TRANSCRIPT
-        if tp.exists():
+        tp = self._cfg.sandbox / TRANSCRIPT if self._cfg else None
+        if tp and tp.exists():
+            # ponytail: full read; transcripts are overnight-large —
+            # seek-from-end if tails ever hurt.
             tail = "\n".join(tp.read_text(errors="replace").splitlines()[-50:])
-        kind = "eof" if rc == 0 else ("timeout" if rc and rc < 0 else "exit")
+        if rc is None:
+            kind = "error"  # never spawned
+        elif rc == 0:
+            kind = "eof"
+        elif rc < 0:
+            kind = "timeout" if self._killed else "error"
+        else:
+            kind = "exit"
         return AgentOutcome(exit_kind=kind, returncode=rc, transcript_tail=tail)
 
     def kill(self) -> None:
         if self._p and self._p.poll() is None:
+            self._killed = True
             os.killpg(self._p.pid, signal.SIGKILL)
 
     def exited(self) -> bool:

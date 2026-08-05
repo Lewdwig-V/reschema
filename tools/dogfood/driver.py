@@ -5,7 +5,10 @@ task, sharing the memory root layout_root gives them: a later slot reads
 slot 0's auto-written verified_fact. A chain slot that is not accepted aborts
 the rest of the chain as `aborted: priming-failed`, WITHOUT an agent run —
 priming presupposes acceptance, so running them cold would silently bias the
-primed arm. Unprimed slots stay independent.
+primed arm. An `infra-error` chain slot (transient endpoint flap, NOT a
+priming rejection) instead leaves the rest of the chain UNRECORDED — the
+shared root persists under runs/, so a resumed campaign retries those slots
+rather than truncating the primed arm. Unprimed slots stay independent.
 
 Resume honesty: a slot is skipped ONLY when its existing record carries a
 budget-consuming outcome (accepted / aborted:*). `infra-error` records are
@@ -54,6 +57,10 @@ def expand_campaign(cfg_path: Path) -> list[SlotSpec]:
                             task_id=f"{chain['family']}::{slot}",
                         )
                     )
+    stems = [s.result_stem for s in specs]
+    dups = sorted({st for st in stems if stems.count(st) > 1})
+    if dups:  # e.g. the same family listed twice — records would clobber
+        raise ValueError(f"duplicate result stems in campaign: {dups}")
     return specs
 
 
@@ -124,39 +131,50 @@ def run_campaign(
             raise RuntimeError("endpoint infra-error streak: aborting campaign")
         return final
 
+    def store_flat(stem: str, record: dict) -> None:
+        """Same atomicity as run_slot's path: stage beside the runs, rename."""
+        stage = out_dir / "results" / f"{stem}.jsonl"
+        stage.parent.mkdir(parents=True, exist_ok=True)
+        stage.write_text(json.dumps(record) + "\n")
+        stage.replace(out_dir / f"{stem}.jsonl")
+
     def chain(chain_specs: list[SlotSpec]) -> None:
         """One primed chain, sequentially: later slots read earlier memory."""
         for i, spec in enumerate(chain_specs):
             rec = json.loads(one(spec).read_text())
-            if rec["outcome"] != "accepted":
-                for later in chain_specs[i + 1 :]:
-                    lp = out_dir / f"{later.result_stem}.jsonl"
-                    if _completed(lp):
-                        continue
-                    lp.write_text(
-                        json.dumps(
-                            {
-                                "slot_id": later.slot_id,
-                                "family": later.family,
-                                "condition": later.condition,
-                                "slot": later.slot,
-                                "slot_index": later.slot_index,
-                                "rep": later.rep,
-                                "outcome": "aborted: priming-failed",
-                                "abort_reason": (
-                                    f"chain slot {spec.slot} not accepted"
-                                ),
-                                "E": 0.0,
-                                "n_exp": 0,
-                                "n_sub": 0,
-                                "accepted": False,
-                                "wall_s": 0.0,
-                                "run_header": run_header,
-                            }
-                        )
-                        + "\n"
-                    )
-                break
+            outcome = rec["outcome"]
+            if outcome == "accepted":
+                continue
+            if outcome == "infra-error":
+                # transient flap, not a priming rejection: leave the rest of
+                # the chain UNRECORDED (shared root persists under runs/) so
+                # resume retries instead of truncating the primed arm
+                return
+            for later in chain_specs[i + 1 :]:
+                if _completed(out_dir / f"{later.result_stem}.jsonl"):
+                    continue
+                store_flat(
+                    later.result_stem,
+                    {
+                        "slot_id": later.slot_id,
+                        "family": later.family,
+                        "condition": later.condition,
+                        "slot": later.slot,
+                        "slot_index": later.slot_index,
+                        "rep": later.rep,
+                        "outcome": "aborted: priming-failed",
+                        "abort_reason": (
+                            f"chain slot {spec.slot} not accepted: {outcome}"
+                        ),
+                        "E": 0.0,
+                        "n_exp": 0,
+                        "n_sub": 0,
+                        "accepted": False,
+                        "wall_s": 0.0,
+                        "run_header": run_header,
+                    },
+                )
+            return
 
     def work(job: list[SlotSpec]) -> None:
         if len(job) > 1:

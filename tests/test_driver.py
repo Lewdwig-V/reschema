@@ -4,7 +4,7 @@ import re
 import pytest
 
 from reschema.corpus.generate import _symtab
-from reschema.driver.calling import call_original, gen_inputs
+from reschema.driver.calling import batch_call_original, call_original, gen_inputs
 from reschema.driver.podrun import run_worker
 from reschema.driver.spec import Param
 
@@ -29,6 +29,12 @@ int32_t bigframe_sum(int32_t *buf, int32_t n){
 }
 __attribute__((sysv_abi)) int32_t spin(int32_t x){
     volatile int32_t v = x; while (1) {} return v;
+}
+/* Static state: batch ground truth must reset .bss between cases or n accumulates. */
+int32_t bump(int32_t x){ static int32_t n = 0; n += x; return n; }
+/* Faults only for oversized n: walks buf past the mapped stack. */
+int32_t fallible(int32_t *buf, int32_t n){
+    int32_t s = 0; for (int32_t i = 0; i < n; i++) s += buf[i]; return s;
 }
 int main(void){ return 0; }
 """
@@ -77,12 +83,12 @@ def probe_bin(tmp_path_factory):
     return str(binp), _symtab(binp)
 
 
-def _slot(manifest, seed, func, stripped=False):
+def _slot(manifest, seed, func, stripped=False, opt="-O2"):
     t = next(
         x
         for x in manifest
         if x["seed"] == seed
-        and x["opt"] == "-O2"
+        and x["opt"] == opt
         and x["stripped"] == stripped
         and x["compiler"] == "gcc"
     )
@@ -224,3 +230,64 @@ def test_beyond_six_args_raises(probe_bin):
     case = {p.name: i for i, p in enumerate(params)}
     with pytest.raises(NotImplementedError):
         call_original(binary, syms["bigframe_sum"][0], params, case)
+
+
+# The issue-41 judgment guard: one VM serving N cases must match N fresh VMs
+# byte-for-byte. O0 slots (unoptimized stack traffic) + a static-state witness
+# (bump) leave state bleed nowhere to hide.
+def test_batch_call_original_matches_fresh_per_case(manifest, probe_bin):
+    pbin, syms = probe_bin
+    shapes = [
+        (
+            *_slot(manifest, "calc", "sum_range", opt="-O0"),
+            [Param("lo", "i32", range=(-20, 10)), Param("hi", "i32", range=(10, 30))],
+        ),
+        (
+            *_slot(manifest, "calc", "scale_buf", opt="-O0"),
+            [
+                Param(
+                    "buf",
+                    "buffer_i32",
+                    direction="in_out",
+                    length_param="n",
+                    range=(51, 100),
+                ),
+                Param("n", "i32", range=(3, 4)),
+                Param("factor", "i32", range=(2, 5)),
+            ],
+        ),
+        (
+            *_slot(manifest, "rot13", "rot13", opt="-O0"),
+            [Param("in_out", "cstring", direction="in_out")],
+        ),
+        (pbin, syms["bump"][0], [Param("x", "i32", range=(-50, 50))]),
+    ]
+    for binary, addr, params in shapes:
+        cases = gen_inputs(params, random.Random(41), 16)
+        fresh = [call_original(binary, addr, params, c) for c in cases]
+        batched = batch_call_original(binary, addr, params, cases)
+        assert batched == fresh
+
+
+def test_batch_call_original_fault_then_clean(probe_bin):
+    """A crashing case must yield exit_code -1 for THAT case, with the next case clean."""
+    binary, syms = probe_bin
+    params = [Param("buf", "buffer_i32", length_param="n"), Param("n", "i32")]
+    good1 = {"buf": [1, 2, 3, 4], "n": 4}
+    boom = {"buf": [1, 2, 3, 4], "n": 10_000_000}  # walks off the mapped stack
+    good2 = {"buf": [5, 6, 7, 8], "n": 4}
+    outs = batch_call_original(
+        binary, syms["fallible"][0], params, [good1, boom, good2]
+    )
+    assert [o["exit_code"] for o in outs] == [0, -1, 0]
+    assert outs[1]["events"][-1]["sc"] == "crash"
+    assert outs[1]["events"][-1]["phase"] == "fault"
+    assert outs[0]["ret"] == sum(good1["buf"])
+    assert outs[2]["ret"] == sum(good2["buf"])
+
+
+def test_batch_call_original_timeout_isolated(probe_bin):
+    binary, syms = probe_bin
+    outs = batch_call_original(binary, syms["spin"][0], [Param("x", "i32")], [{"x": 7}])
+    assert outs[0]["exit_code"] == -1
+    assert outs[0]["events"][-1] == {"phase": "fault", "sc": "timeout", "args": []}

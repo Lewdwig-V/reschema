@@ -163,10 +163,11 @@ Control flow across the tour sections below, as it actually happens.
    unless tests pin it) and builds `n_fuzz` cases (`N_FUZZ=64`, floored at
    the MCP boundary — the agent cannot tune its own judge down; capped at
    4×). Poison-filled out buffers included.
-4. Ground truth per case: `driver/calling.call_original` runs the original
-   function under qiling (SENTINEL return trap, SysV register args, memory
-   readback). Cases where the *original* faults are skipped — a crash is not
-   a behavior spec.
+4. Ground truth per case: `driver/calling.batch_call_original` runs the round's
+   cases through the original function under ONE qiling VM, restoring a pristine
+   post-init snapshot (registers + memory) before every case — provably identical
+   to fresh VMs (tests/test_driver.py equivalence guard). Cases where the
+   *original* faults are skipped — a crash is not a behavior spec.
 5. The model is compiled and executed in ONE worker round trip (`validate`
    job): `gcc -O1 -shared -fPIC` in the container, RTLD_NOW load + symbol
    presence check, then fork-per-case ctypes calls under the 5s case budget.
@@ -377,7 +378,9 @@ decoded stdout previews already localize those.
 - **calling.py**: `call_original(binary, addr, params, case)` executes the
   original function under qiling (scratch rootfs; `SENTINEL` return trap;
   register args in SysV order; memory readback for `buffer_i32`/`cstring`;
-  timeout/fault → `exit_code: -1` convention). `gen_inputs` produces fuzz
+  timeout/fault → `exit_code: -1` convention). `batch_call_original(..., cases)`
+  is the same trace for a whole case list on one VM (`ql.save`/`ql.restore`
+  per case; shared `_run_case` marshaling). `gen_inputs` produces fuzz
   cases (poison-filled out buffers).
 - **podrun.py**: `ensure_image()` (hard refusal with the build command when
   podman/image is absent) + `run_worker(job, workdir)`: one-shot rootless

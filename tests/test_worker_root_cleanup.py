@@ -1,18 +1,27 @@
-"""#76: sessionfinish deletes ONLY the mkdtemp worker roots conftest itself made."""
+"""#76: sessionfinish deletes ONLY the exact root conftest captured at import
+(_OWN_ROOT) — never a path a user happened to point RESCHEMA_HOME at."""
 
-from conftest import _worker_root_eligible_for_cleanup
-
-
-def test_own_xdist_mkdtemp_roots_are_eligible():
-    for n in ("gw0", "gw7", "gw31"):
-        assert _worker_root_eligible_for_cleanup(f"/tmp/reschema-{n}-abc123xy")
+import conftest
 
 
-def test_user_set_homes_are_never_eligible():
-    for p in (
-        "/home/u/proj/.reschema",
-        "/tmp/reschema-data",  # right prefix family, not a worker root
-        "/var/tmp/reschema",
-        "/tmp",
-    ):
-        assert not _worker_root_eligible_for_cleanup(p)
+def test_sessionfinish_removes_the_owned_worker_root(tmp_path, monkeypatch):
+    # fake root in a shape-mismatched name ON PURPOSE: identity, not the
+    # dirname, must be what makes it eligible for deletion
+    own = tmp_path / "owned-root"
+    (own / ".reschema").mkdir(parents=True)
+    (own / ".reschema" / "state").write_text("x")
+    monkeypatch.setattr(conftest, "_OWN_ROOT", str(own))
+    monkeypatch.setenv("RESCHEMA_HOME", str(own))  # as conftest import sets it
+    conftest.pytest_sessionfinish(session=object(), exitstatus=0)
+    assert not own.exists()
+
+
+def test_sessionfinish_never_touches_a_user_pointed_home(tmp_path, monkeypatch):
+    own = tmp_path / "owned-root"
+    own.mkdir()
+    user_home = tmp_path / "my-real-data"
+    user_home.mkdir()
+    monkeypatch.setattr(conftest, "_OWN_ROOT", str(own))
+    monkeypatch.setenv("RESCHEMA_HOME", str(user_home))  # user path != own root
+    conftest.pytest_sessionfinish(session=object(), exitstatus=0)
+    assert user_home.exists()

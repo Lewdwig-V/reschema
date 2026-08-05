@@ -4,6 +4,7 @@ import json
 import pytest
 
 from tools.dogfood.driver import expand_campaign, main, run_campaign
+from tools.dogfood.prompt import template_hash
 from tools.dogfood.slot import SlotGuard
 
 from .fakes import FakeRunner, PreflightFakeRunner
@@ -34,6 +35,7 @@ def test_expand_campaign_rejects_duplicate_result_stems(tmp_path):
 @pytest.mark.parametrize(
     "toml",
     [
+        '[[chains]\nfamily = "rot13"\n',  # syntax garbage: unbalanced bracket
         'family = "rot13"\n',  # no [[chains]] at all
         'chains = "rot13"\n',  # chains not an array of tables
         '[[chains]]\nfamily = "rot13"\nslots = "gcc-O0-sym"\n',  # slots not a list
@@ -145,6 +147,7 @@ def test_priming_failure_shortcircuits_the_chain(tmp_path, stub_corpus):
 
 
 def test_priming_failed_record_key_parity_with_accepted(tmp_path, stub_corpus):
+    (stub_corpus / "canonicalizer_version").write_text("2.1")
     accept = {
         "task_id": "rot13::gcc-O0-sym",
         "ledger": {"accepted": ["program"], "submissions": 1, "probes": 3},
@@ -168,6 +171,12 @@ def test_priming_failed_record_key_parity_with_accepted(tmp_path, stub_corpus):
     assert failed["run_header"]["manifest_sha256"] == (
         hashlib.sha256((stub_corpus / "manifest.json").read_bytes()).hexdigest()
     )
+    # ... and the same cheap evidence keys: synthetic == slot-run where possible
+    for rec in (acc, failed):
+        header = rec["run_header"]
+        assert header["prompt_sha256"] == template_hash()
+        assert header["driver_revision"]
+        assert header["canonicalizer_version"] == "2.1"
 
 
 def test_main_refuses_without_corpus_manifest(tmp_path, monkeypatch):

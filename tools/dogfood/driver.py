@@ -47,20 +47,26 @@ def expand_campaign(cfg_path: Path) -> list[SlotSpec]:
     """TOML `[[chains]]` -> per-slot specs: reps x {unprimed, primed} x slots."""
     doc = tomllib.loads(Path(cfg_path).read_text())
     specs = []
-    for chain in doc["chains"]:
-        for rep in range(1, chain.get("reps", 5) + 1):
-            for cond in ("unprimed", "primed"):
-                for i, slot in enumerate(chain["slots"]):
-                    specs.append(
-                        SlotSpec(
-                            family=chain["family"],
-                            condition=cond,
-                            slot=slot,
-                            slot_index=i,
-                            rep=rep,
-                            task_id=f"{chain['family']}::{slot}",
+    try:
+        for chain in doc["chains"]:
+            if not isinstance(chain["slots"], list):
+                raise TypeError("expected `slots = [...]` as a list")
+            for rep in range(1, chain.get("reps", 5) + 1):
+                for cond in ("unprimed", "primed"):
+                    for i, slot in enumerate(chain["slots"]):
+                        specs.append(
+                            SlotSpec(
+                                family=chain["family"],
+                                condition=cond,
+                                slot=slot,
+                                slot_index=i,
+                                rep=rep,
+                                task_id=f"{chain['family']}::{slot}",
+                            )
                         )
-                    )
+    except (KeyError, TypeError) as e:
+        # hand-edited campaign files must fail readably, not as a traceback
+        raise ValueError(f"campaign TOML: malformed [[chains]] structure ({e})") from e
     stems = [s.result_stem for s in specs]
     dups = sorted({st for st in stems if stems.count(st) > 1})
     if dups:  # e.g. the same family listed twice — records would clobber

@@ -70,7 +70,12 @@ Before trusting a run:
   discovery and masquerades as agent failure.
 - After the first smoke slot, read its transcript_tail: the 5 reschema tools
   (corpus_build, task_open, experiment, submit_model, status) must be visible.
-- Review the report's abort classes BEFORE interpreting φ.
+- Review the report's abort classes BEFORE interpreting φ. Mid-slot endpoint
+  death POST-preflight surfaces as `aborted: agent-exit` / `aborted: timeout`
+  — an abort-class signature to recognize, not agent failure.
+- Housekeeping: a killed driver leaves `<out>/runs` staging roots and stray
+  `opencode` processes behind; both are restart-free — kill/delete them
+  freely between campaigns.
 - Commits: short imperative subject; quality-review fix rounds use
   `fix: ... (quality findings)`. Work happens on feature branches; `main`
   requires PR + green `test` check.

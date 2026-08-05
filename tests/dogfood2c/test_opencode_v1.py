@@ -2,6 +2,7 @@ import json
 import os
 import signal
 import stat
+import subprocess
 import urllib.error
 
 import pytest
@@ -91,6 +92,33 @@ def test_exited_tracks_process(tmp_path):
     r.kill()
     r.wait()
     assert r.exited()
+
+
+def test_spawn_env_isolates_opencode_from_global_config(tmp_path, monkeypatch):
+    # opencode MERGES config layers — a developer-global ~/.config/opencode
+    # (MCP servers, plugins, tools) would silently ride along with the sandbox
+    # config. spawn() must pin HOME/XDG at a sandbox-private dir.
+    captured = {}
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            captured.update(kw)
+
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    r = OpenCodeV1Runner(binary="true")
+    cfg = _cfg(tmp_path)
+    cfg.sandbox.mkdir(parents=True, exist_ok=True)
+    r.prepare(cfg)
+    r.spawn("p")
+    env = captured["env"]
+    home = cfg.sandbox / "_home"
+    assert env["HOME"] == str(home) and env["HOME"] != os.environ["HOME"]
+    assert env["XDG_CONFIG_HOME"] == str(home / ".config")
+    assert env["XDG_DATA_HOME"] == str(home / ".local/share")
+    assert env["OPENCODE_CONFIG"] == str(cfg.sandbox / "opencode.json")
+    for k in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"):
+        assert env[k].startswith(str(cfg.sandbox))  # nothing leaks outside
+    assert env["PATH"] == os.environ["PATH"]  # everything else inherits
 
 
 def test_preflight_reports_endpoint_facts(tmp_path, monkeypatch):

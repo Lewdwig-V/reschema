@@ -161,6 +161,8 @@ def run_slot(
             flush=True,
         )  # heartbeat
         if "program" in led.get("accepted", []):
+            runner.kill()  # run is OVER — ledger/memory writes settled
+            # engine-side (atomic replace); a lingering agent must not hang wait()
             outcome = "accepted"
             break
         if runner.exited():  # natural exit without acceptance: typed below
@@ -179,6 +181,7 @@ def run_slot(
     led = _read_ledger(root, spec.task_id)
     accepted = "program" in led.get("accepted", [])
     if accepted:  # evidence of the aborted poll already lives in agent_exit
+        runner.kill()  # uniform chain: every accepted run ends terminated
         outcome, abort = "accepted", None
     subs, probes = led.get("submissions", 0), led.get("probes", 0)
     rec = _record(

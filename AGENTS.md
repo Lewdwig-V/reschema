@@ -50,6 +50,9 @@ Containerfile .`. No host `gcc`/`strip` is needed (or used) anywhere.
 - On-disk state under `.reschema/` (gitignored) is shared runtime state; tests
   wipe what they own (see `tests/test_hidden.py` pattern). Single-process use
   is assumed (engine module docstring).
+- `tools/dogfood/` is benchmark tooling (phase 2C), NOT shipped in the
+  `reschema` package; its tests live in `tests/dogfood2c/` and must stay
+  CI-safe (no LLM, no podman, no endpoint).
 - Commits: short imperative subject; quality-review fix rounds use
   `fix: ... (quality findings)`. Work happens on feature branches; `main`
   requires PR + green `test` check.

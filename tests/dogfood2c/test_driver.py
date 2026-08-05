@@ -1,9 +1,11 @@
 import json
 
+import pytest
+
 from tools.dogfood.driver import expand_campaign, run_campaign
 from tools.dogfood.slot import SlotGuard
 
-from .fakes import FakeRunner
+from .fakes import FakeRunner, PreflightFakeRunner
 
 SMOKE = """
 [[chains]]
@@ -53,6 +55,28 @@ def test_primed_chain_runs_sequentially_and_in_slot_order(tmp_path, stub_corpus)
     # loop), so the whole chain must land accepted, in index order
     assert [json.loads(p.read_text())["outcome"] for p in names] == ["accepted"] * 3
     assert [json.loads(p.read_text())["slot_index"] for p in names] == [0, 1, 2]
+
+
+def _run_smoke(tmp_path, stub_corpus, mk):
+    cfg = tmp_path / "c.toml"
+    cfg.write_text(SMOKE)
+    return run_campaign(
+        cfg,
+        runner_factory=mk,
+        corpus_source=stub_corpus,
+        pool_size=2,
+        out_dir=tmp_path / "out",
+        guards=SlotGuard(timeout_s=30),
+        poll_s=0,
+    )
+
+
+def test_infra_streak_aborts_campaign(tmp_path, stub_corpus):
+    def mk():  # endpoint dead for EVERY slot: 3 consecutive => campaign aborts
+        return PreflightFakeRunner({"task_id": "rot13::gcc-O0-sym"})
+
+    with pytest.raises(RuntimeError, match="infra-error streak"):
+        _run_smoke(tmp_path, stub_corpus, mk)
 
 
 def test_priming_failure_shortcircuits_the_chain(tmp_path, stub_corpus):

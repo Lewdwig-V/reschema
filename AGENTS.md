@@ -49,7 +49,9 @@ Containerfile .`. No host `gcc`/`strip` is needed (or used) anywhere.
   pinned toolchain image (`Containerfile`); host gcc is never used. See README "Trust model".
 - On-disk state under `.reschema/` (gitignored) is shared runtime state; tests
   wipe what they own (see `tests/test_hidden.py` pattern). Single-process use
-  is assumed (engine module docstring).
+  is assumed (engine module docstring). `RESCHEMA_HOME` overrides the state
+  root — set it for installed-layout runs, where the default would land
+  `.reschema/` under site-packages (engine.py `ROOT`).
 - `tools/dogfood/` is benchmark tooling (phase 2C), NOT shipped in the
   `reschema` package; its tests live in `tests/dogfood2c/` and must stay
   CI-safe (no LLM, no podman, no endpoint).

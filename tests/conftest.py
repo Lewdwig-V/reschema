@@ -9,8 +9,10 @@ Corpus: build() is ALWAYS a full rebuild (48 slots, two container rounds,
 """
 
 import os
+import shutil
 import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +38,12 @@ def _suite_time_budget():
         )
 
 
+def _worker_root_eligible_for_cleanup(path) -> bool:
+    """Safety predicate: only auto-delete the mkdtemp root this conftest made
+    (prefix `reschema-gw`); a user-set RESCHEMA_HOME is never touched (#76)."""
+    return Path(path).name.startswith("reschema-gw")
+
+
 def pytest_sessionfinish(session, exitstatus):
     """Setup-time checks can't catch a budget-busting FINAL test (no later
     setup to trigger them) — the suite-end verdict lives here."""
@@ -46,6 +54,10 @@ def pytest_sessionfinish(session, exitstatus):
             f"budget (+{over:.1f}s)"
         )
         session.exitstatus = 2
+    home = os.environ.get("RESCHEMA_HOME")
+    if home and _worker_root_eligible_for_cleanup(home):
+        # otherwise each xdist run leaks a ~30MB corpus-carrying root in /tmp
+        shutil.rmtree(home, ignore_errors=True)
 
 
 @pytest.fixture(scope="session")

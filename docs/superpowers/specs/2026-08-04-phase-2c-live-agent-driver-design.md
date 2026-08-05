@@ -72,10 +72,18 @@ Input: one slot spec `{family, condition: primed|unprimed, slot_index, rep}`.
 
 ### driver.py — the campaign runner
 
-- Expands `campaign.yaml` into slot specs; pool size 4 (32 cores; each slot =
+- Expands campaign TOML into slot specs; pool size 4 (32 cores; each slot =
   one opencode session + qiling emulation + podman compiles).
-- Resume = filesystem truth: a slot with a `slots/<id>.jsonl` on disk is
-  skipped. Driver crash costs ≤ pool-size in-flight slots; rerun resumes.
+- **Primed chains execute SEQUENTIALLY inside one worker task** (O0→O1→O2
+  order): a primed slot may only start after the prior chain slot's
+  acceptance wrote the `verified_fact` it must open with. If a chain slot
+  doesn't accept, remaining slots of that chain are recorded as
+  `aborted: priming-failed` without an agent run — priming presupposes an
+  acceptance, and a cold "primed" slot would silently bias the arm.
+- Resume = filesystem truth: a slot is skipped only if its record carries a
+  budget-consuming outcome (`accepted`, `aborted: *`), and `infra-error`
+  records are RETRIED on rerun (an endpoint outage must not silently shrink
+  the paired-run count below the protocol floor).
 - Heartbeat log line per in-flight slot per minute (visible aliveness for a
   human checking on the overnight run).
 - Endpoint-flap guard: 3 consecutive `infra-error` slots → campaign aborts.
@@ -104,9 +112,12 @@ list; the template's sha256 goes into every run header.
 
 ### measure.py
 
-- φ per family: median over later slots' (k≥1) headroom recoveries across
-  reps, IQR reported; unprimed trajectory always printed — materially non-flat →
-  per-slot deltas section (protocol §5).
+- φ is computed ONE per (family, rep) from its later slots (k≥1) — mean over
+  those slots, protocol-comparable — then median/IQR reported ACROSS the per-rep
+  φ values (≥5 reps at floor); pooled-across-reps statistics are not the
+  headline. Unprimed trajectory always printed — materially non-flat →
+  per-slot deltas section (protocol §5). Records with `infra-error` outcomes
+  are excluded from every statistic (adapter failure ≠ agent failure).
 - Abort table always beside φ: a φ from 20%-aborted slots is a different
   datum and must read as one.
 - Report: `report.md` per campaign + the raw JSONL alongside (numbers

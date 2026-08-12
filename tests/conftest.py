@@ -62,3 +62,38 @@ def built_corpus():
     from reschema.corpus.generate import build
 
     return build()
+
+
+def mcp_call(tool, **kw):
+    """One in-process MCP tool call; structured_content unwrapped, errors
+    asserted. Shared by test_mcp/test_dogfood (was two hand-rolled copies).
+
+    reschema import stays lazy: RESCHEMA_HOME is set at conftest import time
+    above and reschema's ROOT constants read the env at THEIR import.
+    """
+    import json
+
+    import anyio
+    from mcp.client._memory import InMemoryTransport
+    from mcp.client.session import ClientSession
+
+    from reschema.mcp.server import server
+
+    async def go():
+        async with InMemoryTransport(server) as (r, w), ClientSession(r, w) as s:
+            await s.initialize()
+            res = await s.call_tool(tool, kw)
+            assert not res.is_error, res.content
+            sc = res.structured_content
+            if sc is not None:
+                return sc["result"] if set(sc) == {"result"} else sc
+            return json.loads(res.content[0].text)
+
+    return anyio.run(go)
+
+
+def wipe_task(store):
+    """Clean slate for a shared-runtime-state task dir: traces + ledger gone."""
+    for p in store.dir.glob("trace_*.json"):
+        p.unlink()
+    store._path("ledger.json").unlink(missing_ok=True)

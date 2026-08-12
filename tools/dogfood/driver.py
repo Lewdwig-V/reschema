@@ -127,9 +127,10 @@ def run_campaign(
     sidecar = Path(corpus_source) / "canonicalizer_version"
     if sidecar.exists():
         run_header["canonicalizer_version"] = sidecar.read_text()
-    infra_streak = [0]
+    infra_streak = 0
 
     def one(spec: SlotSpec) -> Path:
+        nonlocal infra_streak
         final = out_dir / f"{spec.result_stem}.jsonl"
         if _completed(final):
             return final
@@ -148,10 +149,10 @@ def run_campaign(
         # ponytail: streak counter is pool-shared and racy; an interleaved
         # success only makes the abort LESS eager, the safe direction
         if json.loads(final.read_text())["outcome"] == "infra-error":
-            infra_streak[0] += 1
+            infra_streak += 1
         else:
-            infra_streak[0] = 0
-        if infra_streak[0] >= INFRA_STREAK_ABORT:
+            infra_streak = 0
+        if infra_streak >= INFRA_STREAK_ABORT:
             raise RuntimeError("endpoint infra-error streak: aborting campaign")
         return final
 

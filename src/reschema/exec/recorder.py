@@ -36,23 +36,11 @@ LOG_SYSCALLS = (
 )
 
 
-class Sink(io.RawIOBase):
-    def __init__(self):
-        self.buf = bytearray()
-
-    def writable(self):
-        return True
-
-    def write(self, b):
-        self.buf += b
-        return len(b)
-
-
 def record(
     binary: str | Path, argv: list[str], stdin: bytes = b"", timeout_us: int = 3_000_000
 ) -> dict:
     """argv excludes the binary; trace includes both. Returns a JSON-serializable dict."""
-    out, err = Sink(), Sink()
+    out, err = io.BytesIO(), io.BytesIO()
     # qiling 1.4.6 adjustments vs Task 3 plan:
     # - Qiling() has no stdin/stdout/stderr kwargs; assign ql.os.std* after construction
     #   (QlOsPosix setters rewire the fd table).
@@ -116,8 +104,8 @@ def record(
         "argv": [str(binary), *argv],
         "stdin_hex": stdin.hex(),
         "stdin_sha256": hashlib.sha256(stdin).hexdigest(),
-        "stdout": bytes(out.buf).hex(),
-        "stderr": bytes(err.buf).hex(),
+        "stdout": out.getvalue().hex(),
+        "stderr": err.getvalue().hex(),
         "exit_code": exit_code,
         "files_written": files_written,
         "events": events,

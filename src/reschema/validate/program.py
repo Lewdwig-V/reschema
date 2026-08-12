@@ -8,7 +8,6 @@ import string
 import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
-from itertools import islice
 from pathlib import Path
 
 from ..driver import podrun
@@ -91,8 +90,9 @@ _OPEN_FAMILY = ("openat", "open", "creat")
 
 def _fd_table(events: list[dict]) -> dict[str, str]:
     """Literal fd -> FD_<n> for write-intent opens, mirroring canonicalize's walk."""
-    from ..exec.canonical import _write_intent
+    from ..exec.canonical import _mapper, _write_intent
 
+    fd_of = _mapper("FD")
     fds: dict[str, str] = {}
     pending = False
     for e in events:
@@ -102,7 +102,7 @@ def _fd_table(events: list[dict]) -> dict[str, str]:
         elif sc in _OPEN_FAMILY and phase == "exit":
             res = e.get("result")
             if pending and isinstance(res, str) and res.startswith("0x"):
-                fds.setdefault(res, f"FD_{len(fds)}")
+                fds.setdefault(res, fd_of(res))
             pending = False
     return fds
 
@@ -278,11 +278,3 @@ def hidden_input_stream(
             continue
         s = "".join(rng.choice(_CHARSET) for _ in range(rng.randint(1, 24)))
         yield ([s], b"") if "argv" in modes else ([], (s + "\n").encode())
-
-
-def gen_hidden_inputs(
-    task_id: str, n: int = 8, modes: tuple = ("argv",), seed: str | None = None
-) -> list[tuple[list[str], bytes]]:
-    """Deterministic fresh inputs given a seed; submissions pass fresh entropy."""
-    rng = random.Random(seed if seed is not None else f"hidden:{task_id}")
-    return list(islice(hidden_input_stream(rng, modes), n))

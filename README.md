@@ -191,8 +191,8 @@ src/reschema/
   exec/                # qiling recorder, canonicalizer (rules v2.1)
   validate/            # program gate, function gate
   driver/              # call driver (SENTINEL trap), param specs, input gen
-  disasm/slice.py      # symtab-size-exact disassembly slices
-  disasm/analyze.py    # capstone facts behind task_open (arity/callees/returns)
+  disasm/analyze.py    # symtab-size-exact disasm slices + capstone facts
+                       # behind task_open (arity/callees/returns)
   memory.py            # per-family deduction cache (.reschema/memory/<seed>.jsonl)
   engine.py            # TaskStore, ledger, submit_*, compose (single-process)
   mcp/server.py        # thin 1:1 tool wrapper over the engine

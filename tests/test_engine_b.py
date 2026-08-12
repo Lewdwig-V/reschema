@@ -2,6 +2,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from conftest import wipe_task
 
 from reschema.driver.spec import Param
 from reschema.engine import (
@@ -362,9 +363,7 @@ def test_status_snapshot_efficiency_metric():
     from reschema.engine import status_snapshot
 
     st = _status_store()
-    st._path("ledger.json").unlink(missing_ok=True)
-    for p in st.dir.glob("trace_*.json"):
-        p.unlink()
+    wipe_task(st)
     st.record_case("a", [], b"")
     eff = status_snapshot(st)["efficiency"]
     assert eff["n_exp"] == 1 and eff["n_sub"] == 0

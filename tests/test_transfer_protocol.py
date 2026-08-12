@@ -11,6 +11,7 @@ refers to for live-agent reruns.
 """
 
 import pytest
+from conftest import wipe_task
 
 from reschema.engine import TaskStore, status_snapshot, submit_program
 
@@ -54,9 +55,7 @@ SLOTS = ["gcc-O0-sym", "gcc-O1-sym", "gcc-O2-sym"]
 
 def _store(task_id):
     st = TaskStore(task_id)
-    for p in st.dir.glob("trace_*.json"):
-        p.unlink()
-    st._path("ledger.json").unlink(missing_ok=True)
+    wipe_task(st)
     return st
 
 

@@ -59,10 +59,9 @@ the project's own words, used everywhere and defined nowhere else:
 - **event** — one observed syscall in a trace: `{sc, phase, args, result?}`
   where `phase` is `enter` or `exit` (the recorder hooks both).
 - **probe** — one `experiment` call. Counted in the ledger's `probes` key and
-  priced in the efficiency metric. Function mode's `single_input` variant is
-  the cheap scout round: exactly one emulated call against the original, one
-  probe accounted, no trace persisted (program mode rejects it as spec
-  misuse).
+  priced in the efficiency metric. A function-mode probe is the cheap scout
+  round: exactly one emulated call against the original, one probe
+  accounted, no trace persisted.
 - **slot** — one cell of the corpus build matrix, e.g. `gcc-O2-sym`
   (compiler × optimization × symbols kept vs stripped). A `task_id` is
   `{seed}::{slot}`.
@@ -254,10 +253,9 @@ the exception class; it is a structured report, not a traceback page.
 `corpus_build(seed_ids?, matrix?)`, `task_open`, `experiment`, `submit_model`,
 `status`. No business logic; errors are mapped to `{error: not_found|spec|internal}`
 dicts. A contract test pins the term coverage of every tool description.
-`experiment`'s `single_input` flag (function tasks only) deliberately skips
-case persistence: one emulated call against the original, one ledger probe,
-no `trace_*.json` — the cheap scout round before an agent commits recorded
-cases.
+`experiment` on a function task deliberately skips case persistence: one
+emulated call against the original, one ledger probe, no `trace_*.json` —
+the cheap scout round before an agent commits recorded cases.
 
 ### engine.py — task state, gates, ledger
 
@@ -595,7 +593,8 @@ against the (non-public) original plans is kept as history, subordinate.
   existing surface rather than adding a subsystem: the two-pass repair
   directive (coaching context in `task_open`), syscall dependency slices
   (`dep_slice` in event/files divergences), name-independent topology
-  digests on `verified_fact` entries, and the `single_input` scout probe.
+  digests on `verified_fact` entries, and the function-mode scout probe
+  (one emulated call, no case persisted).
 - **Scope guardrails observed** — x86-64 static ELFs only, ≤6 register
   integer args (no stack args, no structs/floats), no multi-arch, packing, or
   symbolic equivalence; no branch coverage (explicitly cut).

@@ -18,6 +18,8 @@ semantics are unchanged. Rules were validated against the full corpus matrix
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import capstone
 from capstone import CS_AC_READ, CS_AC_WRITE
 from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_OP_REG
@@ -73,6 +75,14 @@ def function_insns(binary: str, addr: int, size: int) -> list:
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
     md.detail = True
     return list(md.disasm(data[off : off + size], addr))
+
+
+def disasm_function(binary: str | Path, addr: int, size: int) -> str:
+    """Disassemble one function from a binary using manifest address + symbol size."""
+    return "\n".join(
+        f"0x{i.address:x}:\t{i.mnemonic}\t{i.op_str}"
+        for i in function_insns(str(binary), addr, size)
+    )
 
 
 def _direct_fams(ii: list) -> tuple[set, set]:

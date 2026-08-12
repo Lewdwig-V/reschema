@@ -395,8 +395,7 @@ def _repair_directive(store: TaskStore) -> dict | None:
 
 
 def open_function_task(store: TaskStore, func: str) -> dict:
-    from .disasm.analyze import analyze_function
-    from .disasm.slice import disasm_function
+    from .disasm.analyze import analyze_function, disasm_function
 
     f = _fn_meta(store, func)
     facts = analyze_function(store.meta["binary"], store.meta["functions"])[func]

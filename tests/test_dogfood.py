@@ -8,15 +8,11 @@ criterion 1 (level-B rejection-repair accepted on -O2), the hardcoding negative
 seed binary accepted via MCP compose + link green).
 """
 
-import json
-
-import anyio
 import pytest
-from mcp.client._memory import InMemoryTransport
-from mcp.client.session import ClientSession
+from conftest import mcp_call as call
+from conftest import wipe_task
 
 from reschema.engine import TaskStore, compose
-from reschema.mcp.server import server
 
 PARAMS = [
     {"name": "lo", "kind": "i32", "range": [-20, 10]},
@@ -55,33 +51,11 @@ OVERFIT = "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t sum_range(int3
 T_O2, T_O1, T_O0 = "calc::gcc-O2-sym", "calc::gcc-O1-sym", "calc::gcc-O0-sym"
 
 
-def _wipe(task_id):
-    # task dirs are shared runtime state across modules; start clean
-    st = TaskStore(task_id)
-    for p in st.dir.glob("trace_*.json"):
-        p.unlink()
-    st._path("ledger.json").unlink(missing_ok=True)
-
-
 @pytest.fixture(scope="module", autouse=True)
 def corpus(built_corpus):
+    # task dirs are shared runtime state across modules; start clean
     for t in (T_O2, T_O1, T_O0):
-        _wipe(t)
-
-
-async def _acall(tool, kw):
-    async with InMemoryTransport(server) as (r, w), ClientSession(r, w) as s:
-        await s.initialize()
-        res = await s.call_tool(tool, kw)
-        assert not res.is_error, res.content
-        sc = res.structured_content
-        if sc is not None:
-            return sc["result"] if set(sc) == {"result"} else sc
-        return json.loads(res.content[0].text)
-
-
-def call(tool, **kw):
-    return anyio.run(_acall, tool, kw)
+        wipe_task(TaskStore(t))
 
 
 # ponytail: no N_FUZZ patching here — dogfood intentionally runs the production

@@ -1,6 +1,6 @@
 import pytest
 
-from reschema.disasm.slice import disasm_function
+from reschema.disasm.analyze import disasm_function
 
 
 @pytest.fixture(scope="module")

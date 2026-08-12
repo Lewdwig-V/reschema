@@ -113,8 +113,9 @@ Prime-vs-unprimed family runs (O0→O1→O2→stripped): Φ trajectory per famil
 with the reference agent in CI as the wiring proof, and a documented dogfood
 protocol to measure the same with a live agent (the way ISSUE-08/09/10
 feedback was measured). Runs once after 2B lands, before phase 3 consumption.
-Driver for the live-agent reruns: `tools/dogfood` (spec/plan under
-docs/superpowers/); smoke gate pending; floor campaign pending.
+Driver for the live-agent reruns shipped as `tools/dogfood/` (PR #75;
+invocation in docs/benchmark-protocol.md §6); smoke gate pending; floor
+campaign pending.
 
 **Explicitly deferred:** CFG/fingerprint keying, SQLite store, wall-clock
 score term — each only when a named trigger revives it.

@@ -15,6 +15,7 @@
   - [corpus/generate.py — 48-slot seed matrix](#corpusgeneratepy--48-slot-seed-matrix)
   - [disasm/ — task_open facts](#disasm--task_open-facts)
   - [memory.py — deduction cache](#memorypy--deduction-cache)
+  - [tools/dogfood/ — 2C live-agent transfer driver](#toolsdogfood--2c-live-agent-transfer-driver)
 - [Key architectural decisions](#key-architectural-decisions)
 - [Decision records](#decision-records)
 - [Verification & maintenance](#verification--maintenance)
@@ -39,6 +40,8 @@ corpus code, and guest file operations can never reach the host filesystem.
 State lives on disk under `.reschema/` (task dirs, family memory) with atomic
 temp-file+rename writes but **no coordination: single-process access is
 assumed** throughout (the engine module docstring carries the same warning).
+The state root is `RESCHEMA_HOME`-overridable (default: the repo for src-layout
+checkouts); the test suite uses it for per-worker isolation under pytest-xdist.
 
 ## Terms
 
@@ -114,6 +117,11 @@ agent ──stdio MCP──> mcp/server (5 tools, dispatch-only)
                         ├─ driver.podrun.run_worker  one-shot podman containers
                         │    └─ driver.native_worker validate/compile/compile-link modes
                         └─ disasm.{slice, analyze}   capstone facts for task_open
+
+tools/dogfood/ (benchmark tooling, NOT part of the package):
+   campaign (TOML) ──> driver.run_campaign ──> slot.run_slot ──> AgentRunner
+                        (pool, sequential primed chains, honest resume)
+                        └─ measure.render_report   φ + deltas + abort evidence
 ```
 
 ## Life of a submission
@@ -438,6 +446,39 @@ an instrumentation tautology check — it demonstrates the plumbing, not
 transfer in a live agent; a live-agent measurement is still pending (see
 `docs/benchmark-protocol.md`).
 
+### tools/dogfood/ — 2C live-agent transfer driver
+
+Measures what the CI reference run deliberately cannot: whether a REAL agent
+benefits from the family memory the harness ships. `slot.py` is the atom: one
+live-agent run of one corpus slot — layout (primed chains share one
+`RESCHEMA_HOME` across their 3 slots; unprimed opens memory-cold per slot,
+enforced by filesystem, the CI isolation invariant), agent spawn, ledger
+polling with typed guards (`aborted: timeout|probe-ceiling|agent-exit|
+priming-failed`, `infra-error` for endpoint failure), one atomic JSONL record
+per slot. `driver.py` expands TOML campaigns into a bounded pool; primed
+chains run SEQUENTIALLY inside one worker task (a later slot must open after
+slot 0's acceptance wrote the verified_fact it exists to consume; a failing
+chain slot short-circuits the rest as `aborted: priming-failed`, but an
+endpoint flap leaves the chain resumable). Resume is filesystem truth:
+budget-consuming outcomes skip, `infra-error` retries. `runners/base.py`'s
+`AgentRunner` Protocol keeps the driver harness-free — `opencode_v1.py` is
+today's adapter: session config allowlisting exactly the 5 MCP tools
+(top-level `tools` switchboard with `reschema_*` wildcard, empty sandbox cwd,
+sanitized HOME/XDG so global config can't leak in — the agent physically
+cannot read this repo's seeds), GET/POST preflight language the endpoint
+actually speaks, process-group lifecycle. `prompt.py` is one neutral task
+template whose neutrality is lint-tested against a stemmed forbidden list and
+pinned by a golden digest — prompt contamination is solver scaffolding and
+would silently reframe the measurement. `measure.py` is the only statistics
+site: φ per (family, rep) as the protocol requires, median/IQR across reps,
+rejected slots at E=0 (survivor-bias-free), infra-error evidence shown but
+never entering statistics, per-slot deltas when the unprimed trajectory isn't
+flat. Reports land `report-<family>.md` beside the JSONL under
+`docs/benchmark-results/2c/`; invocation: `uv run python -m
+tools.dogfood.driver <campaign.toml> --out <dir> [--pool N]` (AGENTS.md
+carries the smoke checklist). 46 CI-safe tests run the whole pipeline against
+`FakeRunner`; no LLM, podman, or endpoint in CI.
+
 ## Key architectural decisions
 
 1. **Single pinned toolchain image for everything binary** — corpus
@@ -500,8 +541,8 @@ against the (non-public) original plans is kept as history, subordinate.
   original spec.)
 - **status is a snapshot, not a counter** — readiness/coverage/recent
   journal/efficiency from ledger+manifest. (History: descoped to recorded
-  count + ledger.) Known wart: program accepts still carry a `replay_pct:
-  100` stub; a real replay-% metric is undefined and unshipped.
+  count + ledger.) The `replay_pct: 100` wart is now a DECISION, not a stub:
+  see the "No replay-% metric" record below.
 - **Program-path ledger accounting is symmetric** — counters, idempotent
   accept markers, and a `recent` journal. (History: the first implementation
   left counters untouched and stacked duplicate accept markers.)
@@ -511,9 +552,20 @@ against the (non-public) original plans is kept as history, subordinate.
   API); hence `qiling>=1.4.6,<1.5`, and a `pillow>=12.3.0` override is forced
   over `python-fx`'s `pillow<11` cap to clear transitive CVEs (the image/TUI
   paths of python-fx/asciimatics are never exercised).
-- **The tool table is exactly five tools, matching spec behavior** — some
-  literal parameter names diverge from the spec's §5 table; `compose()` is
-  deliberately not exposed.
+- **The tool table is exactly five tools; the shipped signatures are
+  canonical** — `compose()` is deliberately not exposed. (History: a spec
+  §5 table existed with different literal parameter names; per issue #44
+  decision, the shipped names are the canonical table — no external consumer
+  bound to the old names, and the contract test pins term coverage.)
+- **No replay-% metric** — issue #43 closed without a denominator: readiness
+  (recorded vs hidden-gate minimum), coverage (accepted/total), the
+  audit-trail seeds, and the efficiency metric already subsume the uses.
+  The accept record keeps the `replay_pct: 100` stub as a documented wart
+  only.
+- **compose() is a pure linkage check by policy** — accepted sources are
+  compiled per-TU and linked, nothing executes the composed binary (issue
+  #46): execution semantics for composed programs are undefined scope until
+  a real consumer appears; linkability is what the dogfood tests assert.
 - **Agent-C compile/execution mounts scratch, not the oracle store** —
   information isolation, not just host isolation: worker containers
   bind-mount a per-round scratch directory holding only the model source.
@@ -534,9 +586,9 @@ against the (non-public) original plans is kept as history, subordinate.
 
 ## Verification & maintenance
 
-This document is verified against the delivered codebase; the last full
-line-by-line pass was 2026-08-02 (commit `ad06b37`), with partial refreshes
-on 2026-08-04 (test-suite infrastructure in #70; research-slot features in
-#69; scratch-mount isolation in #61). It rots by default — policy: any PR that changes behavior
-described here must update this file in the same commit; a dated claim a
-reviewer can falsify from `src/` is a doc bug, file it.
+This document is verified against the delivered codebase. Latest FULL
+line-by-line audit: 2026-08-12 (phase-2 closeout: scratch-mount isolation,
+xdist/budget suite, `tools/dogfood/`, evidence records, and the three
+issue-closing decision records folded in). It rots by default — policy: any
+PR that changes behavior described here must update this file in the same
+commit; a dated claim a reviewer can falsify from `src/` is a doc bug, file it.

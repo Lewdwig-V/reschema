@@ -8,7 +8,10 @@ class FakeRunner:
     """Scripted AgentRunner: the ledger state is written at spawn (the
     agent's whole scripted life), or never (hang) — kill() wakes wait().
     "alive": True keeps the agent running despite a written ledger, so the
-    probe-ceiling guard (ordered after exited()) stays reachable."""
+    probe-ceiling guard (ordered after exited()) stays reachable.
+    "alive_after_accept": True additionally makes wait() block until killed
+    even with a ledger on disk — the accepted-but-lingering agent that must
+    be killed, not waited on forever."""
 
     def __init__(self, script: dict):
         self.script = script
@@ -38,17 +41,19 @@ class FakeRunner:
             (d / "ledger.json").write_text(json.dumps(led))
 
     def exited(self):
-        if self.script.get("alive"):
+        if self.script.get("alive") or self.script.get("alive_after_accept"):
             return self._killed
         return self._killed or self.script.get("ledger") is not None
 
     def wait(self):
+        eof = AgentOutcome(exit_kind="eof", returncode=0, transcript_tail="fake")
+        hang = self.script.get("alive_after_accept")
         while not self._killed:
-            if self.script.get("ledger") is not None:
-                return AgentOutcome(
-                    exit_kind="eof", returncode=0, transcript_tail="fake"
-                )
+            if not hang and self.script.get("ledger") is not None:
+                return eof
             time.sleep(0.05)
+        if self.script.get("ledger") is not None:
+            return eof  # life reached disk; a post-accept kill can't erase it
         return AgentOutcome(
             exit_kind="timeout", returncode=-9, transcript_tail="killed"
         )

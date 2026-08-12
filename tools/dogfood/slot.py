@@ -17,12 +17,24 @@ from .runners.base import AgentRunner, RunnerConfig, SlotSpec
 DEFAULT_POLL_S = 30
 
 
-def _driver_revision() -> str:
+def _driver_revision(repo: Path | None = None) -> str:
     """Short git SHA of the driver checkout; "unknown" when there is no git /
-    no repo — the evidence record must never crash on a missing checkout."""
+    no repo — the evidence record must never crash on a missing checkout.
+
+    Anchored to the checkout (= this file's repo), never the caller's CWD:
+    a campaign launched from another repo must still record OUR revision.
+    *repo* exists only so tests can exercise the fallback without touching
+    the real checkout."""
     try:
         return subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+            [
+                "git",
+                "-C",
+                str(repo or Path(__file__).resolve().parents[2]),
+                "rev-parse",
+                "--short",
+                "HEAD",
+            ],
             capture_output=True,
             text=True,
             check=True,

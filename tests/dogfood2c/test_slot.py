@@ -1,5 +1,7 @@
 import hashlib
 import json
+import subprocess
+from pathlib import Path
 
 from tools.dogfood.prompt import template_hash
 from tools.dogfood.runners.base import SlotSpec
@@ -240,9 +242,53 @@ def test_run_header_carries_driver_revision(tmp_path, stub_corpus):
     assert rec["run_header"]["driver_revision"]
 
 
-def test_driver_revision_is_unknown_outside_a_git_checkout(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)  # /tmp is no git repo: records must not crash
-    assert _driver_revision() == "unknown"
+def test_driver_revision_anchors_to_the_checkout(tmp_path, monkeypatch):
+    # a campaign launched from a foreign repo must still record OUR SHA
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    git = ["git", "-C", str(foreign)]
+    subprocess.run(["git", "init", "-q", str(foreign)], check=True)
+    subprocess.run(
+        [
+            *git,
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "x",
+        ],
+        check=True,
+    )
+    foreign_sha = subprocess.run(
+        [*git, "rev-parse", "--short", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    checkout_sha = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(Path(__file__).resolve().parents[2]),
+            "rev-parse",
+            "--short",
+            "HEAD",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert foreign_sha != checkout_sha  # else the test can't disambiguate
+    monkeypatch.chdir(foreign)
+    assert _driver_revision() == checkout_sha
+
+
+def test_driver_revision_is_unknown_outside_a_git_checkout(tmp_path):
+    assert _driver_revision(tmp_path) == "unknown"
 
 
 def test_infra_error_record_carries_prompt_sha256(tmp_path, stub_corpus):
@@ -260,7 +306,6 @@ def test_infra_error_record_carries_prompt_sha256(tmp_path, stub_corpus):
     assert rec["run_header"]["prompt_sha256"] == template_hash()
 
 
->>>>>>> 652d3e0 (2C driver follow-ups (#77))
 def test_run_slot_wipes_stale_task_ledger_before_spawn(tmp_path, stub_corpus):
     # resume after a mid-slot driver crash: the reused run root still holds the
     # crashed agent's ledger. It must NOT launder into the fresh slot's record.

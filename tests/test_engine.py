@@ -119,8 +119,7 @@ def test_program_accept_is_idempotent_and_audited(manifest):
 
 
 def test_program_accept_payload_is_rich(manifest):
-    # acceptance was a stub {accepted, replay_pct}; calibration: audit parity
-    # with rejections means counts + the hidden seed in the response itself.
+    # accept payload parity with rejects: counts + the hidden seed, no placeholders.
     from reschema.engine import HIDDEN_N, submit_program
 
     st = _prog_store(manifest)
@@ -130,6 +129,7 @@ def test_program_accept_payload_is_rich(manifest):
     assert r["recorded_cases"] == 2
     assert r["hidden_cases"] == HIDDEN_N
     assert r["hidden_seed"].startswith("hidden:")
+    assert "replay_pct" not in r
 
 
 def test_probes_counted_on_program_experiment(manifest):

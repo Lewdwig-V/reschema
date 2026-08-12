@@ -216,10 +216,7 @@ Every agent-facing verdict is a typed dict. There are three shapes:
 
 **Accepts:**
 
-- program: `{accepted: true, replay_pct, recorded_cases, hidden_cases,
-  hidden_seed}` — `replay_pct` is currently always `100`, a stub: the real
-  replay-% metric is undefined and unshipped (see
-  [Decision records](#decision-records)).
+- program: `{accepted: true, recorded_cases, hidden_cases, hidden_seed}`.
 - function: `{accepted: true, compared, skipped, seed}`.
 
 **Gate rejects:** `{accepted: false, ...}`
@@ -555,8 +552,8 @@ against the (non-public) original plans is kept as history, subordinate.
   original spec.)
 - **status is a snapshot, not a counter** — readiness/coverage/recent
   journal/efficiency from ledger+manifest. (History: descoped to recorded
-  count + ledger.) The `replay_pct: 100` wart is now a DECISION, not a stub:
-  see the "No replay-% metric" record below.
+  count + ledger.) See the "No replay-% metric" record below for the
+  accept-payload field that died with it.
 - **Program-path ledger accounting is symmetric** — counters, idempotent
   accept markers, and a `recent` journal. (History: the first implementation
   left counters untouched and stacked duplicate accept markers.)
@@ -574,8 +571,8 @@ against the (non-public) original plans is kept as history, subordinate.
 - **No replay-% metric** — issue #43 closed without a denominator: readiness
   (recorded vs hidden-gate minimum), coverage (accepted/total), the
   audit-trail seeds, and the efficiency metric already subsume the uses.
-  The accept record keeps the `replay_pct: 100` stub as a documented wart
-  only.
+  (History: program accepts carried a constant `replay_pct: 100` placeholder;
+  the placeholder is removed, and the test suite pins its absence.)
 - **compose() is a pure linkage check by policy** — accepted sources are
   compiled per-TU and linked, nothing executes the composed binary (issue
   #46): execution semantics for composed programs are undefined scope until

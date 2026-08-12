@@ -8,6 +8,8 @@ import json
 
 import anyio
 import pytest
+from conftest import mcp_call as call
+from conftest import wipe_task
 from mcp.client._memory import InMemoryTransport
 from mcp.client.session import ClientSession
 
@@ -31,33 +33,11 @@ puts(argv[1]); return 0; }
 """
 
 
-def _wipe(task_id):
-    # task dirs are shared runtime state across modules; start clean
-    st = TaskStore(task_id)
-    for p in st.dir.glob("trace_*.json"):
-        p.unlink()
-    st._path("ledger.json").unlink(missing_ok=True)
-
-
 @pytest.fixture(scope="module", autouse=True)
 def corpus(built_corpus):
-    _wipe("rot13::gcc-O2-sym")
-    _wipe("calc::gcc-O2-sym")
-
-
-async def _acall(tool, kw):
-    async with InMemoryTransport(server) as (r, w), ClientSession(r, w) as s:
-        await s.initialize()
-        res = await s.call_tool(tool, kw)
-        assert not res.is_error, res.content
-        sc = res.structured_content
-        if sc is not None:
-            return sc["result"] if set(sc) == {"result"} else sc
-        return json.loads(res.content[0].text)
-
-
-def call(tool, **kw):
-    return anyio.run(_acall, tool, kw)
+    # task dirs are shared runtime state across modules; start clean
+    wipe_task(TaskStore("rot13::gcc-O2-sym"))
+    wipe_task(TaskStore("calc::gcc-O2-sym"))
 
 
 @pytest.fixture(autouse=True)
@@ -347,36 +327,3 @@ def test_recorded_order_and_next_label_hold_past_99_traces(built_corpus):
     finally:  # the dir is shared runtime state; give it back empty
         for p in st.dir.glob("trace_*.json"):
             p.unlink()
-
-
-def test_experiment_single_input_is_cheap_scout_contract(tmp_path, monkeypatch):
-    # ISSUE-2B-8: one call_original round, no trace-json persisted, identical
-    # {ret, mem} shape to the full case path, and exactly ONE probe accounted.
-    task = "calc::gcc-O2-sym"
-    st = TaskStore(task)
-    st._path("ledger.json").unlink(missing_ok=True)
-    for p in st.dir.glob("trace_*.json"):
-        p.unlink()
-
-    case = {"lo": -5, "hi": 20}
-    full = call(
-        "experiment", task_id=task, function="sum_range", params=PARAMS, case=case
-    )
-    cheap = call(
-        "experiment",
-        task_id=task,
-        function="sum_range",
-        params=PARAMS,
-        case=case,
-        single_input=True,
-    )
-
-    assert set(cheap.keys()) == set(full.keys())
-    assert cheap["ret"] == full["ret"] and cheap["mem"] == full["mem"]
-    assert len(list(st.dir.glob("trace_*.json"))) == 0  # no case persisted
-    assert st.ledger().get("probes") == 2  # one probe each (not more, not fewer)
-
-
-def test_experiment_single_input_rejected_on_program_mode():
-    r = call("experiment", task_id="rot13::gcc-O2-sym", argv=["abc"], single_input=True)
-    assert r.get("error") == "spec"

@@ -114,7 +114,6 @@ def experiment(
     params: list[dict] | None = None,
     case: dict | None = None,
     quiet: bool = False,
-    single_input: bool = False,
 ) -> dict:
     """Run a ground-truth experiment and GET the canonical trace back.
 
@@ -133,11 +132,8 @@ def experiment(
     Function mode: dispatch a single call against the ORIGINAL function with
     your declared params and `case` values (cstring values as hex); returns
     {ret, mem} ground truth in the same layout the validator compares.
-    `single_input=true` (function tasks only) marks that call as the cheap
-    scout round: exactly one call against the original, one probe accounted in
-    the ledger, no trace file persisted — the right shape for early
-    hypothesis exploration before you commit recorded cases (program mode
-    rejects it with an error)."""
+    Function experiments persist no trace file and count exactly one probe in
+    the ledger."""
     try:
         st = TaskStore(task_id)
         if function:
@@ -145,11 +141,6 @@ def experiment(
                 return experiment_function(st, function, params or [], case or {})
             except ValueError as e:
                 return _spec_err(e)
-        if single_input:
-            return {
-                "error": "spec",
-                "detail": "single_input applies to function tasks only (program experiments always write cases)",
-            }
         label = _next_label(len(st.recorded()))
         t = st.record_case(label, argv or [], stdin.encode())
         return {k: v for k, v in t.items() if k != "events"} if quiet else t

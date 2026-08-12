@@ -1,4 +1,5 @@
 import pytest
+from conftest import wipe_task
 
 from reschema.engine import TaskStore
 from reschema.exec.canonical import CANONICALIZER_VERSION
@@ -78,9 +79,7 @@ def _prog_store(manifest):
     from reschema.engine import TaskStore as TS
 
     st = TS("rot13::gcc-O1-sym")  # separate slot: other modules own the O2 dir
-    for p in st.dir.glob("trace_*.json"):
-        p.unlink()
-    st._path("ledger.json").unlink(missing_ok=True)
+    wipe_task(st)
     st.record_case("a", ["hello"], b"")
     return st
 
@@ -135,9 +134,7 @@ def test_program_accept_payload_is_rich(manifest):
 
 def test_probes_counted_on_program_experiment(manifest):
     st = TaskStore("rot13::gcc-O2-sym")
-    st._path("ledger.json").unlink(missing_ok=True)
-    for p in st.dir.glob("trace_*.json"):
-        p.unlink()
+    wipe_task(st)
     st.record_case("a", ["abcdefghijklmnopqrstuvwxyz"], b"")
     st.record_case("b", ["zz"], b"")
     led = st.ledger()

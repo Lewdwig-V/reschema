@@ -7,6 +7,7 @@ fresh entropy, so E depends only on the scripted history."""
 import math
 
 import pytest
+from conftest import wipe_task
 
 from reschema.engine import TaskStore, status_snapshot, submit_program
 
@@ -32,9 +33,7 @@ def run_family_baseline():
     trajectory = []
     for slot in ROT13_FAMILY:
         st = TaskStore(f"rot13::{slot}")
-        for p in st.dir.glob("trace_*.json"):
-            p.unlink()
-        st._path("ledger.json").unlink(missing_ok=True)
+        wipe_task(st)
         for i, word in enumerate(PROBE_INPUTS):
             st.record_case(f"e{i:02d}", [word], b"")
         r = submit_program(st, GOOD_ROT13)
@@ -60,9 +59,7 @@ def test_family_memory_bends_trajectory_up(monkeypatch, tmp_path):
 
     monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
     first = TaskStore("rot13::gcc-O0-sym")
-    for p in first.dir.glob("trace_*.json"):
-        p.unlink()
-    first._path("ledger.json").unlink(missing_ok=True)
+    wipe_task(first)
     for i, word in enumerate(["alpha", "Beta", "zzz", "hello", "world!", "rot13"]):
         first.record_case(f"e{i:02d}", [word], b"")
     r = submit_program(first, GOOD_ROT13)
@@ -79,9 +76,7 @@ def test_family_memory_bends_trajectory_up(monkeypatch, tmp_path):
     traj = [math.exp(-0.75)]
     for slot in ("rot13::gcc-O1-sym", "rot13::gcc-O2-sym"):
         st = TaskStore(slot)
-        for p in st.dir.glob("trace_*.json"):
-            p.unlink()
-        st._path("ledger.json").unlink(missing_ok=True)
+        wipe_task(st)
         # no probing: the family memory carries both the verified source AND the
         # proven ABI shape — submit from the cache, not from experiments
         res = submit_program(st, cached[0]["c_source"])

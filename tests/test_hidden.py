@@ -1,10 +1,22 @@
+import random
+from itertools import islice
 from unittest.mock import Mock
 
 import pytest
+from conftest import wipe_task
 
 import reschema.engine as eng
 from reschema.engine import STDIN_DRIVEN, TaskStore, submit_program
-from reschema.validate.program import gen_hidden_inputs
+from reschema.validate.program import hidden_input_stream
+
+
+def gen_hidden_inputs(
+    task_id: str, n: int = 8, modes: tuple = ("argv",), seed: str | None = None
+) -> list[tuple[list[str], bytes]]:
+    """Deterministic fresh inputs given a seed; submissions pass fresh entropy."""
+    rng = random.Random(seed if seed is not None else f"hidden:{task_id}")
+    return list(islice(hidden_input_stream(rng, modes), n))
+
 
 GOOD = r"""
 #include <stdio.h>
@@ -29,12 +41,8 @@ int main(void){ char buf[64];
 """
 
 
-def _wipe(st):
-    # Task dirs are persisted across runs: leftover trace/ledger files would break
-    # stage attribution, so each fixture starts from a clean dir.
-    for p in st.dir.glob("trace_*.json"):
-        p.unlink()
-    st._path("ledger.json").unlink(missing_ok=True)
+# Task dirs are persisted across runs: leftover trace/ledger files would break
+# stage attribution, so each fixture starts from a clean dir (wipe_task).
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -45,7 +53,7 @@ def _corpus_once(built_corpus):
 @pytest.fixture(scope="module")
 def store():
     st = TaskStore("rot13::gcc-O1-sym")  # separate slot: other modules share the O2 dir
-    _wipe(st)
+    wipe_task(st)
     st.record_case("a", ["hello"], b"")
     return st
 
@@ -55,7 +63,7 @@ def check_store():
     st = TaskStore(
         "check::gcc-O1-sym"
     )  # stdin-driven; no other module owns a check dir
-    _wipe(st)
+    wipe_task(st)
     st.record_case("a", [], b"hello\n")  # STORED case fed via stdin bytes
     return st
 
@@ -122,7 +130,7 @@ int main(void){
 @pytest.fixture(scope="module")
 def fw_store():
     st = TaskStore("filewrite::gcc-O1-sym")  # no other module owns a filewrite dir
-    _wipe(st)
+    wipe_task(st)
     st.record_case("a", [], b"hello\n")
     return st
 

@@ -137,8 +137,10 @@ actionable structured refusal, never a silent fallback.
 What still runs on the host: python orchestration (engine, ledger,
 canonicalization) and the qiling/unicorn emulator itself — contained by the
 scratch rootfs and the per-record timeout, but ultimately trusted third-party
-code like any other dependency. Also not contained: image supply chain (pin
-your base-image digest if that matters to you).
+code like any other dependency. Also not contained: image supply chain beyond
+integrity — the base image IS pinned tag+digest in `Containerfile` (refresh
+workflow documented there), which attests image identity but makes no sandbox
+claims about what the image contains.
 
 ## Getting started
 

@@ -178,6 +178,30 @@ def test_run_header_carries_manifest_sha256(tmp_path, stub_corpus):
     )
 
 
+def test_run_slot_accepted_kills_lingering_agent(tmp_path, stub_corpus):
+    # regression: an agent that wrote an accepted ledger but NEVER exits must
+    # not hang the slot in wait() — acceptance kills it before reap. Without
+    # the kill this test hangs until the outer `timeout` wrapper fires.
+    runner = FakeRunner(
+        {
+            "task_id": "rot13::gcc-O0-sym",
+            "alive_after_accept": True,
+            "ledger": {"accepted": ["program"], "submissions": 1, "probes": 2},
+        }
+    )
+    out = run_slot(
+        _spec(),
+        campaign_dir=tmp_path / "runs",
+        runner=runner,
+        corpus_source=stub_corpus,
+        guards=SlotGuard(timeout_s=30, probe_ceiling=5),
+        poll_s=0,
+    )
+    rec = json.loads(out.read_text())
+    assert rec["outcome"] == "accepted" and rec["accepted"] is True
+    assert runner._killed  # the accepted path terminates the agent
+
+
 def test_run_slot_wipes_stale_task_ledger_before_spawn(tmp_path, stub_corpus):
     # resume after a mid-slot driver crash: the reused run root still holds the
     # crashed agent's ledger. It must NOT launder into the fresh slot's record.

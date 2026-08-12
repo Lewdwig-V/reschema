@@ -113,10 +113,24 @@ class OpenCodeV1Runner:
     def spawn(self, prompt: str) -> None:
         cfg = self._cfg
         self._killed = False
+        # opencode MERGES config layers: a developer-global ~/.config/opencode
+        # (MCP servers, plugins, tools) would silently survive alongside the
+        # sandbox config. No env var disables the global layer — pin HOME/XDG
+        # at a sandbox-private dir, plus OPENCODE_CONFIG as the belt.
+        home = cfg.sandbox / "_home"
+        home.mkdir(parents=True, exist_ok=True)
+        env = {
+            **os.environ,
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(home / ".config"),
+            "XDG_DATA_HOME": str(home / ".local/share"),
+            "OPENCODE_CONFIG": str(cfg.sandbox / "opencode.json"),
+        }
         with open(cfg.sandbox / TRANSCRIPT, "wb") as out:  # child dup's the fd
             self._p = subprocess.Popen(
                 [self.binary, "run", prompt],
                 cwd=cfg.sandbox,
+                env=env,
                 stdout=out,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,  # own process group: kill reaches children

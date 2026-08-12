@@ -40,7 +40,14 @@ def record(
     binary: str | Path, argv: list[str], stdin: bytes = b"", timeout_us: int = 3_000_000
 ) -> dict:
     """argv excludes the binary; trace includes both. Returns a JSON-serializable dict."""
-    out, err = io.BytesIO(), io.BytesIO()
+
+    # A plain BytesIO raises on getvalue() after close; the guest may close(1/2),
+    # which closes the assigned stream — the capture must stay readable.
+    class _Sink(io.BytesIO):
+        def close(self):
+            pass
+
+    out, err = _Sink(), _Sink()
     # qiling 1.4.6 adjustments vs Task 3 plan:
     # - Qiling() has no stdin/stdout/stderr kwargs; assign ql.os.std* after construction
     #   (QlOsPosix setters rewire the fd table).

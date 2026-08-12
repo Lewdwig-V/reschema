@@ -153,3 +153,17 @@ def test_record_timeout_reports_fault(tmp_path):
 def test_record_result_is_json_serializable(manifest):
     t = record(_slot(manifest, "rot13"), ["hello"], b"")
     json.dumps(t)
+
+
+def test_guest_closing_stdio_leaves_capture_readable(tmp_path):
+    # close(1) makes qiling close the assigned stream; the capture must still
+    # be readable at return time (a closed io.BytesIO would raise ValueError).
+    prog = _compile_probe(
+        tmp_path,
+        "closer",
+        "#include <unistd.h>\n"
+        'int main(void){ write(1, "cowabunga\\n", 10); close(1); return 0; }\n',
+    )
+    t = record(prog, [])
+    assert t["exit_code"] == 0
+    assert t["stdout"] == b"cowabunga\n".hex()

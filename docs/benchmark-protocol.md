@@ -170,20 +170,33 @@ real agent.) Section 6's rerun procedure is where the actual result lives.
 **Reference run (CI):** `uv run pytest -q tests/test_transfer_protocol.py`.
 Deterministic; this is the wiring proof only (§4).
 
-**Live-agent run (dogfood):**
+**Live-agent run (dogfood):** the shipped driver at `tools/dogfood/` runs
+this protocol end-to-end with a real agent:
 
-1. Fresh `.reschema/` per condition. UNPRIMED additionally resets (or
-   relocates) `.reschema/memory/` between slots so every slot opens cold;
-   PRIMED shares one memory root across the chain.
-2. Drive the slot chains above through the 5 MCP tools only.
-3. Per slot, record from `status`: `E`, `n_exp` (probes), `n_sub`
-   (submissions), and the raw trajectory; per run, the condition and memory
-   root layout.
-4. Run header (required for the number to mean anything): agent model and
-   version, full prompt, exposed tool set, turn/token limits, whether the
-   agent had repository access.
-5. ≥5 paired runs per family (§5); compare φ medians, and eyeball the
-   unprimed trajectories for flatness before trusting φ.
+```bash
+export RESCHEMA_2C_ENDPOINT=http://<model-box>/v1  # OpenAI-compatible stack
+export RESCHEMA_2C_MODEL=<checkpoint-name>
+uv run python -m tools.dogfood.driver tools/dogfood/campaigns/floor.toml \
+    --out docs/benchmark-results/2c/<run-id> [--pool 4]
+```
+
+What the driver guarantees (the protocol's own invariants, now enforced by
+construction): fresh `RESCHEMA_HOME` roots per condition — PRIMED chains
+share one memory root across their slots, UNPRIMED slots each open memory-cold
+(§3's controls by filesystem, not monkeypatching); the agent is restricted to
+exactly the 5 MCP tools in an empty sandbox (it physically cannot read the
+corpus seeds); per-slot ledger reads yield `E`, probes, and submissions with
+typed abort classes (`aborted: timeout|probe-ceiling|agent-exit|priming-failed`,
+`infra-error`); and every record's run header pins agent model+checkpoint,
+endpoint, prompt sha256, and the corpus manifest sha256 (the §5 agent-mix and
+reproducibility controls). Artifacts land as `slots/*.jsonl` +
+`report-<family>.md` under the `--out` dir.
+
+Smoke first: `tools/dogfood/campaigns/smoke.toml`, then AGENTS.md's checklist
+(first-slot transcript must show the five tools; abort classes reviewed
+before reading φ). ≥5 paired runs per family (§5) for the reportable number;
+compare φ medians, and eyeball the unprimed trajectories for flatness before
+trusting φ.
 
 The expected live signature under H1: primed trajectories rising after slot
 0 with fewer probes; friction relative to the reference run's flat 1.0s *is*

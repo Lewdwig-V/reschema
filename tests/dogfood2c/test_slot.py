@@ -1,8 +1,11 @@
 import hashlib
 import json
+import subprocess
+from pathlib import Path
 
+from tools.dogfood.prompt import template_hash
 from tools.dogfood.runners.base import SlotSpec
-from tools.dogfood.slot import SlotGuard, layout_root, run_slot
+from tools.dogfood.slot import SlotGuard, _driver_revision, layout_root, run_slot
 
 from .fakes import FakeRunner, PreflightFakeRunner
 
@@ -200,6 +203,107 @@ def test_run_slot_accepted_kills_lingering_agent(tmp_path, stub_corpus):
     rec = json.loads(out.read_text())
     assert rec["outcome"] == "accepted" and rec["accepted"] is True
     assert runner._killed  # the accepted path terminates the agent
+
+
+def test_run_header_carries_canonicalizer_version(tmp_path, stub_corpus):
+    # corpus comparability evidence: the mounted sidecar travels into the record
+    (stub_corpus / "canonicalizer_version").write_text("2.1")
+    out = run_slot(
+        _spec(),
+        campaign_dir=tmp_path / "runs",
+        runner=FakeRunner(
+            {
+                "ledger": {"accepted": ["program"], "submissions": 1, "probes": 1},
+            }
+        ),
+        corpus_source=stub_corpus,
+        guards=SlotGuard(timeout_s=30),
+        poll_s=0,
+    )
+    rec = json.loads(out.read_text())
+    assert rec["run_header"]["canonicalizer_version"] == "2.1"
+
+
+def test_run_header_carries_driver_revision(tmp_path, stub_corpus):
+    out = run_slot(
+        _spec(),
+        campaign_dir=tmp_path / "runs",
+        runner=FakeRunner(
+            {
+                "ledger": {"accepted": ["program"], "submissions": 1, "probes": 1},
+            }
+        ),
+        corpus_source=stub_corpus,
+        guards=SlotGuard(timeout_s=30),
+        poll_s=0,
+    )
+    rec = json.loads(out.read_text())
+    assert isinstance(rec["run_header"]["driver_revision"], str)
+    assert rec["run_header"]["driver_revision"]
+
+
+def test_driver_revision_anchors_to_the_checkout(tmp_path, monkeypatch):
+    # a campaign launched from a foreign repo must still record OUR SHA
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    git = ["git", "-C", str(foreign)]
+    subprocess.run(["git", "init", "-q", str(foreign)], check=True)
+    subprocess.run(
+        [
+            *git,
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "x",
+        ],
+        check=True,
+    )
+    foreign_sha = subprocess.run(
+        [*git, "rev-parse", "--short", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    checkout_sha = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(Path(__file__).resolve().parents[2]),
+            "rev-parse",
+            "--short",
+            "HEAD",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert foreign_sha != checkout_sha  # else the test can't disambiguate
+    monkeypatch.chdir(foreign)
+    assert _driver_revision() == checkout_sha
+
+
+def test_driver_revision_is_unknown_outside_a_git_checkout(tmp_path):
+    assert _driver_revision(tmp_path) == "unknown"
+
+
+def test_infra_error_record_carries_prompt_sha256(tmp_path, stub_corpus):
+    # pre-preflight hash: an endpoint-dead record still pins the prompt it ran
+    out = run_slot(
+        _spec(),
+        campaign_dir=tmp_path / "runs",
+        runner=PreflightFakeRunner({"task_id": "rot13::gcc-O0-sym"}),
+        corpus_source=stub_corpus,
+        guards=SlotGuard(timeout_s=30),
+        poll_s=0,
+    )
+    rec = json.loads(out.read_text())
+    assert rec["outcome"] == "infra-error"
+    assert rec["run_header"]["prompt_sha256"] == template_hash()
 
 
 def test_run_slot_wipes_stale_task_ledger_before_spawn(tmp_path, stub_corpus):

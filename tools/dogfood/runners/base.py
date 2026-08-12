@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -39,8 +39,6 @@ class RunnerConfig:
     endpoint: str | None  # OpenAI-compatible base URL (run-header evidence)
     sandbox: Path  # empty session cwd (agent cannot see the repo)
     run_root: Path  # slot's RESCHEMA_HOME
-    mcp_server_args: list[str] = field(default_factory=list)
-    max_turns: int | None = None
 
 
 @dataclass

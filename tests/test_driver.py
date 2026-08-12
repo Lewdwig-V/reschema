@@ -32,6 +32,16 @@ __attribute__((sysv_abi)) int32_t spin(int32_t x){
 }
 /* Static state: batch ground truth must reset .bss between cases or n accumulates. */
 int32_t bump(int32_t x){ static int32_t n = 0; n += x; return n; }
+/* Syscall witness: raw getpid (qiling 1.4.6 returns a fixed 0x512) + a static
+   x accumulator — if process state ever bled case N -> N+1 on a shared VM,
+   case N+1's return carries the residue. Must route batch to fresh VMs. */
+__attribute__((sysv_abi)) int32_t pidish(int32_t x){
+    static int32_t n = 0;
+    long r;
+    __asm__ volatile("mov $39, %0\n\tsyscall" : "=a"(r) : : "rcx", "r11");
+    n += x;
+    return (int32_t)r + n;
+}
 /* Faults only for oversized n: walks buf past the mapped stack. */
 int32_t fallible(int32_t *buf, int32_t n){
     int32_t s = 0; for (int32_t i = 0; i < n; i++) s += buf[i]; return s;
@@ -232,6 +242,26 @@ def test_beyond_six_args_raises(probe_bin):
         call_original(binary, syms["bigframe_sum"][0], params, case)
 
 
+def _strip_mode(traces: list[dict]) -> list[dict]:
+    """Trace equality modulo the batch_mode routing annotation."""
+    return [{k: v for k, v in t.items() if k != "batch_mode"} for t in traces]
+
+
+def test_batch_syscalling_original_falls_back_to_fresh_vms(probe_bin):
+    """A syscall insn in the function slice must reroute the round to per-case
+    fresh VMs — ql.save/restore spans registers+memory only, not rootfs/fd/OS
+    state (codex: snapshot is no isolation contract for syscalling originals)."""
+    binary, syms = probe_bin
+    params = [Param("x", "i32", range=(-50, 50))]
+    cases = gen_inputs(params, random.Random(80), 8)
+    outs = batch_call_original(binary, syms["pidish"][0], params, cases)
+    assert [o["batch_mode"] for o in outs] == ["fresh-vm-fallback"] * len(cases)
+    assert all(o["exit_code"] == 0 for o in outs)  # the syscall really ran
+    fresh = [call_original(binary, syms["pidish"][0], params, c) for c in cases]
+    # identity pin, residue included: fallback output == per-case fresh output
+    assert _strip_mode(outs) == fresh
+
+
 # The issue-41 judgment guard: one VM serving N cases must match N fresh VMs
 # byte-for-byte. O0 slots (unoptimized stack traffic) + a static-state witness
 # (bump) leave state bleed nowhere to hide.
@@ -266,7 +296,10 @@ def test_batch_call_original_matches_fresh_per_case(manifest, probe_bin):
         cases = gen_inputs(params, random.Random(41), 16)
         fresh = [call_original(binary, addr, params, c) for c in cases]
         batched = batch_call_original(binary, addr, params, cases)
-        assert batched == fresh
+        assert _strip_mode(batched) == fresh
+        # syscall-free kernels only: the snapshot path must serve all of them
+        # (bump's static-state isolation included)
+        assert all(o["batch_mode"] == "batched-snapshot" for o in batched)
 
 
 def test_batch_call_original_fault_then_clean(probe_bin):

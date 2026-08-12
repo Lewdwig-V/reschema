@@ -18,13 +18,18 @@ import struct
 import tempfile
 from pathlib import Path
 
+from elftools.elf.elffile import ELFFile
 from qiling import Qiling
 
+from ..disasm.analyze import function_insns
 from .spec import Param
 
 SENTINEL = 0x1000000  # mapped far from the 0x400000 static image base
 BAREGS = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]  # SysV int-arg order
 TIMEOUT_US = 3_000_000
+# Syscall-executing opcodes (x86-64 Linux): any of these in the function slice
+# disqualifies it from the shared-VM batch path.
+SYSCALL_MNEMONICS = ("syscall", "sysenter")
 
 
 def _guard_arity(params: list[Param]) -> None:
@@ -164,21 +169,63 @@ def call_original(binary: str, addr: int, params: list[Param], case: dict) -> di
     return _run_case(_boot_vm(binary), addr, params, case)
 
 
+def _fn_has_syscall(binary: str, addr: int) -> bool | None:
+    """True/False on whether the function at addr executes a syscall opcode.
+
+    None = unanswerable here: the slice is bounded by the binary's own symtab,
+    so a stripped or zero-size symbol leaves no honest extent to scan."""
+    with open(binary, "rb") as f:
+        sym = ELFFile(f).get_section_by_name(".symtab")
+        if not sym:
+            return None
+        size = next(
+            (
+                int(s["st_size"])
+                for s in sym.iter_symbols()
+                if s["st_info"]["type"] == "STT_FUNC" and int(s["st_value"]) == addr
+            ),
+            None,
+        )
+    if not size:
+        return None
+    return any(
+        i.mnemonic in SYSCALL_MNEMONICS for i in function_insns(binary, addr, size)
+    )
+
+
 def batch_call_original(
     binary: str, addr: int, params: list[Param], cases: list[dict]
 ) -> list[dict]:
-    """call_original for a whole case list on ONE VM; same per-case trace schema.
+    """call_original for a whole case list; same per-case trace schema.
 
-    Isolation: ql.save() after boot/SENTINEL map, ql.restore() before every case —
-    registers AND memory (incl. fsbase/gsbase) return to the pristine post-init
-    state, so case N cannot leave residue for case N+1. A fault only costs its own
-    case: restore before the next case wipes the wedged emulation state.
+    Isolation (batched-snapshot): ql.save() after boot/SENTINEL map, ql.restore()
+    before every case — registers AND memory (incl. fsbase/gsbase) return to the
+    pristine post-init state, so case N cannot leave residue for case N+1. A
+    fault only costs its own case: restore before the next case wipes the wedged
+    emulation state.
+
+    The snapshot spans registers+memory ONLY — rootfs contents, OS/fd objects
+    and post-save mapped regions are outside it, so the contract holds for
+    syscall-free kernels only. Guard: the function's symtab-bounded slice is
+    scanned for syscall-executing opcodes; ANY hit (or an unboundable slice —
+    stripped/zero-size symbol) reroutes the round to per-case fresh VMs. Each
+    trace records which: batch_mode = "batched-snapshot" | "fresh-vm-fallback".
     """
     _guard_arity(params)
+    if _fn_has_syscall(binary, addr) is not False:
+        # Syscalling or unscannable original: per-case fresh VMs. (Fresh VMs
+        # were the pre-batch behavior for every path — the suite already paid
+        # this cost everywhere before #80, so the fallback has no new worst case.)
+        outs = [call_original(binary, addr, params, c) for c in cases]
+        for o in outs:
+            o["batch_mode"] = "fresh-vm-fallback"
+        return outs
     ql = _boot_vm(binary)
     snap = ql.save()
     outs = []
     for case in cases:
         ql.restore(snap)
-        outs.append(_run_case(ql, addr, params, case))
+        o = _run_case(ql, addr, params, case)
+        o["batch_mode"] = "batched-snapshot"
+        outs.append(o)
     return outs

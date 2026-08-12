@@ -34,3 +34,12 @@ def test_pin_metadata_comments_present() -> None:
     assert re.search(r"#\s*digest pinned: \d{4}-\d{2}-\d{2}", text), (
         "the pin date comment must move with the digest"
     )
+
+
+def test_apt_sources_pinned_to_snapshot() -> None:
+    # Format pin, not date-value pin: any snapshot timestamp satisfies this;
+    # removing the sed that pins apt sources must fail it.
+    assert re.search(r"snapshot\.debian\.org/archive/debian/\d{8}T\d{6}Z", _text()), (
+        "apt sources must be pinned to a snapshot.debian.org timestamp, "
+        "else gcc/clang/libc resolve against live rolling trixie"
+    )

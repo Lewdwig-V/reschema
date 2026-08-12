@@ -300,7 +300,6 @@ def submit_program(
     )
     return {
         "accepted": True,
-        "replay_pct": 100,
         "recorded_cases": len(rec),
         "hidden_cases": HIDDEN_N,
         "hidden_seed": hidden_seed,

@@ -45,9 +45,8 @@ checkouts); the test suite uses it for per-worker isolation under pytest-xdist.
 
 ## Terms
 
-The standard reverse-engineering vocabulary (SysV order, symtab, rel32,
-RTLD_NOW, ...) is deliberately left undefined — it is googleable. These are
-the project's own words, used everywhere and defined nowhere else:
+Standard reverse-engineering vocabulary is assumed. These are the project's
+own words, used everywhere and defined nowhere else:
 
 - **case** — one input run: an `(argv, stdin)` pair plus the trace it
   produced, persisted per task as `trace_<label>.json`. The unit experiments
@@ -430,12 +429,17 @@ preserving out-of-scope entries.
 
 `analyze.function_insns` is the single loader (elftools + capstone detail).
 `analyze.analyze_function(binary, functions)` returns per-function
-`{arity_guess, returns_hint, callees, labeled}`: arity from pure-read SysV
-arg-register families in the preamble plus pass-through credit at the first
-resolved call; returns-hint from an eax write in a ret-terminated block or a
-leading accumulator-init; callees from direct `call rel32` targets resolved
-against manifest addresses. Validated against the full corpus matrix by test;
-labeled a guess in payload.
+`{arity_guess, returns_hint, callees, labeled}`. The arity guess reads the
+preamble (everything up to the first resolved call site): a SysV arg register
+counts as an argument only if it is *purely* read — read, never read-write —
+before any write into its alias group. Read-write uses (like `cdq`/`idiv` on
+edx) are excluded, since implicit-instruction scratch would fake an argument.
+Thin wrappers earn the second piece: at the first resolved call, any of the
+callee's own argument groups that this function never writes count as
+pass-throughs (e.g. `check_pw`). `returns_hint` fires on an eax write in a
+ret-terminated block or a leading accumulator-init; `callees` resolve direct
+`call rel32` targets against manifest addresses. Validated against the full
+corpus matrix by test; labeled a guess in payload.
 
 ### memory.py — deduction cache
 

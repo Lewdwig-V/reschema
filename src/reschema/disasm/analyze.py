@@ -6,12 +6,13 @@ semantics are unchanged. Rules were validated against the full corpus matrix
 (48 build slots x seed functions with known call graphs):
 
 - callees: exact (direct `call` rel32 targets resolved via manifest addresses).
-- arity: SysV arg-register families READ (purely, not read-write) before any
-  family write, scanning the preamble up to the first call site; plus
-  pass-through credit at the first resolved call for callee-arg families never
-  written here (tail-call/thin-wrapper shapes like check_pw). Read-write ops are
-  excluded so implicit-instruction scratch (cdq/idiv edx) can't fake an arg.
-- returning hint: an eax-family write in any basic block ending in ret (value
+- arity: arg-register GROUPS (an arg register and its narrower aliases, e.g.
+  rdi/edi/di/dil) READ (purely, not read-write) before any write into the
+  group, scanning the preamble up to the first call site; plus pass-through
+  credit at the first resolved call for callee-arg groups never written here
+  (tail-call/thin-wrapper shapes like check_pw). Read-write ops are excluded
+  so implicit-instruction scratch (cdq/idiv edx) can't fake an arg.
+- returning hint: an eax-group write in any basic block ending in ret (value
   materialized at the epilogue) OR a leading reg/imm-sourced eax write in the
   first 4 instructions (accumulator-init shapes, e.g. clang -O2 sum_range).
 """
@@ -25,7 +26,8 @@ from capstone import CS_AC_READ, CS_AC_WRITE
 from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_OP_REG
 from elftools.elf.elffile import ELFFile
 
-# SysV int-arg register families, in argument order.
+# SysV int-arg register alias groups, in argument order (NOT "families" —
+# ARCHITECTURE.md reserves that word for seed-level task families).
 BAREGS = (
     ("rdi", "edi", "di", "dil"),
     ("rsi", "esi", "si", "sil"),
@@ -86,7 +88,7 @@ def disasm_function(binary: str | Path, addr: int, size: int) -> str:
 
 
 def _direct_fams(ii: list) -> tuple[set, set]:
-    """Arg families pure-read before written, preamble (pre-first-call)."""
+    """Arg alias groups pure-read before written, preamble (pre-first-call)."""
     fam, written = set(), set()
     for ins in ii:
         if ins.mnemonic == "call":

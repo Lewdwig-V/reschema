@@ -596,6 +596,22 @@ against the (non-public) original plans is kept as history, subordinate.
   (`dep_slice` in event/files divergences), name-independent topology
   digests on `verified_fact` entries, and the function-mode scout probe
   (one emulated call, no case persisted).
+- **Harness capabilities are runtime-agnostic by construction** — the five
+  anti-lock-in principles of issue #86 audited against the shipped code; four
+  are already structural, one is deferred. (1) Capabilities hold no
+  orchestrator state: `mcp/server.py` is dispatch-only, the engine owns all
+  tool logic, and the dogfood `AgentRunner` Protocol already drives the same
+  five tools from a second, unrelated harness. (2) The transport boundary is
+  MCP over stdio, consumable by any compliant client. (3) Tool contracts ship
+  as JSON Schema on the wire: `tools/list` serves every tool's `inputSchema`;
+  the Python type hints are an authoring surface, never the contract a client
+  binds to, and the contract test pins description coverage. (4) Side-effects
+  execute out-of-process: every compile/execution inside one-shot rootless
+  podman containers, emulation against a fresh empty rootfs, host gcc never
+  in the trust surface. (5) Prompt-as-a-skill is the one open gap: procedural
+  coaching ships today as structured payload fields (`repair_directive`,
+  family-memory injection) and contract-pinned tool descriptions, not as MCP
+  `prompts`/`resources` — tracked as issue #88.
 - **Scope guardrails observed** — x86-64 static ELFs only, ≤6 register
   integer args (no stack args, no structs/floats), no multi-arch, packing, or
   symbolic equivalence; no branch coverage (explicitly cut).

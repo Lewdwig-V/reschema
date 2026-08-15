@@ -174,8 +174,8 @@ Deterministic; this is the wiring proof only (§4).
 this protocol end-to-end with a real agent:
 
 ```bash
-export RESCHEMA_2C_ENDPOINT=http://<model-box>/v1  # OpenAI-compatible stack
-export RESCHEMA_2C_MODEL=<checkpoint-name>
+export RESCHEMA_DOGFOOD_ENDPOINT=http://<model-box>/v1  # OpenAI-compatible stack
+export RESCHEMA_DOGFOOD_MODEL=<checkpoint-name>
 uv run python -m tools.dogfood.driver tools/dogfood/campaigns/floor.toml \
     --out docs/benchmark-results/2c/<run-id> [--pool 4]
 ```

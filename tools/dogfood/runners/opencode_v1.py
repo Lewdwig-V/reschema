@@ -75,6 +75,12 @@ class OpenCodeV1Runner:
             json.dumps(
                 {
                     "$schema": "https://opencode.ai/config.json",
+                    # snapshot machinery git-adds the WHOLE discovered worktree
+                    # per session into _home — against a staging area this is
+                    # quadratic churn (observed: agents starved by 100%-CPU
+                    # snapshot gits, 12GB/219k files in 40 min). Undo history
+                    # is invisible to a tool-gated agent; kill it.
+                    "snapshot": False,
                     "model": f"local/{cfg.model}",
                     "provider": {
                         "local": {

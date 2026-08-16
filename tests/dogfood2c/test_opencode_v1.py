@@ -62,6 +62,7 @@ def test_session_config_containment_keys(tmp_path):
     assert prov["npm"] == "@ai-sdk/openai-compatible"
     assert prov["options"]["baseURL"] == "http://lan:11434/v1"
     assert prov["models"] == {"gemma4": {}}  # else local/gemma4 won't resolve
+    assert c["snapshot"] is False  # no worktree git-jobs starving the agent
     mcp = c["mcp"]["reschema"]
     assert mcp["type"] == "local"
     assert mcp["command"] == ["uv", "run", "python", "-m", "reschema.mcp.server"]

@@ -22,7 +22,7 @@ from ..engine import (
     submit_function,
     submit_program,
 )
-from ..memory import read_family
+from ..memory import present, read_family
 from ..validate.function import N_FUZZ
 
 server = MCPServer("reschema")
@@ -83,12 +83,18 @@ def task_open(task_id: str, function: str | None = None) -> dict:
       with provenance tier), and when the task has rejection history,
       `repair_directive` (two-pass coaching: abstract bit-logic repair FIRST,
       idiomatic/semantic refinement only after acceptance — guidance, not a
-      verified fact)."""
+      verified fact).
+    Memory presentation (both modes): on a non-empty cache, `memory_provenance`
+      is constant harness framing (verified facts are harness-written, not
+      agent-claimed); when the cache holds a verified_fact, `ready_to_submit`
+      carries its source (plus params in function mode) as a copy-paste card.
+    """
     try:
         st = TaskStore(task_id)
         if function:
             return open_function_task(st, function)
         m = st.meta
+        mem = read_family(m["seed"], fn="__main__")
         return {
             "task_id": task_id,
             "seed": m["seed"],
@@ -97,7 +103,9 @@ def task_open(task_id: str, function: str | None = None) -> dict:
             "stripped": m["stripped"],
             "functions": m["functions"],
             "input": "stdin" if m["seed"] in STDIN_DRIVEN else "argv",
-            "memory": read_family(m["seed"], fn="__main__"),
+            "memory": mem,
+            # #92/#93: presentation tier, additive over the raw memory list
+            **present(mem),
         }
     except KeyError as e:
         return _err(e)

@@ -503,9 +503,11 @@ def _repair_directive(store: TaskStore) -> dict | None:
 
 def open_function_task(store: TaskStore, func: str) -> dict:
     from .disasm.analyze import analyze_function, disasm_function
+    from .memory import present
 
     f = _fn_meta(store, func)
     facts = analyze_function(store.meta["binary"], store.meta["functions"])[func]
+    mem = read_family(store.meta["seed"], fn=func)
     out = {
         "task_id": store.meta["task_id"],
         "function": func,
@@ -518,7 +520,9 @@ def open_function_task(store: TaskStore, func: str) -> dict:
         },
         "callees": facts["callees"],
         "abi_template": _abi_template(func, facts),
-        "memory": read_family(store.meta["seed"], fn=func),
+        "memory": mem,
+        # #92/#93: memory_provenance framing + ready_to_submit card, additive
+        **present(mem),
     }
     d = _repair_directive(store)
     if d is not None:

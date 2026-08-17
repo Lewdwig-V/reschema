@@ -16,9 +16,14 @@ import hashlib
 # tasks, answer-free, task-free. Exempt from FORBIDDEN_TERMS by name — pinned
 # exactly in test_prompt so any edit is a visible configuration change.
 # NO double quotes here: the dogfood test fakes split the task_id on '"'.
+# The hook keys on `ready_to_submit`, NOT `memory`: the memory key is present
+# (as []) on COLD slots, so conditioning the affordance on it would tell cold
+# agents to reuse what doesn't exist (codex P2 on #97). ready_to_submit is
+# emitted only when the cache holds a verified fact (#92) — the affordance is
+# truthful exactly when it is actionable.
 AFFORDANCE_LINE = (
     "The harness remembers verified results across related tasks; when "
-    "`task_open` shows `memory`, reusing it is the cheapest path."
+    "`task_open` shows `ready_to_submit`, reusing it is the cheapest path."
 )
 
 # Stems, not words: morphology must not evade the lint ("submission"

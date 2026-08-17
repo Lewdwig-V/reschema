@@ -150,6 +150,10 @@ def run_slot(
         endpoint=run_header.get("endpoint"),
         sandbox=root / "sandbox",
         run_root=root,
+        # per-slot transcript (#94): primed chains share the sandbox, so the
+        # record's stem (unique per slot) names the log — every chain slot's
+        # session survives on disk
+        transcript=f"transcript-{spec.result_stem}.log",
     )
     cfg.sandbox.mkdir(parents=True, exist_ok=True)
     # corpus identity + prompt + driver revision are comparability evidence

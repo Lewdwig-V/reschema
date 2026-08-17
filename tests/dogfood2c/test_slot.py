@@ -1,10 +1,12 @@
 import hashlib
 import json
+import stat
 import subprocess
 from pathlib import Path
 
 from tools.dogfood.prompt import template_hash
 from tools.dogfood.runners.base import SlotSpec
+from tools.dogfood.runners.opencode_v1 import OpenCodeV1Runner
 from tools.dogfood.slot import SlotGuard, _driver_revision, layout_root, run_slot
 
 from .fakes import FakeRunner, PreflightFakeRunner
@@ -336,3 +338,87 @@ def test_run_slot_wipes_stale_task_ledger_before_spawn(tmp_path, stub_corpus):
     # and the dirty "accepted" must not survive to spawn: no instant
     # pre-spawn acceptance off a ledger the fresh agent never wrote
     assert runner.stale_at_spawn is False
+
+
+# --- #94: per-slot transcripts in chain-shared sandboxes ---
+
+RECORD_KEYS = 15  # the one JSONL record shape; schema untouched by the fix
+
+
+class _EchoRunner(OpenCodeV1Runner):
+    """Real spawn/wait plumbing, no endpoint: a stub binary echoes its argv
+    (the rendered prompt carries the task_id) and exits immediately."""
+
+    def preflight(self, cfg):
+        return {}
+
+
+def _echo_binary(tmp_path):
+    p = tmp_path / "stub-opencode"
+    p.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+    p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return str(p)
+
+
+def _chain_spec(idx):
+    slot = f"gcc-O{idx}-sym"
+    return SlotSpec(
+        family="rot13",
+        condition="primed",
+        slot=slot,
+        slot_index=idx,
+        rep=1,
+        task_id=f"rot13::{slot}",
+    )
+
+
+def _run(spec, tmp_path, corpus):
+    return run_slot(
+        spec,
+        campaign_dir=tmp_path / "runs",
+        runner=_EchoRunner(binary=_echo_binary(tmp_path)),
+        corpus_source=corpus,
+        guards=SlotGuard(timeout_s=30, probe_ceiling=5),
+        poll_s=0,
+    )
+
+
+def test_chain_slots_keep_separate_transcripts(tmp_path, stub_corpus):
+    # #94: the shared chain sandbox must hold ALL slots' session logs —
+    # previously spawn("wb") truncated the one transcript.log per slot.
+    out0 = _run(_chain_spec(0), tmp_path, stub_corpus)
+    out1 = _run(_chain_spec(1), tmp_path, stub_corpus)
+    rec0, rec1 = json.loads(out0.read_text()), json.loads(out1.read_text())
+    assert len(rec0) == len(rec1) == RECORD_KEYS  # schema untouched
+
+    sandbox = tmp_path / "runs" / "rot13-primed-r1" / "sandbox"
+    t0 = sandbox / "transcript-rot13-primed-gcc-O0-sym-r1-s0.log"
+    t1 = sandbox / "transcript-rot13-primed-gcc-O1-sym-r1-s1.log"
+    assert t0.exists() and t1.exists()  # both slots preserved...
+    assert "rot13::gcc-O0-sym" in t0.read_text()
+    assert "rot13::gcc-O1-sym" in t1.read_text()
+    # ...and distinguishable: each log holds ONLY its own slot's session
+    assert "rot13::gcc-O1-sym" not in t0.read_text()
+    assert "rot13::gcc-O0-sym" not in t1.read_text()
+    # per-slot tails still reach the per-slot records
+    assert "rot13::gcc-O0-sym" in rec0["transcript_tail"]
+    assert "rot13::gcc-O1-sym" in rec1["transcript_tail"]
+
+
+def test_rerun_truncates_only_its_own_transcript(tmp_path, stub_corpus):
+    # #94 resume idempotence: re-running a slot must NOT resurrect/stitch a
+    # stale transcript (same correctness shape as the stale-ledger wipe).
+    _run(_chain_spec(0), tmp_path, stub_corpus)
+    _run(_chain_spec(1), tmp_path, stub_corpus)
+    sandbox = tmp_path / "runs" / "rot13-primed-r1" / "sandbox"
+    t0 = sandbox / "transcript-rot13-primed-gcc-O0-sym-r1-s0.log"
+    t1 = sandbox / "transcript-rot13-primed-gcc-O1-sym-r1-s1.log"
+    before = t1.read_text()
+    t0.write_text("STALE-SESSION-JUNK\n")
+
+    _run(_chain_spec(0), tmp_path, stub_corpus)  # resume slot 0
+
+    fresh = t0.read_text()
+    assert "STALE-SESSION-JUNK" not in fresh  # re-truncated, not appended
+    assert "rot13::gcc-O0-sym" in fresh
+    assert t1.read_text() == before  # sibling slot's log untouched

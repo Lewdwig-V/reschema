@@ -1,10 +1,25 @@
 """The ONE neutral task prompt. Protocol words are contamination: a prompt
 that coaches probe/submission strategy is solver scaffolding (#63 class) and
-invalidates the free-run measurement. The forbidden list is lint-tested."""
+invalidates the free-run measurement. The forbidden list is lint-tested —
+with ONE sanctioned exception: AFFORDANCE_LINE (#91, config B). Small agents
+don't infer the memory-reuse affordance from a raw JSON key, so the prompt
+spends exactly one sentence on the protocol surface it can't discover. The
+exact string and the template digest are pinned in tests/dogfood2c/
+test_prompt.py; drift there is a deliberate §5 configuration change (config A
+= the blind prompt, config B = + the affordance line)."""
 
 from __future__ import annotations
 
 import hashlib
+
+# The ONE sanctioned protocol-affordance sentence (#91): constant across
+# tasks, answer-free, task-free. Exempt from FORBIDDEN_TERMS by name — pinned
+# exactly in test_prompt so any edit is a visible configuration change.
+# NO double quotes here: the dogfood test fakes split the task_id on '"'.
+AFFORDANCE_LINE = (
+    "The harness remembers verified results across related tasks; when "
+    "`task_open` shows `memory`, reusing it is the cheapest path."
+)
 
 # Stems, not words: morphology must not evade the lint ("submission"
 # vs "submissions", "prime/primed/priming"). Short stems like "prim"
@@ -29,12 +44,14 @@ Work only through the tools provided to you. Open the task, learn its
 contract, and work until the engine accepts your model. Your ledger is your
 record of what you have tried.
 
+{affordance_line}
+
 When the task is accepted, stop. Do not take any further actions.
 """
 
 
 def render(task_id: str) -> str:
-    return _TEMPLATE.format(task_id=task_id)
+    return _TEMPLATE.format(task_id=task_id, affordance_line=AFFORDANCE_LINE)
 
 
 def template_hash() -> str:

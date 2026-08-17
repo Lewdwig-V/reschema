@@ -160,6 +160,19 @@ real agent.) Section 6's rerun procedure is where the actual result lives.
   prompt edit, added skill/scaffolding, tool-description change) is a
   configuration change: it belongs in the run header, and numbers across
   configuration changes are not comparable without rerun.
+- **Prompt configuration family (A/B).** Two prompt/presentation
+  configurations exist. **Config A** (blind prompt): `prompt_sha256 =
+  797261d7…f6207` — the 2026-08-16 gemma4:26b floor. **Config B** (#91–#93):
+  the prompt gains one sanctioned memory-reuse affordance sentence, and
+  `task_open` gains `ready_to_submit`/`memory_provenance` presentation over
+  the same unchanged deduction cache — `prompt_sha256 = f17d4c5e…dea72`.
+  B exists because A conflated transfer with protocol literacy: small agents
+  did not infer the reuse affordance from raw `memory` JSON. Cache
+  keying/semantics and gate strictness are identical across A/B; the
+  CI reference run (`tests/test_transfer_protocol.py`) is the wiring control
+  for both. Median φ, wasted-submission counts, and agent-exit rates are
+  comparable only within one configuration; a claim that mixes A and B floors
+  must say so via the run header's `prompt_sha256`.
 - **Corpus reproducibility.** Builds run inside the pinned toolchain image to
   minimize machine variance, but byte-reproducibility of corpus binaries
   across machines is unverified. Record the manifest hash and

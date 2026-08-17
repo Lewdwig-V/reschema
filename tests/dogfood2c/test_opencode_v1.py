@@ -62,10 +62,15 @@ def test_session_config_containment_keys(tmp_path):
     assert prov["npm"] == "@ai-sdk/openai-compatible"
     assert prov["options"]["baseURL"] == "http://lan:11434/v1"
     assert prov["models"] == {"gemma4": {}}  # else local/gemma4 won't resolve
+    assert c["snapshot"] is False  # no worktree git-jobs starving the agent
     mcp = c["mcp"]["reschema"]
     assert mcp["type"] == "local"
     assert mcp["command"] == ["uv", "run", "python", "-m", "reschema.mcp.server"]
-    assert mcp["environment"]["RESCHEMA_HOME"] == str(cfg.run_root)
+    # ABSOLUTE: the MCP child resolves relative values against opencode's
+    # project-root cwd, not the sandbox — a relative path would plant slot
+    # state in the checkout's .reschema/
+    assert os.path.isabs(mcp["environment"]["RESCHEMA_HOME"])
+    assert mcp["environment"]["RESCHEMA_HOME"] == str(cfg.run_root.resolve())
 
 
 def test_kill_makes_wait_return_with_timeout_kind(tmp_path):
@@ -111,11 +116,17 @@ def test_spawn_env_isolates_opencode_from_global_config(tmp_path, monkeypatch):
     r.prepare(cfg)
     r.spawn("p")
     env = captured["env"]
-    home = cfg.sandbox / "_home"
+    home = cfg.sandbox.resolve() / "_home"
     assert env["HOME"] == str(home) and env["HOME"] != os.environ["HOME"]
     assert env["XDG_CONFIG_HOME"] == str(home / ".config")
     assert env["XDG_DATA_HOME"] == str(home / ".local/share")
-    assert env["OPENCODE_CONFIG"] == str(cfg.sandbox / "opencode.json")
+    assert env["OPENCODE_CONFIG"] == str(cfg.sandbox.resolve() / "opencode.json")
+    # the v1.18 child anchors its cwd at the project root it discovers —
+    # RELATIVE pins resolve there, the config file is silently missed, and
+    # opencode falls back to the developer-global config (wrong model, full
+    # built-in tools). Absoluteness is the containment contract.
+    for k in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "OPENCODE_CONFIG"):
+        assert os.path.isabs(env[k])
     for k in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"):
         assert env[k].startswith(str(cfg.sandbox))  # nothing leaks outside
     assert env["PATH"] == os.environ["PATH"]  # everything else inherits
@@ -191,7 +202,9 @@ def test_preflight_request_shapes(tmp_path, monkeypatch):
     method, data = by_path["completions"]
     assert method == "POST"
     body = json.loads(data)
-    assert "messages" in body and body["max_tokens"] == 1
+    # strict stacks (ollama) 400 on empty messages — a `[]` regression must
+    # fail here, not surface as infra-error in every live slot record
+    assert body["messages"] and body["max_tokens"] == 1
 
 
 def test_post_surfaces_http_error_status(monkeypatch):

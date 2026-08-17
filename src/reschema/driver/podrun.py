@@ -9,6 +9,8 @@ hard refusal, never a native fallback.
 from __future__ import annotations
 
 import json
+import os
+import pwd
 import subprocess
 from pathlib import Path
 
@@ -19,11 +21,27 @@ BUILD_CMD = "podman build -t localhost/reschema-toolchain:1 -f Containerfile ."
 _SRC = Path(__file__).resolve().parents[2]
 
 
+def _podman_env() -> dict[str, str]:
+    """Rootless podman keys its image store off XDG_DATA_HOME — which the 2C
+    dogfood runner RELOCATES (HOME/XDG pins isolate opencode's config layers
+    into the sandbox). Under that env, `podman image exists` consults a fresh
+    empty store and would hard-refuse every level-B gate (and the pinned image
+    is localhost/-only, so it can never be pulled to fix itself). The image is
+    per-ACCOUNT infra — built once, shared across all slots and campaigns; it
+    is not protocol state (that lives in RESCHEMA_HOME) — so resolve the real
+    account home via getpwuid(2), never the ambient, pinnable $HOME."""
+    real = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    return {**os.environ, "XDG_DATA_HOME": str(real / ".local" / "share")}
+
+
 def ensure_image() -> None:
     try:
         missing = (
             subprocess.run(
-                ["podman", "image", "exists", IMAGE], capture_output=True, check=False
+                ["podman", "image", "exists", IMAGE],
+                capture_output=True,
+                check=False,
+                env=_podman_env(),
             ).returncode
             != 0
         )
@@ -81,6 +99,7 @@ def run_worker(job: dict, workdir: Path, timeout: int | None = None) -> dict:
         capture_output=True,
         timeout=timeout,
         check=False,
+        env=_podman_env(),
     )
     if p.returncode != 0:
         return {

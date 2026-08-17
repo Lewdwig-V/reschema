@@ -61,7 +61,7 @@ Containerfile .`. No host `gcc`/`strip` is needed (or used) anywhere.
 ```bash
 uv run python -m tools.dogfood.driver tools/dogfood/campaigns/smoke.toml \
     --out results/smoke          # [--pool N]; needs an opencode binary, an
-                                 # endpoint (RESCHEMA_2C_ENDPOINT), and
+                                 # endpoint (RESCHEMA_DOGFOOD_ENDPOINT), and
                                  # .reschema/corpus (`uv run python -m
                                  # reschema.corpus.generate` first)
 ```

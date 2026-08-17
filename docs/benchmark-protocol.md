@@ -174,10 +174,17 @@ Deterministic; this is the wiring proof only (§4).
 this protocol end-to-end with a real agent:
 
 ```bash
-export RESCHEMA_2C_ENDPOINT=http://<model-box>/v1  # OpenAI-compatible stack
-export RESCHEMA_2C_MODEL=<checkpoint-name>
+export RESCHEMA_DOGFOOD_ENDPOINT=http://<model-box>/v1  # OpenAI-compatible stack
+export RESCHEMA_DOGFOOD_MODEL=<checkpoint-name>
+# STAGE under the gitignored /results/ root, then PUBLISH — never point --out
+# directly at docs/benchmark-results/2c/: the runner's slot agents snapshot
+# the whole worktree per session (opencode), and a tracked --out makes that
+# quadratic (recorded: 12 GB / 219k files of snapshot churn in 40 min, agents
+# CPU-starved). Publishing = copying the flat records + reports only.
 uv run python -m tools.dogfood.driver tools/dogfood/campaigns/floor.toml \
-    --out docs/benchmark-results/2c/<run-id> [--pool 4]
+    --out results/2c-floor-<run-id> [--pool 3]
+cp results/2c-floor-<run-id>/*.jsonl results/2c-floor-<run-id>/report-*.md \
+    docs/benchmark-results/2c/<run-id>/
 ```
 
 What the driver guarantees (the protocol's own invariants, now enforced by

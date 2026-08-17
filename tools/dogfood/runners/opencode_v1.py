@@ -8,6 +8,7 @@ import signal
 import subprocess
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from .base import AgentOutcome, RunnerConfig
 
@@ -30,10 +31,17 @@ class OpenCodeV1Runner:
         the slot is (correctly, if flakily) recorded as infra-error."""
         base = (cfg.endpoint or "").rstrip("/")
         status, _ = self._post(base, "/models", None)
+        # messages must be NON-EMPTY: strict OpenAI-compatible stacks (ollama
+        # 0.32 rejects `[]` with 400) treat an empty list as a request error,
+        # which would masquerade as a dead endpoint in every slot record
         status2, _ = self._post(
             base,
             "/chat/completions",
-            {"model": cfg.model, "messages": [], "max_tokens": 1},
+            {
+                "model": cfg.model,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 1,
+            },
         )
         if status != 200 or status2 != 200:
             raise RuntimeError(f"endpoint unavailable: {status}/{status2}")
@@ -67,6 +75,12 @@ class OpenCodeV1Runner:
             json.dumps(
                 {
                     "$schema": "https://opencode.ai/config.json",
+                    # snapshot machinery git-adds the WHOLE discovered worktree
+                    # per session into _home — against a staging area this is
+                    # quadratic churn (observed: agents starved by 100%-CPU
+                    # snapshot gits, 12GB/219k files in 40 min). Undo history
+                    # is invisible to a tool-gated agent; kill it.
+                    "snapshot": False,
                     "model": f"local/{cfg.model}",
                     "provider": {
                         "local": {
@@ -101,7 +115,13 @@ class OpenCodeV1Runner:
                                 "-m",
                                 "reschema.mcp.server",
                             ],
-                            "environment": {"RESCHEMA_HOME": str(cfg.run_root)},
+                            # ABSOLUTE: the MCP process is spawned under
+                            # opencode's project-root cwd, not the sandbox —
+                            # a relative RESCHEMA_HOME would resolve there and
+                            # write slot state into the checkout's .reschema/
+                            "environment": {
+                                "RESCHEMA_HOME": str(Path(cfg.run_root).resolve())
+                            },
                         }
                     },
                 },
@@ -117,14 +137,21 @@ class OpenCodeV1Runner:
         # (MCP servers, plugins, tools) would silently survive alongside the
         # sandbox config. No env var disables the global layer — pin HOME/XDG
         # at a sandbox-private dir, plus OPENCODE_CONFIG as the belt.
-        home = cfg.sandbox / "_home"
+        home = cfg.sandbox.resolve() / "_home"
         home.mkdir(parents=True, exist_ok=True)
+        # EVERY pin must be ABSOLUTE. The child resolves relative values
+        # against ITS cwd — and v1.18 anchors the cwd at the project (git)
+        # root it discovers, not the Popen cwd we pass. A relative
+        # OPENCODE_CONFIG is then silently missed, opencode falls back to the
+        # developer-global config, and the slot runs the WRONG model with
+        # FULL built-in tools (observed: gemma campaign quietly ran the
+        # global remote provider and read the checkout's .reschema/).
         env = {
             **os.environ,
             "HOME": str(home),
             "XDG_CONFIG_HOME": str(home / ".config"),
             "XDG_DATA_HOME": str(home / ".local/share"),
-            "OPENCODE_CONFIG": str(cfg.sandbox / "opencode.json"),
+            "OPENCODE_CONFIG": str(cfg.sandbox.resolve() / "opencode.json"),
         }
         with open(cfg.sandbox / TRANSCRIPT, "wb") as out:  # child dup's the fd
             self._p = subprocess.Popen(

@@ -113,8 +113,8 @@ def run_campaign(
             singles.append(s)
 
     run_header = {
-        "model": os.environ.get("RESCHEMA_2C_MODEL", "gemma4"),
-        "endpoint": os.environ.get("RESCHEMA_2C_ENDPOINT"),
+        "model": os.environ.get("RESCHEMA_DOGFOOD_MODEL", "gemma4:26b"),
+        "endpoint": os.environ.get("RESCHEMA_DOGFOOD_ENDPOINT"),
         # corpus identity + prompt + driver revision must reach even the
         # SYNTHETIC priming-failed records (run_slot re-derives the same
         # values from its mounted copies for real slot records)
@@ -240,9 +240,9 @@ def main(argv: list[str] | None = None) -> int:
             "no corpus manifest at .reschema/corpus/manifest.json — run "
             "`uv run python -m reschema.corpus.generate` first"
         )
-    if not os.environ.get("RESCHEMA_2C_ENDPOINT"):
+    if not os.environ.get("RESCHEMA_DOGFOOD_ENDPOINT"):
         raise SystemExit(
-            "RESCHEMA_2C_ENDPOINT is not set — point it at an OpenAI-compatible "
+            "RESCHEMA_DOGFOOD_ENDPOINT is not set — point it at an OpenAI-compatible "
             "base URL (preflight checks /models and /chat/completions)"
         )
     rc = run_campaign(

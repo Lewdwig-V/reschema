@@ -192,10 +192,10 @@ def test_main_refuses_without_endpoint(tmp_path, monkeypatch):
     corpus.mkdir(parents=True)
     (corpus / "manifest.json").write_text("[]")
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("RESCHEMA_2C_ENDPOINT", raising=False)
+    monkeypatch.delenv("RESCHEMA_DOGFOOD_ENDPOINT", raising=False)
     cfg = tmp_path / "c.toml"
     cfg.write_text(SMOKE)
-    with pytest.raises(SystemExit, match="RESCHEMA_2C_ENDPOINT"):
+    with pytest.raises(SystemExit, match="RESCHEMA_DOGFOOD_ENDPOINT"):
         main([str(cfg), "--out", str(tmp_path / "out")])
 
 

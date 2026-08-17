@@ -6,6 +6,7 @@ single-process (or out-of-band serialized) access is assumed.
 
 from __future__ import annotations
 
+import difflib
 import json
 import math
 import os
@@ -175,6 +176,101 @@ def _journal(led: dict, event: dict) -> None:
     del led["recent"][:-16]
 
 
+# --- near-duplicate resubmission guard (#95, the flail guard) ---------------
+# Live smoke: small agents resubmit near-identical broken sources in a loop
+# (comment churn, one edited line, syntactically incomplete), each pass paying
+# a compile+replay round and the β E-decay. The guard fingerprints every
+# GATE-rejected source (spec rejects excluded: the source was never judged)
+# and refuses a candidate whose normalized shape has looped too often. Two
+# bands, because text alone cannot tell verbatim churn from the legitimate
+# minimal repair (codex P2 on #99):
+#   * EXACT band (normalized diff 0): resubmitting a byte-shape already
+#     gate-rejected twice is zero-information — refused outright.
+#   * NEAR band (0 < diff <= threshold): a small CODE edit may BE the correct
+#     one-char repair, which only the gate can judge — it always gets runway,
+#     refused only after the shape's THIRD rejection.
+# Blocking verbatim-ish loops, not paraphrase: an agent that really changes
+# approach sails past the threshold (reformatting is not an evasion, per the
+# issue's caution).
+DUP_DIFF_FLOOR = 24  # chars: near-dup at-or-below this absolute edit mass
+DUP_DIFF_FRAC = 0.06  # ... or this fraction of the candidate's length
+DUP_MIN_REJECTS = 2  # EXACT-band: refuse from the 3rd verbatim resubmission loop
+DUP_MIN_NEAR_REJECTS = 3  # NEAR-band: refuse from the 4th edited-variant loop
+DUP_STORE = 8  # fingerprints kept per task ledger (recent flail is the target)
+
+
+def _norm_source(src: str) -> str:
+    """Comment/whitespace-stripped fingerprint, string-literal aware.
+
+    A heuristic, not a parse: deterministic and crash-free on any input.
+    `//`/`/* */` sequences INSIDE literals survive; outside they die."""
+    out, i, n = [], 0, len(src)
+    while i < n:
+        c = src[i]
+        if c in "\"'":  # literal: copy through its closing quote (or EOF)
+            j = i + 1
+            while j < n:
+                if src[j] == "\\":
+                    j += 2
+                    continue
+                if src[j] == c:
+                    break
+                j += 1
+            out.append(src[i : j + 1])
+            i = j + 1
+        elif src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j == -1 else j + 1
+        elif src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            i = n if j == -1 else j + 2
+        elif not c.isspace():
+            out.append(c)
+            i += 1
+        else:
+            i += 1
+    return "".join(out)
+
+
+def _char_diff(a: str, b: str) -> int:
+    """Edit mass between normalized sources: chars added/removed/replaced."""
+    sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    return sum(
+        max(i2 - i1, j2 - j1)
+        for tag, i1, i2, j1, j2 in sm.get_opcodes()
+        if tag != "equal"
+    )
+
+
+def _flail_verdict(fingerprints: list[str], cand: str) -> tuple[int, int] | None:
+    """-> (match count, min edit mass) when cand is a refused loop, else None.
+
+    Two bands: EXACT (diff 0) matches refuse at DUP_MIN_REJECTS — nothing
+    semantics-bearing can be new. NEAR matches (0 < diff <= threshold) count
+    toward DUP_MIN_NEAR_REJECTS — a small code edit might be the legitimate
+    minimal fix and gets one extra repair attempt's runway before the loop
+    is killed."""
+    threshold = max(DUP_DIFF_FLOOR, int(len(cand) * DUP_DIFF_FRAC))
+    exact, near = 0, []
+    for fp in fingerprints:
+        d = _char_diff(fp, cand)
+        if d == 0:
+            exact += 1
+        elif d <= threshold:
+            near.append(d)
+    if exact >= DUP_MIN_REJECTS:
+        return exact + len(near), 0
+    if exact + len(near) >= DUP_MIN_NEAR_REJECTS:
+        return exact + len(near), min(near)
+    return None
+
+
+def _fingerprint_reject(led: dict, c_source: str) -> None:
+    fps = led.setdefault("rejected_norm", [])
+    fps.append(_norm_source(c_source))
+    del fps[:-DUP_STORE]
+
+
 def status_snapshot(store: TaskStore) -> dict:
     """Ledger+manifest status: readiness, coverage, validation telemetry."""
     led = store.ledger()
@@ -229,6 +325,7 @@ def submit_program(
     def reject(**kw):
         led["rejections"] += 1
         _record_notes(store, "__main__", notes, promoted=False)
+        _fingerprint_reject(led, c_source)  # every program reject is a code verdict
         _journal(
             led,
             {
@@ -239,6 +336,17 @@ def submit_program(
         )
         store.save_ledger(led)
         return {"accepted": False, **kw}
+
+    verdict = _flail_verdict(led.get("rejected_norm", []), _norm_source(c_source))
+    if verdict is not None:  # flail loop, refused BEFORE the gate spend
+        n_dup, d_dup = verdict
+        return reject(
+            reason="duplicate",
+            detail=(
+                f"near-duplicate of {n_dup} earlier rejected submission(s) "
+                f"({d_dup} normalized-char diff) — change approach or stop"
+            ),
+        )
 
     ok, err = compile_model(c_source, model)
     if not ok:
@@ -499,6 +607,33 @@ def submit_function(
         )
         store.save_ledger(led)
         return {"accepted": False, "reason": "spec", "detail": str(e)}
+    # Flail guard (#95): same shape as the program path, refused before the
+    # fuzz VM spend. NOTE: spec rejects above are NOT fingerprinted — the
+    # source was never judged, only the declaration was.
+    verdict = _flail_verdict(led.get("rejected_norm", []), _norm_source(c_source))
+    if verdict is not None:
+        n_dup, d_dup = verdict
+        led["submissions"] += 1
+        led["rejections"] += 1
+        _fingerprint_reject(led, c_source)
+        _journal(
+            led,
+            {
+                "mode": "function",
+                "outcome": "reject",
+                "function": func,
+                "stage": "duplicate",
+            },
+        )
+        store.save_ledger(led)
+        return {
+            "accepted": False,
+            "reason": "duplicate",
+            "detail": (
+                f"near-duplicate of {n_dup} earlier rejected submission(s) "
+                f"({d_dup} normalized-char diff) — change approach or stop"
+            ),
+        }
     # ponytail: agent-controlled cost (fresh Qiling VM per case) — clamp runaway budgets
     n_fuzz = min(n_fuzz, 4 * N_FUZZ)
     v = validate_function(
@@ -515,6 +650,7 @@ def submit_function(
     _record_notes(store, func, notes, promoted=v.ok)
     if not v.ok:
         led["rejections"] += 1
+        _fingerprint_reject(led, c_source)  # gate verdict on the source itself
         _journal(
             led,
             {

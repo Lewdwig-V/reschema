@@ -227,9 +227,24 @@ Every agent-facing verdict is a typed dict. There are three shapes:
   fd-chain for event/files divergences).
 - Behavior divergences (function gate): `{accepted: false, divergence:
   {input, field, expected, actual, seed}}` with `field` in `ret|mem|crash`.
+- **Flail guard (`duplicate`, #95, both submit paths):** a candidate whose
+  comment/whitespace-stripped source fingerprint has looped too often on this
+  task is refused pre-gate as top-level `{accepted: false, reason:
+  "duplicate", detail}` (the detail names the match count and edit mass).
+  Two bands, because text alone cannot tell verbatim churn from the
+  legitimate minimal repair: EXACT normalized duplicates are refused from the
+  3rd submission of the shape (`DUP_MIN_REJECTS`); small EDITED variants
+  (edit mass ≤ max(24 chars, 6% of length)) get one extra repair attempt's
+  runway, refused from the 4th (`DUP_MIN_NEAR_REJECTS`) — a one-char fix
+  discovered after two flailed attempts always reaches the gate. Fingerprints
+  live in the task ledger's `rejected_norm` (string-literal-aware
+  normalization, capped at 8). Loop-killer, not paraphrase-blocker; spec
+  rejects are never fingerprinted (the source was never judged); guard
+  refusals count as submissions/rejections (E still prices the flail; the
+  guard saves the compile/fuzz wall-clock and endpoint tokens).
 - Mechanical rejects carry a human-readable `detail`, but its nesting depends
   on the path: program-gate mechanical rejects (`compile`,
-  `hidden-starvation`) return top-level `{accepted: false, reason, detail}`;
+  `hidden-starvation`, `duplicate`) return top-level `{accepted: false, reason, detail}`;
   function-gate floor verdicts from the validator (arity, void-without-
   memory-channel, skip-starvation, infra) nest it as `{accepted: false,
   divergence: {stage, detail}}` (skip-starvation also carries the fuzz
@@ -257,8 +272,9 @@ the cheap scout round before an agent commits recorded cases.
 
 `TaskStore` persists per-task state under `.reschema/tasks/<task_id>/`:
 canonical case traces (`trace_<label>.json`) and `ledger.json`
-(accepted entries, submissions/rejections counters, `audit` seeds, and a
-capped `recent` submission journal).
+(accepted entries, submissions/rejections counters, `audit` seeds, a
+capped `recent` submission journal, and the `rejected_norm` flail-guard
+fingerprints — see the rejection payload's `duplicate` entry).
 
 **Concurrency: single-process (or out-of-band serialized) access is
 assumed.** Ledger writes are atomic per file (temp + `os.replace`) but

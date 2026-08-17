@@ -226,6 +226,31 @@ def test_submit_function_void_scalar_only_counts_rejection(store):
     assert led["submissions"] == 1 and led["rejections"] == 1 and led["accepted"] == []
 
 
+def test_submit_function_empty_params_never_accepted_never_poisoned(
+    store, monkeypatch, tmp_path
+):
+    # ISSUE-100, the live smoke attack replayed: a live agent passed a BROKEN
+    # source with params:[] (64 identical zero-arg calls — a one-behavior-point
+    # coin flip) and the gate accepted + wrote a verified_fact. The gate must
+    # refuse at the spec floor, and the family cache must stay clean.
+    monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
+    smoke_garbage = (
+        "#include <stdint.h>\n"
+        "__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){"
+        "if(lo>hi) return lo%21; // Wait, I'll just use the right modulus.\n"
+        "// ...\n"
+        "return 0;}"
+    )
+    r = submit_function(store, "sum_range", [], smoke_garbage, seed=1, n_fuzz=8)
+    assert r["accepted"] is False
+    assert r["divergence"]["stage"] == "spec"
+    led = store.ledger()
+    assert led["submissions"] == 1 and led["rejections"] == 1 and led["accepted"] == []
+    from reschema.memory import read_family
+
+    assert read_family("calc", fn="sum_range", root=tmp_path) == []  # no poisoning
+
+
 def test_submit_function_link_failure_counts_rejection(store):
     # -shared link tolerates the undefined extern; the engine must account the
     # structured link-stage reject like any other failed validation.

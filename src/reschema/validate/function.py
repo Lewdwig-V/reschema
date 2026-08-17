@@ -3,7 +3,9 @@
 v1 compares per-field: spec-declared memory + return value (no syscalls); void specs
 skip ret (eax is register garbage, mem is their channel). The fuzz draw is
 fresh-entropy by default (mirrors submit_program: nothing precomputable); tests pin
-`seed` for determinism.
+`seed` for determinism. Never pass vacuously: no surviving cases (skip-starvation),
+and no input VARIATION — <2 distinct surviving inputs over the round (empty params,
+all-fixed-point ranges) is a spec-stage reject, not a verdict (#100).
 
 Containment: agent source compiles and executes ONLY inside the level-B podman
 worker (see ARCHITECTURE.md) — never in this process.
@@ -11,6 +13,7 @@ worker (see ARCHITECTURE.md) — never in this process.
 
 from __future__ import annotations
 
+import json
 import random
 import secrets
 import shutil
@@ -109,6 +112,35 @@ def validate_function(
             {
                 "stage": "skip-starvation",
                 "detail": f"original faulted on all {n_fuzz} fuzz cases",
+                "seed": effective_seed,
+            },
+            skipped=skipped,
+        )
+    distinct = {
+        json.dumps(
+            {
+                k: (v.hex() if isinstance(v, (bytes, bytearray)) else v)
+                for k, v in case.items()
+            },
+            sort_keys=True,
+        )
+        for case, _ in kept
+    }
+    if len(distinct) < 2:
+        # Same vacuity class as skip-starvation/void-floor, one door over: with
+        # <2 distinct surviving inputs the round tests ONE behavior point — a
+        # coin flip. Live smoke (#100): params=[] = 64 identical zero-arg calls
+        # accepted a broken source this way; fixed-point ranges and
+        # kept-collapse-to-1 are the same shape.
+        return FnVerdict(
+            False,
+            {
+                "stage": "spec",
+                "detail": (
+                    f"spec admits {len(distinct)} distinct surviving input(s) "
+                    f"over {n_fuzz} draws (need >=2) — declare at least one "
+                    "varying parameter"
+                ),
                 "seed": effective_seed,
             },
             skipped=skipped,

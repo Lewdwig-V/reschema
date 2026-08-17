@@ -342,6 +342,33 @@ def test_param_ret_json_roundtrip():
     assert Param.from_json({"name": "v", "kind": "i32"}).ret == "i32"
 
 
+def test_empty_params_vacuity_spec_rejected(manifest, tmp_path):
+    # ISSUE-100 (live smoke): params=[] made 64 identical zero-arg calls — a
+    # one-behavior-point comparison, i.e. a coin flip. The CORRECT source must
+    # be refused too: vacuity is a property of the spec, not the source.
+    binary, addr = _slot(manifest, "rot13", "rot13_char")
+    v = validate_function(
+        binary, addr, "rot13_char", [], GOOD_ROT, tmp_path / "m.so", seed=1, n_fuzz=4
+    )
+    assert not v.ok
+    assert v.divergence["stage"] == "spec"
+    assert "distinct" in v.divergence["detail"]
+
+
+def test_fixed_point_range_vacuity_spec_rejected(manifest, tmp_path):
+    # Same class, subtler trigger: pinning EVERY param to a point admits
+    # exactly one behavior point no matter how large n_fuzz is. (Fixing only
+    # one is legitimate — the others still vary.)
+    binary, addr = _slot(manifest, "calc", "sum_range")
+    params = [Param("lo", "i32", range=(5, 5)), Param("hi", "i32", range=(12, 12))]
+    v = validate_function(
+        binary, addr, "sum_range", params, MODEL, tmp_path / "m.so", seed=1, n_fuzz=4
+    )
+    assert not v.ok
+    assert v.divergence["stage"] == "spec"
+    assert "distinct" in v.divergence["detail"]
+
+
 def test_true_scale_buf_void_accepted(manifest, tmp_path):
     """Correct void scale_buf must pass on mem alone; comparing eax (register garbage)
     falsely rejects it — that is how the blocker shipped green."""

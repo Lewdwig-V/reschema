@@ -246,9 +246,9 @@ Every agent-facing verdict is a typed dict. There are three shapes:
   on the path: program-gate mechanical rejects (`compile`,
   `hidden-starvation`, `duplicate`) return top-level `{accepted: false, reason, detail}`;
   function-gate floor verdicts from the validator (arity, void-without-
-  memory-channel, skip-starvation, infra) nest it as `{accepted: false,
-  divergence: {stage, detail}}` (skip-starvation also carries the fuzz
-  `seed`); a malformed spec JSON fails before validation as top-level
+  memory-channel, no-input-variation spec, skip-starvation, infra) nest it as
+  `{accepted: false, divergence: {stage, detail}}` (skip-starvation also
+  carries the fuzz `seed`); a malformed spec JSON fails before validation as top-level
   `{accepted: false, reason: "spec", detail}`. Clients should read the reason
   from `divergence.stage` first and fall back to top-level `reason`.
 

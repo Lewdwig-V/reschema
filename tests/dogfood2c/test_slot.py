@@ -1,10 +1,12 @@
 import hashlib
 import json
+import stat
 import subprocess
 from pathlib import Path
 
 from tools.dogfood.prompt import template_hash
 from tools.dogfood.runners.base import SlotSpec
+from tools.dogfood.runners.opencode_v1 import OpenCodeV1Runner
 from tools.dogfood.slot import SlotGuard, _driver_revision, layout_root, run_slot
 
 from .fakes import FakeRunner, PreflightFakeRunner
@@ -339,10 +341,6 @@ def test_run_slot_wipes_stale_task_ledger_before_spawn(tmp_path, stub_corpus):
 
 
 # --- #94: per-slot transcripts in chain-shared sandboxes ---
-
-import stat
-
-from tools.dogfood.runners.opencode_v1 import OpenCodeV1Runner
 
 RECORD_KEYS = 15  # the one JSONL record shape; schema untouched by the fix
 

@@ -4,11 +4,13 @@ Smoke evidence (gemma4:26b): small agents resubmit near-identical broken
 sources repeatedly — comment churn, one edited line, syntactically incomplete
 — burning the β=0.40 E-decay plus a compile+replay round per loop. The guard
 fingerprints GATE-rejected sources (comment/whitespace-stripped, so
-reformatting is no evasion) and refuses a shape only after it has been
-rejected DUP_MIN_REJECTS times: repair attempts always reach the gate;
-verbatim-ish loops die. Per design discussion on the issue, "refused" fires
-from the (MIN_REJECTS+1)-th same-shape submission — first repair attempts
-(one-char fixes of a rejected source) are NEVER blocked.
+reformatting is no evasion) and refuses a shape only after it has looped.
+
+Two bands (codex P2 on #99): text alone cannot tell verbatim churn from the
+legitimate minimal repair, so EXACT normalized duplicates are refused from
+the 3rd submission of the shape, while small EDITED variants get one extra
+repair attempt's runway — refused from the 4th. A one-char fix discovered
+after two flailed attempts always reaches the gate.
 """
 
 import pytest
@@ -167,6 +169,30 @@ def test_one_char_repair_after_reject_is_not_blocked():
     r = submit_program(st, WRONG_ROT13_REPAIR)  # 1 normalized-char fix
     _assert_gate_reject(r)  # judged by the gate, not the guard
     assert r["reason"] == "io-mismatch"
+
+
+def test_minimal_fix_after_two_flails_reaches_gate_and_accepts():
+    # Codex P2's exact scenario: two rejected +12 attempts, then the correct
+    # minimal +13 edit of the SAME shape. The near-band runway must let the
+    # fix through to the verifier — and the verifier accepts it.
+    st = _store("rot13::gcc-O2-sym")
+    st.record_case("a", ["abc"], b"")
+    submit_program(st, WRONG_ROT13)
+    submit_program(st, WRONG_ROT13_CHURNED)
+    minimal_fix = WRONG_ROT13.replace("+12", "+13")
+    r = submit_program(st, minimal_fix)
+    assert r["accepted"] is True  # reached the gate and was judged correct
+
+
+def test_edited_variant_loop_dies_at_fourth_attempt():
+    st = _store("rot13::gcc-O2-sym")
+    st.record_case("a", ["abc"], b"")
+    submit_program(st, WRONG_ROT13)  # +12
+    submit_program(st, WRONG_ROT13_CHURNED)  # +12, exact twin
+    r3 = submit_program(st, WRONG_ROT13_REPAIR)  # +11: still runway
+    _assert_gate_reject(r3)  # ...judged by the gate (2 fingerprints + 1 near)
+    r4 = submit_program(st, WRONG_ROT13.replace("+12", "+10"))  # 3 prior shapes
+    assert r4["reason"] == "duplicate"  # near-band refusal now fires
 
 
 def test_genuinely_different_approach_reaches_the_gate_after_two_rejects():

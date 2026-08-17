@@ -181,16 +181,21 @@ def _journal(led: dict, event: dict) -> None:
 # (comment churn, one edited line, syntactically incomplete), each pass paying
 # a compile+replay round and the β E-decay. The guard fingerprints every
 # GATE-rejected source (spec rejects excluded: the source was never judged)
-# and refuses a candidate whose normalized shape matches DUP_MIN_REJECTS prior
-# fingerprints. Loop-killer by design: the FIRST same-shape repair attempt
-# (e.g. the one-char typo fix) always reaches the gate — blocking it would
-# punish the repair loop the benchmark exists to measure. Blocking
-# verbatim-ish loops, not paraphrase: an agent that really changes approach
-# sails past the threshold (robust to whitespace/comment churn by
-# normalization below — reformatting is not an evasion).
+# and refuses a candidate whose normalized shape has looped too often. Two
+# bands, because text alone cannot tell verbatim churn from the legitimate
+# minimal repair (codex P2 on #99):
+#   * EXACT band (normalized diff 0): resubmitting a byte-shape already
+#     gate-rejected twice is zero-information — refused outright.
+#   * NEAR band (0 < diff <= threshold): a small CODE edit may BE the correct
+#     one-char repair, which only the gate can judge — it always gets runway,
+#     refused only after the shape's THIRD rejection.
+# Blocking verbatim-ish loops, not paraphrase: an agent that really changes
+# approach sails past the threshold (reformatting is not an evasion, per the
+# issue's caution).
 DUP_DIFF_FLOOR = 24  # chars: near-dup at-or-below this absolute edit mass
 DUP_DIFF_FRAC = 0.06  # ... or this fraction of the candidate's length
-DUP_MIN_REJECTS = 2  # shape must be gate-rejected this often before refusing
+DUP_MIN_REJECTS = 2  # EXACT-band: refuse from the 3rd verbatim resubmission loop
+DUP_MIN_NEAR_REJECTS = 3  # NEAR-band: refuse from the 4th edited-variant loop
 DUP_STORE = 8  # fingerprints kept per task ledger (recent flail is the target)
 
 
@@ -237,11 +242,27 @@ def _char_diff(a: str, b: str) -> int:
     )
 
 
-def _duplicate_matches(fingerprints: list[str], cand: str) -> tuple[int, int]:
-    """(count, min edit mass) of stored fingerprints near-identical to cand."""
+def _flail_verdict(fingerprints: list[str], cand: str) -> tuple[int, int] | None:
+    """-> (match count, min edit mass) when cand is a refused loop, else None.
+
+    Two bands: EXACT (diff 0) matches refuse at DUP_MIN_REJECTS — nothing
+    semantics-bearing can be new. NEAR matches (0 < diff <= threshold) count
+    toward DUP_MIN_NEAR_REJECTS — a small code edit might be the legitimate
+    minimal fix and gets one extra repair attempt's runway before the loop
+    is killed."""
     threshold = max(DUP_DIFF_FLOOR, int(len(cand) * DUP_DIFF_FRAC))
-    diffs = [d for fp in fingerprints if (d := _char_diff(fp, cand)) <= threshold]
-    return (len(diffs), min(diffs, default=0))
+    exact, near = 0, []
+    for fp in fingerprints:
+        d = _char_diff(fp, cand)
+        if d == 0:
+            exact += 1
+        elif d <= threshold:
+            near.append(d)
+    if exact >= DUP_MIN_REJECTS:
+        return exact + len(near), 0
+    if exact + len(near) >= DUP_MIN_NEAR_REJECTS:
+        return exact + len(near), min(near)
+    return None
 
 
 def _fingerprint_reject(led: dict, c_source: str) -> None:
@@ -316,10 +337,9 @@ def submit_program(
         store.save_ledger(led)
         return {"accepted": False, **kw}
 
-    n_dup, d_dup = _duplicate_matches(
-        led.get("rejected_norm", []), _norm_source(c_source)
-    )
-    if n_dup >= DUP_MIN_REJECTS:  # flail loop, refused BEFORE the gate spend
+    verdict = _flail_verdict(led.get("rejected_norm", []), _norm_source(c_source))
+    if verdict is not None:  # flail loop, refused BEFORE the gate spend
+        n_dup, d_dup = verdict
         return reject(
             reason="duplicate",
             detail=(
@@ -586,10 +606,9 @@ def submit_function(
     # Flail guard (#95): same shape as the program path, refused before the
     # fuzz VM spend. NOTE: spec rejects above are NOT fingerprinted — the
     # source was never judged, only the declaration was.
-    n_dup, d_dup = _duplicate_matches(
-        led.get("rejected_norm", []), _norm_source(c_source)
-    )
-    if n_dup >= DUP_MIN_REJECTS:
+    verdict = _flail_verdict(led.get("rejected_norm", []), _norm_source(c_source))
+    if verdict is not None:
+        n_dup, d_dup = verdict
         led["submissions"] += 1
         led["rejections"] += 1
         _fingerprint_reject(led, c_source)

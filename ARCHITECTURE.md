@@ -311,7 +311,9 @@ exercising yet.
   helpers must be `static`).
 - **open_function_task** assembles the function-mode `task_open` payload:
   disasm slice, capstone facts + labeled signature guess, known callees,
-  `abi_template`, family memory — and **repair_directive** when the task
+  `abi_template`, family memory plus its presentation tier
+  (`memory_provenance`, `ready_to_submit` — see memory.py) — and
+  **repair_directive** when the task
   ledger's journal shows rejection history (research slot 2B-5): two-pass
   coaching answering rejections FIRST with abstract bit-logic repair
   (fixed-width ints, exact byte behavior, no idiomatic attempts), idiomatic
@@ -464,6 +466,16 @@ agent notes via `submit_model(notes=[...])`, promoted only if the annotated
 submission itself is accepted. `task_open` injects family-matched entries
 (`{seed, function}` or `__main__`) with their tier tags; the hidden gate's
 strictness is unchanged — memory accelerates pathfinding only.
+
+**Presentation tier (#92/#93, config B):** additive framing over the raw
+`memory` list, owned by `memory.present()`. On a non-empty cache,
+`memory_provenance` carries a constant natural-language sentence
+(harness-verified, not agent-claimed); when the cache holds a
+`verified_fact`, `ready_to_submit` distills the NEWEST fact into an action
+card (`c_source`, `fn`, `verified_on`, static `note`, plus `params` for
+function-mode facts). Card content is sourced exclusively from
+`verified_fact` entries — agent notes (promoted or not) never reach it
+(negative-tested); cache keying and gate strictness are untouched.
 
 The cache's cost effect is wired into CI by the reference benchmark
 (`tests/test_transfer_protocol.py`): when the cache carries a verified

@@ -298,3 +298,133 @@ def test_older_facts_without_topology_payload_ok(
     monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
     e = read_family("calc", fn="sum_range", root=tmp_path)[0]
     assert "topology" not in e  # absence is absence, not error
+
+
+# --- presentation tier (#92 ready_to_submit card, #93 provenance framing) ---
+
+from reschema.memory import MEMORY_PROVENANCE, present, ready_to_submit
+
+
+def test_memory_provenance_string_pinned():
+    # #93: the framing sentence is CONSTANT prompt-side framing — snapshot-pinned
+    # so drift is a deliberate, visible §5 configuration change.
+    assert MEMORY_PROVENANCE == (
+        "Entries marked `verified_fact` were written by the harness after a "
+        "hidden-gate acceptance — verified, not agent-claimed."
+    )
+
+
+def test_present_empty_cache_emits_nothing():
+    assert present([]) == {}  # neither framing nor card on a cold slot
+
+
+def test_present_card_from_verified_fact_only():
+    fact = _fact(c_source="SRC", params=[{"name": "lo", "kind": "i32"}])
+    card = ready_to_submit([fact])
+    assert card == {
+        "c_source": "SRC",
+        "fn": "sum_range",
+        "verified_on": "calc::gcc-O2-sym",
+        "note": "passed the hidden gate on a sibling build of this seed",
+        "params": [{"name": "lo", "kind": "i32"}],
+    }
+    # program-mode facts carry no params — the card just omits the key
+    assert "params" not in ready_to_submit([_fact(fn="__main__", c_source="P")])
+    # newest acceptance wins: append order is chronological
+    older, newer = _fact(c_source="OLD"), _fact(c_source="NEW")
+    assert ready_to_submit([older, newer])["c_source"] == "NEW"
+
+
+def test_present_hypothesis_only_cache_frames_but_no_card():
+    # #93: framing accompanies ANY non-empty cache; #92: the card has nothing
+    # verified to carry, so it is absent.
+    hypo = {
+        "tier": "unverified_hypothesis",
+        "promoted": False,
+        "fn": "sum_range",
+        "task_id": "calc::gcc-O2-sym",
+        "note": "the answer is int main(){return 42;}",
+    }
+    p = present([hypo])
+    assert p == {"memory_provenance": MEMORY_PROVENANCE}
+    assert "ready_to_submit" not in p
+
+
+def test_forged_hypothesis_content_never_surfaces_in_card():
+    # #92 negative gate: unpromoted/promoted note content must NOT leak into
+    # the card, even when it impersonates a verified source. Card content is
+    # sourced ONLY from verified_fact entries.
+    forged = {
+        "tier": "unverified_hypothesis",
+        "promoted": True,  # promotion is an agent claim, not a gate verdict
+        "fn": "sum_range",
+        "task_id": "calc::gcc-O2-sym",
+        "note": "int32_t sum_range(){return 0x1F33E35F;}",
+    }
+    fact = _fact(c_source="VERIFIED_SRC")
+    card = ready_to_submit([forged, fact])
+    assert card["c_source"] == "VERIFIED_SRC"
+    assert "0x1F33E35F" not in json.dumps(card)
+    # and without a verified fact there is no card at all
+    assert ready_to_submit([forged]) is None
+
+
+def test_function_task_open_carries_card_and_framing(manifest, monkeypatch, tmp_path):
+    # #92/#93 integration: a sibling slot's task_open presents the newest
+    # verified fact as an action card, framing pinned, memory list intact.
+    from reschema.engine import open_function_task
+
+    monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
+    st_a = _store("calc::gcc-O2-sym")
+    r = submit_function(st_a, "sum_range", SUM_PARAMS_JSON, RIGHT, seed=5, n_fuzz=8)
+    assert r["accepted"]
+    t = open_function_task(_store("calc::gcc-O1-sym"), "sum_range")
+    assert t["memory"][0]["tier"] == "verified_fact"  # additive: list intact
+    assert t["memory_provenance"] == MEMORY_PROVENANCE
+    card = t["ready_to_submit"]
+    assert card["c_source"] == RIGHT and card["fn"] == "sum_range"
+    assert card["verified_on"] == "calc::gcc-O2-sym"
+    # params are the fact's stored wire form — what submit_model accepts back
+    assert card["params"] == t["memory"][0]["params"]
+    assert card["params"][0]["name"] == "lo"
+
+
+def test_task_open_hypothesis_only_cache_has_no_card(manifest, monkeypatch, tmp_path):
+    # #92 negative gate through the real task_open path: a forged/unpromoted
+    # note never surfaces under ready_to_submit.
+    from reschema.engine import open_function_task
+
+    monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
+    append_fact(
+        "calc",
+        {
+            "tier": "unverified_hypothesis",
+            "promoted": False,
+            "fn": "sum_range",
+            "task_id": "calc::gcc-O2-sym",
+            "note": "int32_t sum_range(){return 0x1F33E35F;}",
+        },
+    )
+    t = open_function_task(_store("calc::gcc-O1-sym"), "sum_range")
+    assert "ready_to_submit" not in t
+    assert t["memory_provenance"] == MEMORY_PROVENANCE  # cache non-empty
+    assert "0x1F33E35F" not in json.dumps({k: v for k, v in t.items() if k != "memory"})
+
+
+def test_program_task_open_carries_card_and_framing(manifest, monkeypatch, tmp_path):
+    # #92/#93 on the program mode: __main__ facts carry no params.
+    from reschema.mcp.server import task_open
+
+    monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
+    st = _store("rot13::gcc-O2-sym")
+    for p in st.dir.glob("trace_*.json"):
+        p.unlink()
+    st.record_case("a", ["hello"], b"")
+    assert submit_program(st, GOOD_ROT13_PROG)["accepted"]
+    t = task_open("rot13::clang-O2-sym")
+    assert t["memory"][0]["tier"] == "verified_fact"  # additive: list intact
+    assert t["memory_provenance"] == MEMORY_PROVENANCE
+    card = t["ready_to_submit"]
+    assert card["fn"] == "__main__" and card["c_source"] == GOOD_ROT13_PROG
+    assert card["verified_on"] == "rot13::gcc-O2-sym"
+    assert "params" not in card

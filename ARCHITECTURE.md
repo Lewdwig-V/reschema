@@ -227,9 +227,20 @@ Every agent-facing verdict is a typed dict. There are three shapes:
   fd-chain for event/files divergences).
 - Behavior divergences (function gate): `{accepted: false, divergence:
   {input, field, expected, actual, seed}}` with `field` in `ret|mem|crash`.
+- **Flail guard (`duplicate`, #95, both submit paths):** a candidate whose
+  comment/whitespace-stripped source fingerprint matches `DUP_MIN_REJECTS`
+  (2) earlier GATE-rejected shapes on this task is refused pre-gate as
+  top-level `{accepted: false, reason: "duplicate", detail}` (the detail
+  names the match count and edit mass). Fingerprints live in the task
+  ledger's `rejected_norm` (normalized: string-literal-aware comment/whitespace
+  stripping, capped at 8). Loop-killer, not paraphrase-blocker: the first
+  same-shape repair attempt (the one-char typo fix) always reaches the gate;
+  spec rejects are never fingerprinted (the source was never judged); guard
+  refusals count as submissions/rejections (E still prices the flail; the
+  guard saves the compile/fuzz wall-clock and endpoint tokens).
 - Mechanical rejects carry a human-readable `detail`, but its nesting depends
   on the path: program-gate mechanical rejects (`compile`,
-  `hidden-starvation`) return top-level `{accepted: false, reason, detail}`;
+  `hidden-starvation`, `duplicate`) return top-level `{accepted: false, reason, detail}`;
   function-gate floor verdicts from the validator (arity, void-without-
   memory-channel, skip-starvation, infra) nest it as `{accepted: false,
   divergence: {stage, detail}}` (skip-starvation also carries the fuzz
@@ -257,8 +268,9 @@ the cheap scout round before an agent commits recorded cases.
 
 `TaskStore` persists per-task state under `.reschema/tasks/<task_id>/`:
 canonical case traces (`trace_<label>.json`) and `ledger.json`
-(accepted entries, submissions/rejections counters, `audit` seeds, and a
-capped `recent` submission journal).
+(accepted entries, submissions/rejections counters, `audit` seeds, a
+capped `recent` submission journal, and the `rejected_norm` flail-guard
+fingerprints — see the rejection payload's `duplicate` entry).
 
 **Concurrency: single-process (or out-of-band serialized) access is
 assumed.** Ledger writes are atomic per file (temp + `os.replace`) but

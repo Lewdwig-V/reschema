@@ -175,6 +175,10 @@ def submit_model(
     event-divergence/event-length, hidden-starvation — behavior divergences
     (io/files/events) come with a structured `divergence` payload; mechanical
     rejects (compile/spec/starvation) come with a `detail` message instead.
+    Flail guard (both modes): a source whose comment/whitespace-stripped
+    shape was already gate-REJECTED twice on this task is refused BEFORE the
+    gate spend with `reason: "duplicate"` — repair attempts reach the gate;
+    verbatim-ish resubmission loops don't.
     Function mode: your source is compiled and differential-fuzzed against the
     ORIGINAL function on per-call {ret, mem} over N_FUZZ random cases drawn
     with fresh entropy every submission (seed= pins the draw for determinism;

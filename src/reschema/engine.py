@@ -197,6 +197,11 @@ DUP_DIFF_FRAC = 0.06  # ... or this fraction of the candidate's length
 DUP_MIN_REJECTS = 2  # EXACT-band: refuse from the 3rd verbatim resubmission loop
 DUP_MIN_NEAR_REJECTS = 3  # NEAR-band: refuse from the 4th edited-variant loop
 DUP_STORE = 8  # fingerprints kept per task ledger (recent flail is the target)
+# Stages without a CODE verdict (the model never ran against cases): a
+# params-fixed resubmit of the same source must not be blocked by its own
+# declaration failures (codex P2 on #101, same exclusion class as the
+# malformed-spec early return).
+DUP_NO_VERDICT_STAGES = ("spec", "arity", "skip-starvation", "infra")
 
 
 def _norm_source(src: str) -> str:
@@ -650,7 +655,10 @@ def submit_function(
     _record_notes(store, func, notes, promoted=v.ok)
     if not v.ok:
         led["rejections"] += 1
-        _fingerprint_reject(led, c_source)  # gate verdict on the source itself
+        # Fingerprint CODE verdicts only: divergence verdicts carry no stage
+        # key; spec/arity/starvation/infra stages never executed the model.
+        if v.divergence.get("stage") not in DUP_NO_VERDICT_STAGES:
+            _fingerprint_reject(led, c_source)
         _journal(
             led,
             {

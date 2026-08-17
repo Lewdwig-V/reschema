@@ -251,6 +251,19 @@ def test_submit_function_empty_params_never_accepted_never_poisoned(
     assert read_family("calc", fn="sum_range", root=tmp_path) == []  # no poisoning
 
 
+def test_spec_stage_rejects_never_fingerprint_the_source(store):
+    # Codex P2 on #101: a spec-stage verdict (no input variation, bad decls)
+    # judges the DECLARATION, not the C source. Two such rejects must not
+    # accumulate flail fingerprints — the params-fixed resubmit of the same
+    # source reaches the gate and wins on merit.
+    for _ in range(2):
+        r = submit_function(store, "sum_range", [], RIGHT, seed=1, n_fuzz=8)
+        assert r["accepted"] is False and r["divergence"]["stage"] == "spec"
+    assert not store.ledger().get("rejected_norm")  # nothing judged, nothing stored
+    r = submit_function(store, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)
+    assert r["accepted"] is True
+
+
 def test_submit_function_link_failure_counts_rejection(store):
     # -shared link tolerates the undefined extern; the engine must account the
     # structured link-stage reject like any other failed validation.

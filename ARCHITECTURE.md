@@ -481,8 +481,14 @@ today's adapter: session config allowlisting exactly the 5 MCP tools
 (top-level `tools` switchboard with `reschema_*` wildcard, empty sandbox cwd,
 sanitized HOME/XDG so global config can't leak in — the agent physically
 cannot read this repo's seeds), GET/POST preflight language the endpoint
-actually speaks, process-group lifecycle. `prompt.py` is one neutral task
-template whose neutrality is lint-tested against a stemmed forbidden list and
+actually speaks, process-group lifecycle. Session transcripts name themselves
+per slot (`transcript-<stem>.log` via `RunnerConfig.transcript`, #94): primed
+chains share one sandbox, so a fixed `transcript.log` truncated each earlier
+slot's session at the next spawn — post-hoc priming audits need all slots'
+logs, not just the chain's last. A resumed slot re-truncates only its own
+log, matching the stale-ledger wipe's resume idempotence. `prompt.py` is one
+neutral task template whose neutrality is lint-tested against a stemmed
+forbidden list and
 pinned by a golden digest — prompt contamination is solver scaffolding and
 would silently reframe the measurement. `measure.py` is the only statistics
 site: φ per (family, rep) as the protocol requires, median/IQR across reps,

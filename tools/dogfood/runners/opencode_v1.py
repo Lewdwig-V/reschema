@@ -12,8 +12,6 @@ from pathlib import Path
 
 from .base import AgentOutcome, RunnerConfig
 
-TRANSCRIPT = "transcript.log"
-
 
 class OpenCodeV1Runner:
     def __init__(self, binary: str = "opencode"):
@@ -153,7 +151,11 @@ class OpenCodeV1Runner:
             "XDG_DATA_HOME": str(home / ".local/share"),
             "OPENCODE_CONFIG": str(cfg.sandbox.resolve() / "opencode.json"),
         }
-        with open(cfg.sandbox / TRANSCRIPT, "wb") as out:  # child dup's the fd
+        # Per-slot transcript name (#94): primed chains share this sandbox, a
+        # fixed name would truncate the previous slot's session on every
+        # spawn. "wb" per slot: a slot RESUMED re-truncates its OWN log —
+        # same resume-idempotence shape as run_slot's stale-ledger wipe.
+        with open(cfg.sandbox / cfg.transcript, "wb") as out:  # child dup's the fd
             self._p = subprocess.Popen(
                 [self.binary, "run", prompt],
                 cwd=cfg.sandbox,
@@ -167,7 +169,7 @@ class OpenCodeV1Runner:
         p = self._p
         rc = p.wait() if p else None
         tail = ""
-        tp = self._cfg.sandbox / TRANSCRIPT if self._cfg else None
+        tp = self._cfg.sandbox / self._cfg.transcript if self._cfg else None
         if tp and tp.exists():
             # ponytail: full read; transcripts are overnight-large —
             # seek-from-end if tails ever hurt.

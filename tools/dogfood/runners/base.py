@@ -39,6 +39,11 @@ class RunnerConfig:
     endpoint: str | None  # OpenAI-compatible base URL (run-header evidence)
     sandbox: Path  # empty session cwd (agent cannot see the repo)
     run_root: Path  # slot's RESCHEMA_HOME
+    # Transcript file inside the sandbox. Primed chains SHARE their sandbox
+    # across slots, so run_slot names it per slot (transcript-<stem>.log) —
+    # a one-name default would have each slot truncate the previous session
+    # (#94). The default keeps direct runner users' old shape.
+    transcript: str = "transcript.log"
 
 
 @dataclass

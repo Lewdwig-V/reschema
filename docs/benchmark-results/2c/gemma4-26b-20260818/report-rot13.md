@@ -1,7 +1,7 @@
 # 2C live-agent campaign — rot13
 
 - records: 30 total (primed 15, unprimed 15), 21 accepted, 9 aborted, 0 infra-error (excluded from stats)
-- φ median: 0.0  IQR: 2.1439105122274205  (φ base: 5 rep(s) contributing)
+- φ median: 0.0  IQR: 2.4619112170141415  (φ base: 5 rep(s) contributing)
 - aborts by class: aborted: agent-exit ×6, aborted: priming-failed ×3
 - unprimed trajectory: [0.6376281516217733, 0.10025884372280375, 0.7408182206817179] (flat: False)
 

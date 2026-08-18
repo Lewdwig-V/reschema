@@ -290,6 +290,20 @@ def _fingerprint_reject(led: dict, c_source: str) -> None:
     del fps[:-DUP_STORE]
 
 
+REJECTED_SOURCES_STORE = 16  # like the recent journal: bounded, newest
+
+
+def _journal_rejected_source(led: dict, entry: dict) -> None:
+    """Persist the RAW rejected source for the self-play failure supply
+    (#111 prerequisite, found by review): fingerprints alone can't be
+    re-compiled. Grows at exactly the flail-guard's fingerprint sites — code
+    verdicts only (compile/replay/divergence/duplicate), never declaration
+    failures (spec/arity/starvation/infra: the source was never judged)."""
+    rs = led.setdefault("rejected_sources", [])
+    rs.append(entry)
+    del rs[:-REJECTED_SOURCES_STORE]
+
+
 def status_snapshot(store: TaskStore) -> dict:
     """Ledger+manifest status: readiness, coverage, validation telemetry."""
     led = store.ledger()
@@ -345,6 +359,14 @@ def submit_program(
         led["rejections"] += 1
         _record_notes(store, "__main__", notes, promoted=False)
         _fingerprint_reject(led, c_source)  # every program reject is a code verdict
+        _journal_rejected_source(
+            led,
+            {
+                "mode": "program",
+                "stage": kw.get("stage", kw["reason"]),
+                "c_source": c_source,
+            },
+        )
         _journal(
             led,
             {
@@ -636,6 +658,15 @@ def submit_function(
         led["submissions"] += 1
         led["rejections"] += 1
         _fingerprint_reject(led, c_source)
+        _journal_rejected_source(
+            led,
+            {
+                "mode": "function",
+                "function": func,
+                "stage": "duplicate",
+                "c_source": c_source,
+            },
+        )
         _journal(
             led,
             {
@@ -674,6 +705,15 @@ def submit_function(
         # key; spec/arity/starvation/infra stages never executed the model.
         if v.divergence.get("stage") not in DUP_NO_VERDICT_STAGES:
             _fingerprint_reject(led, c_source)
+            _journal_rejected_source(
+                led,
+                {
+                    "mode": "function",
+                    "function": func,
+                    "stage": v.divergence.get("stage", "divergence"),
+                    "c_source": c_source,
+                },
+            )
         _journal(
             led,
             {

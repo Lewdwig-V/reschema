@@ -275,6 +275,27 @@ def test_submit_function_void_scalar_only_counts_rejection(store):
     assert led["submissions"] == 1 and led["rejections"] == 1 and led["accepted"] == []
 
 
+def test_function_rejects_persist_raw_sources_but_decl_failures_never(store):
+    # #111 prerequisite: code-verdict function rejects persist the raw source;
+    # DECLARATION failures (spec stage — the source was never judged) must not
+    # contaminate the self-play supply with unjudged entries.
+    r = submit_function(store, "sum_range", PARAMS, WRONG, seed=1, n_fuzz=8)
+    assert r["accepted"] is False
+    rs = store.ledger()["rejected_sources"]
+    assert rs == [
+        {
+            "mode": "function",
+            "function": "sum_range",
+            "stage": "divergence",
+            "c_source": WRONG,
+        }
+    ]
+    # spec-stage rejects (no code verdict) do NOT persist a body
+    r2 = submit_function(store, "sum_range", [], WRONG, seed=1, n_fuzz=8)
+    assert r2["accepted"] is False and r2["divergence"]["stage"] == "spec"
+    assert len(store.ledger()["rejected_sources"]) == 1
+
+
 def test_submit_function_empty_params_never_accepted_never_poisoned(
     store, monkeypatch, tmp_path
 ):

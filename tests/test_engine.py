@@ -105,7 +105,36 @@ def test_program_path_counts_submissions_and_rejections(manifest):
     assert led["submissions"] == 3 and led["rejections"] == 2
 
 
-def test_program_accept_is_idempotent_and_audited(manifest):
+def test_program_rejects_persist_raw_sources_for_self_play_mining(manifest):
+    # #111 prerequisite found by review: ledgers kept only normalized
+    # fingerprints + journal stages — the self-play fodder experiment has no
+    # rejected BODIES to compile. Code-verdict program rejects must persist
+    # the raw source with its stage (the miner's class tag).
+    from reschema.engine import submit_program
+
+    st = _prog_store(manifest)
+    compile_rej = "int main( {"
+    submit_program(st, compile_rej)
+    submit_program(st, BAD_ROT13_PROG)  # hidden-stage reject
+    rs = st.ledger()["rejected_sources"]
+    assert rs == [
+        {"mode": "program", "stage": "compile", "c_source": compile_rej},
+        {"mode": "program", "stage": "hidden", "c_source": BAD_ROT13_PROG},
+    ]
+    assert " " in rs[0]["c_source"]  # RAW source, not the normalized fingerprint
+
+
+def test_rejected_sources_capped_at_16_newest(manifest):
+    from reschema.engine import submit_program
+
+    st = _prog_store(manifest)
+    st.record_case("b", ["world"], b"")
+    for i in range(18):
+        submit_program(st, f"int main() {{ return {i}; }}")  # hidden rejects
+    rs = st.ledger()["rejected_sources"]
+    assert len(rs) == 16
+    assert rs[0]["c_source"] == "int main() { return 2; }"  # oldest evicted
+    assert rs[-1]["c_source"] == "int main() { return 17; }"
     from reschema.engine import submit_program
 
     st = _prog_store(manifest)

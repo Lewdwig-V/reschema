@@ -282,8 +282,13 @@ the cheap scout round before an agent commits recorded cases.
 `TaskStore` persists per-task state under `.reschema/tasks/<task_id>/`:
 canonical case traces (`trace_<label>.json`) and `ledger.json`
 (accepted entries, submissions/rejections counters, `audit` seeds, a
-capped `recent` submission journal, and the `rejected_norm` flail-guard
-fingerprints — see the rejection payload's `duplicate` entry).
+capped `recent` submission journal, the `rejected_norm` flail-guard
+fingerprints — see the rejection payload's `duplicate` entry — and
+`rejected_sources`: the RAW c_source of each code-verdict reject with mode/
+function/stage, capped at 16 newest. That store is the phase-3 self-play
+failure supply (#111 prerequisite): all rejects at the flail guard's
+fingerprinting sites, never declaration failures (spec-no-verdict
+stages).
 
 **Concurrency: single-process (or out-of-band serialized) access is
 assumed.** Ledger writes are atomic per file (temp + `os.replace`) but

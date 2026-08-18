@@ -39,6 +39,20 @@ HIDDEN_N = 8  # distinct usable hidden inputs each submission must survive
 # (roadmap phase 2 sizing: probe/submission counts only, no wall-clock flake).
 E_ALPHA, E_BETA = 0.15, 0.40
 
+# ISSUE-103: agents stop on ANY `{accepted: true}` payload — the floor's
+# agent-exit records were ~46% FALSE COMPLETIONS: a function-level accept
+# read as task completion ({func: src} in the ledger, no program marker,
+# agent gone per the prompt's own stop rule). Every accept payload now
+# carries `task_complete`, read live from the ledger, and incomplete accepts
+# attach this constant note. The string is agent-facing, truth-only, and
+# constant across tasks/conditions — drift is a deliberate §5 configuration
+# change, snapshot-pinned in tests.
+TASK_INCOMPLETE_NOTE = (
+    "function-level acceptance is a building block: the task completes ONLY "
+    "when the program model is accepted (submit_model without a `function` "
+    "argument)"
+)
+
 
 def load_manifest() -> list[dict]:
     sidecar = MANIFEST.parent / "canonicalizer_version"
@@ -416,6 +430,7 @@ def submit_program(
         "recorded_cases": len(rec),
         "hidden_cases": HIDDEN_N,
         "hidden_seed": hidden_seed,
+        "task_complete": True,  # #103: program acceptance IS the slot contract
     }
 
 
@@ -699,12 +714,19 @@ def submit_function(
             "topology": _topology_digest(store, func),
         },
     )
-    return {
+    # #103: the completion signal must be read off the ledger, not implied by
+    # mode — a function accept while the task is done reports complete too.
+    done = any(isinstance(x, str) and x == "program" for x in led["accepted"])
+    out = {
         "accepted": True,
         "compared": v.compared,
         "skipped": v.skipped,
         "seed": v.seed,
+        "task_complete": done,
     }
+    if not done:
+        out["note"] = TASK_INCOMPLETE_NOTE  # what completes the task (constant)
+    return out
 
 
 def compose(store: TaskStore) -> tuple[bool, str]:

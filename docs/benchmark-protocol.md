@@ -175,6 +175,13 @@ real agent.) Section 6's rerun procedure is where the actual result lives.
   for both. Median φ, wasted-submission counts, and agent-exit rates are
   comparable only within one configuration; a claim that mixes A and B floors
   must say so via the run header's `prompt_sha256`.
+- **Config C (#103).** Accept payloads now carry `task_complete` (+ a
+  constant `note` on function-mode accepts naming the program-acceptance
+  completion criterion) — a fix for the floor-observed false-completion
+  class (~46% of config-B `agent-exit` records). The prompt is unchanged
+  (same `prompt_sha256`), but the agent-visible tool surface moved: floors
+  after this change are a third configuration family, and #103's framing is
+  part of their treatment. Records pin the change via `driver_revision`.
 - **Corpus reproducibility.** Builds run inside the pinned toolchain image to
   minimize machine variance, but byte-reproducibility of corpus binaries
   across machines is unverified. Record the manifest hash and

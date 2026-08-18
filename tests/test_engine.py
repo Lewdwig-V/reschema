@@ -129,6 +129,7 @@ def test_program_accept_payload_is_rich(manifest):
     assert r["recorded_cases"] == 2
     assert r["hidden_cases"] == HIDDEN_N
     assert r["hidden_seed"].startswith("hidden:")
+    assert r["task_complete"] is True  # #103: the one true completion signal
     assert "replay_pct" not in r
 
 

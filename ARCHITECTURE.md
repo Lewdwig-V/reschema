@@ -215,8 +215,15 @@ Every agent-facing verdict is a typed dict. There are three shapes:
 
 **Accepts:**
 
-- program: `{accepted: true, recorded_cases, hidden_cases, hidden_seed}`.
-- function: `{accepted: true, compared, skipped, seed}`.
+- program: `{accepted: true, recorded_cases, hidden_cases, hidden_seed,
+  task_complete: true}`.
+- function: `{accepted: true, compared, skipped, seed, task_complete, note?}`
+  — `task_complete` is read live from the ledger (`"program"` in `accepted`),
+  and when False the payload attaches `TASK_INCOMPLETE_NOTE` naming the
+  completion criterion (#103; constant, truth-only, snapshot-pinned). Function
+  acceptance without program acceptance is a building block, never task
+  completion — this framing exists because the first live floors lost nearly
+  half their `agent-exit` slots to models stopping at a function accept.
 
 **Gate rejects:** `{accepted: false, ...}`
 

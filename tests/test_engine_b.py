@@ -199,6 +199,55 @@ def test_submit_function_audit_records_seed_and_budget(store):
     assert store.ledger()["audit"]["sum_range"] == {"seed": 1, "n_fuzz": 8}
 
 
+def test_function_accept_reports_task_incomplete_with_note(store):
+    # ISSUE-103: ~46% of floor agent-exits were FALSE COMPLETIONS — a function
+    # accept read as task completion, ledger holding {func: src}, no program
+    # marker. Every accept payload must now say whether the TASK is done, and
+    # incomplete ones must say what completes it. Truth-only, constant.
+    from reschema.engine import TASK_INCOMPLETE_NOTE
+
+    r = submit_function(store, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)
+    assert r["accepted"]
+    assert r["task_complete"] is False
+    assert r["note"] == TASK_INCOMPLETE_NOTE
+    assert "program" in r["note"]  # names the completion criterion
+
+
+def test_function_accept_after_program_accept_reports_task_complete(manifest):
+    # Dynamic read, not a static label: program acceptance already landed for
+    # rot13, so a later FUNCTION accept must report the task as complete.
+    st = TaskStore("rot13::gcc-O2-sym")
+    wipe_task(st)
+    GOOD_ROT13_PROG = r"""
+#include <stdio.h>
+int main(int argc, char **argv){ if(argc<2){puts("usage: rot13 WORD");return 2;}
+for(char*p=argv[1];*p;p++){char c=*p;
+ if(c>='a'&&c<='z')*p='a'+(c-'a'+13)%26; else if(c>='A'&&c<='Z')*p='A'+(c-'A'+13)%26;}
+puts(argv[1]); return 0; }
+"""
+    st.record_case("a", ["hello"], b"")
+    from reschema.engine import submit_program
+
+    assert submit_program(st, GOOD_ROT13_PROG)["accepted"] is True
+    good_char = r"""#include <stdint.h>
+__attribute__((sysv_abi)) int32_t rot13_char(int32_t c){
+    if(c>=97&&c<=122) return 97+(c-97+13)%26;
+    if(c>=65&&c<=90) return 65+(c-65+13)%26;
+    return c;
+}"""
+    r = submit_function(
+        st,
+        "rot13_char",
+        [{"name": "c", "kind": "i32", "range": [0, 255]}],
+        good_char,
+        seed=1,
+        n_fuzz=8,
+    )
+    assert r["accepted"]
+    assert r["task_complete"] is True
+    assert "note" not in r  # nothing left to complete, nothing to explain
+
+
 def test_submit_function_audit_newest_wins_and_entropy_seed(store, monkeypatch):
     assert submit_function(store, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)[
         "accepted"

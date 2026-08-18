@@ -196,6 +196,10 @@ def submit_model(
     void spec with no memory channel is rejected too. The spec must admit at
     least 2 distinct inputs (empty params or all-fixed ranges are refused at
     the spec stage — never pass vacuously).
+    COMPLETION: the task is complete ONLY when the PROGRAM model is accepted
+    (submit_model with no `function` argument). A function-mode acceptance is
+    a building block, not task completion. Every accept payload carries
+    `task_complete` (read from your ledger); a False one comes with a `note`.
     Accepted models enter the task ledger (see status) and compose per-TU at
     compose time: helpers used by one function must be `static`.
     `notes` (optional strings) are recorded in the family deduction cache as

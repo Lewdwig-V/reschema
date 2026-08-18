@@ -108,26 +108,59 @@ dependency already lives; none expands settled scope.
 submissions/probes to accept on later family slots, with hidden-gate
 strictness unchanged.
 
-### 2C — Transfer benchmark protocol
+### 2C — Transfer benchmark protocol (COMPLETE)
 Prime-vs-unprimed family runs (O0→O1→O2→stripped): Φ trajectory per family
 with the reference agent in CI as the wiring proof, and a documented dogfood
 protocol to measure the same with a live agent (the way ISSUE-08/09/10
 feedback was measured). Runs once after 2B lands, before phase 3 consumption.
 Driver for the live-agent reruns shipped as `tools/dogfood/` (PR #75;
-invocation in docs/benchmark-protocol.md §6). First live floor complete
-2026-08-16 (gemma4:26b via ollama): records+reports in
-`docs/benchmark-results/2c/gemma4-26b-20260816/` — rot13 φ median −0.463
-(memory *hurt* at this agent/UX config; protocol-literacy failure, issues
-#91–#93), check no-signal (base task beyond the agent). Config-B priming-UX
-rerun is the follow-up.
+invocation in docs/benchmark-protocol.md §6).
+
+Three published, integrity-audited floors under `docs/benchmark-results/2c/`
+(gemma4:26b via ollama), one per prompt/tool-surface configuration
+(protocol §5's A/B/C family):
+
+- **config A** (2026-08-16): rot13 φ median −0.463 — memory *hurt*;
+  protocol-literacy failure, surfaced issues #91–#95.
+- **config B** (2026-08-18, + priming UX #91–93, flail guard #95, per-slot
+  transcripts #94): priming arrives (four E=1.0 late-reuse slots; renderer
+  rot13 φ median 0.0), but transcript audit exposes ~46% of `agent-exit` as
+  **false completions** (function accept misread as task completion, #103);
+  two corpus-tainted records caught by review and rerun clean after #104.
+- **config C** (2026-08-18, + `task_complete` completion framing #103):
+  **false-completion class at zero**; program accepts 37/60, rot13 primed
+  chains 15/15, 12 accepted late-reuse slots. Released as **v0.2.0**.
+
+Dogfooding-closed issues #91–#100–#103–#104 all landed with negative tests;
+the live smoke also exposed and closed a gate soundness hole (#100, vacuous
+function specs passing on one-point comparisons).
 
 **Explicitly deferred:** CFG/fingerprint keying, SQLite store, wall-clock
-score term — each only when a named trigger revives it.
+score term, solver-assisted seed generation (config-D candidate — a
+measurement-governance decision, not an engineering one), basic-block
+interval tasks, eBPF/host trace recording, VMP/packed-target handling —
+each only when a named trigger revives it (the phase-3 tier curve is the
+nominated trigger for the last four).
 
 ## Phase 3 — Adversarial Self-Play & Curriculum Generation
 
 Harness generates new tasks/attacks from observed agent failures; a curriculum
 hardens both agent and verifier over time. Details TBD at brainstorm.
+
+**Entered from 2C evidence (2026-08):**
+
+- **Verifier-first prerequisite (ISSUE-109):** coverage-guided function-mode
+  differential fuzzing — uniform `gen_inputs` provably cannot reach
+  magic-value branches in function mode, so a wrong-branch model can pass
+  the gate. Per the §1.5 doctrine (a soft judge corrupts everything
+  downstream), this lands *before* curriculum work start.
+- **Obfuscation-tier corpus curve as the curriculum-design input:** one
+  clean-semantics seed built in attack tiers (xor-strings → CFF-ish
+  transforms → env-probe) measures where the engine's walls actually are
+  (double-record determinism, canonicalization, hidden-gate sampling),
+  replacing debate with boundary data. Its outcome is the named trigger for
+  the deferred adaptations above (BB-interval tasks, eBPF recording,
+  config-D solver hints).
 
 ## Phase 4 — Preference Harvesting & Weight-Level RSI
 

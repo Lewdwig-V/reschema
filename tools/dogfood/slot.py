@@ -60,15 +60,23 @@ def layout_root(spec: SlotSpec, runs_dir: Path, corpus_source: Path) -> Path:
     )
     root = runs_dir / chain
     corp = root / ".reschema/corpus"
-    if not corp.exists():
-        corp.mkdir(parents=True)
-        # Manifest "binary" paths are baked at corpus build time (generate.py)
-        # and resolve in the ORIGINAL corpus root, never in this mount — the
-        # mount is manifest(+sidecar) only; binaries would be dead weight.
-        shutil.copy2(corpus_source / "manifest.json", corp)
-        sidecar = corpus_source / "canonicalizer_version"
-        if sidecar.exists():
-            shutil.copy2(sidecar, corp)
+    # Manifest "binary" paths are baked at corpus build time (generate.py)
+    # and resolve in the ORIGINAL corpus root, never in this mount — the
+    # mount is manifest(+sidecar) only; binaries would be dead weight.
+    # RE-PIN every layout (#104): a slot agent can call corpus_build,
+    # rebuilding the corpus INTO the shared chain root — copy-if-missing
+    # would then hand the agent's build to later slots AND their run headers
+    # (the 2C comparability pin). Restore canonical bytes on any drift.
+    for name in ("manifest.json", "canonicalizer_version"):
+        src, dst = corpus_source / name, corp / name
+        if src.exists():
+            if not dst.exists() or src.read_bytes() != dst.read_bytes():
+                corp.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+        else:
+            # canonical corpus ships no sidecar: a foreign one in the mount
+            # would fail the engine's canonicalizer gate — remove it
+            dst.unlink(missing_ok=True)
     (root / ".reschema/tasks").mkdir(parents=True, exist_ok=True)
     return root
 

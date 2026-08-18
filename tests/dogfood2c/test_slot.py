@@ -67,6 +67,25 @@ def test_primed_chain_shares_memory_root(tmp_path, stub_corpus):
     assert a == b  # same root: slot 0's verified_fact must be visible at slot 1
 
 
+def test_layout_repins_canonical_manifest_over_agent_rebuild(tmp_path, stub_corpus):
+    # ISSUE-104: a slot agent may call corpus_build, rebuilding the corpus
+    # into the shared chain root (foreign manifest bytes). The NEXT slot's
+    # layout must restore the canonical manifest + sidecar or later slots run
+    # against the agent's build and pin a different corpus in their headers.
+    root = layout_root(_spec("primed", 0), tmp_path / "runs", stub_corpus)
+    corpus = root / ".reschema/corpus"
+    (corpus / "manifest.json").write_text('[{"task_id": "agent-built::x"}]')
+    (corpus / "canonicalizer_version").write_text("0.0-foreign")
+    (corpus / "stray-build-artifact").write_text("leftover")  # dirs stay; harmless
+    layout_root(_spec("primed", 1), tmp_path / "runs", stub_corpus)
+    assert (corpus / "manifest.json").read_bytes() == (
+        stub_corpus / "manifest.json"
+    ).read_bytes()
+    # canonical corpus ships no sidecar: the foreign one must be removed,
+    # not left to fail the engine's canonicalizer gate
+    assert not (corpus / "canonicalizer_version").exists()
+
+
 def test_run_slot_accepted_emits_jsonl(tmp_path, stub_corpus):
     script = {
         "task_id": "rot13::gcc-O0-sym",

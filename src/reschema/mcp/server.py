@@ -193,7 +193,9 @@ def submit_model(
     n_fuzz raises the budget but is FLOORED at N_FUZZ=64 at this boundary —
     you may not tune your own judge down). A model that segfaults or hangs a
     case is rejected as a crash. Wrong memory direction or a no-op against a
-    void spec with no memory channel is rejected too.
+    void spec with no memory channel is rejected too. The spec must admit at
+    least 2 distinct inputs (empty params or all-fixed ranges are refused at
+    the spec stage — never pass vacuously).
     Accepted models enter the task ledger (see status) and compose per-TU at
     compose time: helpers used by one function must be `static`.
     `notes` (optional strings) are recorded in the family deduction cache as

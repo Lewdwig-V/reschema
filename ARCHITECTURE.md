@@ -238,17 +238,19 @@ Every agent-facing verdict is a typed dict. There are three shapes:
   runway, refused from the 4th (`DUP_MIN_NEAR_REJECTS`) — a one-char fix
   discovered after two flailed attempts always reaches the gate. Fingerprints
   live in the task ledger's `rejected_norm` (string-literal-aware
-  normalization, capped at 8). Loop-killer, not paraphrase-blocker; spec
-  rejects are never fingerprinted (the source was never judged); guard
+  normalization, capped at 8). Loop-killer, not paraphrase-blocker; verdicts
+  without a CODE judgment are never fingerprinted (the malformed-spec early
+  return, plus validator stages `spec`/`arity`/`skip-starvation`/`infra` —
+  a declaration failure, not a source verdict); guard
   refusals count as submissions/rejections (E still prices the flail; the
   guard saves the compile/fuzz wall-clock and endpoint tokens).
 - Mechanical rejects carry a human-readable `detail`, but its nesting depends
   on the path: program-gate mechanical rejects (`compile`,
   `hidden-starvation`, `duplicate`) return top-level `{accepted: false, reason, detail}`;
   function-gate floor verdicts from the validator (arity, void-without-
-  memory-channel, skip-starvation, infra) nest it as `{accepted: false,
-  divergence: {stage, detail}}` (skip-starvation also carries the fuzz
-  `seed`); a malformed spec JSON fails before validation as top-level
+  memory-channel, no-input-variation spec, skip-starvation, infra) nest it as
+  `{accepted: false, divergence: {stage, detail}}` (skip-starvation also
+  carries the fuzz `seed`); a malformed spec JSON fails before validation as top-level
   `{accepted: false, reason: "spec", detail}`. Clients should read the reason
   from `divergence.stage` first and fall back to top-level `reason`.
 

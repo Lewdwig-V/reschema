@@ -186,8 +186,10 @@ priced by measured pass-rate with half-life culling.
 **Load-bearing risk:** the juiciest failure residue is UB-laden — compile to
 nondeterminism poisons ground truth. The filter's yield decides viability
 before any engine work. **Entry (#111):** offline fodder-yield
-experiment — mine `.reschema` ledgers, compile+double-trace every rejected
-source, report keep-rates per failure class.
+experiment — mine `rejected_sources` (the ledger failure store that
+prerequisite review required first, #116; pre-store history comes from
+floor transcripts), compile+double-trace every rejected source, report
+keep-rates per failure class.
 
 ### 3B — Judge-integrity circuitry (verifier hardener)
 

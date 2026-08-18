@@ -135,6 +135,42 @@ def test_rejected_sources_capped_at_16_newest(manifest):
     assert len(rs) == 16
     assert rs[0]["c_source"] == "int main() { return 2; }"  # oldest evicted
     assert rs[-1]["c_source"] == "int main() { return 17; }"
+
+
+def test_unjudged_outcomes_never_enter_the_failure_supply(manifest, monkeypatch):
+    # codex P2 on #116: infra compile failures (worker unavailable — the source
+    # was never compiled or judged) and hidden-starvation (input-side
+    # exhaustion) must NOT pollute rejected_sources nor feed the flail guard.
+    from reschema import engine as eng
+
+    st = _prog_store(manifest)
+    monkeypatch.setattr(
+        eng, "compile_model", lambda src, out: (False, "compile infra: no podman")
+    )
+    r = eng.submit_program(st, GOOD_ROT13_PROG)
+    assert r["accepted"] is False and r["reason"] == "compile"
+    led = st.ledger()
+    assert "rejected_sources" not in led  # unjudged: no body in the supply
+    assert "rejected_norm" not in led  # unjudged: no fingerprint either
+    assert led["recent"][-1]["stage"] == "infra"  # ...but the journal says why
+
+    monkeypatch.undo()
+    # genuine compile failure of the same GOOD source shape is a code verdict
+    # again — and the unjudged infra attempts leave no flail residue behind
+    st2 = _prog_store(manifest)
+    monkeypatch.setattr(
+        eng,
+        "hidden_input_stream",
+        lambda rng, modes: iter([]),  # input draw starves: harness-side failure
+    )
+    st2.record_case("b", ["world"], b"")
+    r2 = eng.submit_program(st2, GOOD_ROT13_PROG)
+    assert r2["reason"] == "hidden-starvation"
+    led2 = st2.ledger()
+    assert "rejected_sources" not in led2 and "rejected_norm" not in led2
+
+
+def test_program_accept_is_idempotent_and_audited(manifest):
     from reschema.engine import submit_program
 
     st = _prog_store(manifest)

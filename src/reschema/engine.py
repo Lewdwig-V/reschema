@@ -216,6 +216,11 @@ DUP_STORE = 8  # fingerprints kept per task ledger (recent flail is the target)
 # declaration failures (codex P2 on #101, same exclusion class as the
 # malformed-spec early return).
 DUP_NO_VERDICT_STAGES = ("spec", "arity", "skip-starvation", "infra")
+# Program-mode mirror (codex P2 on #116): infra compiles are transient
+# environment failures and hidden-starvation is input-side exhaustion — the
+# source was never judged, so it feeds neither fingerprints nor the 3A
+# failure supply.
+PROGRAM_NO_VERDICT_STAGES = ("infra", "hidden-starvation")
 
 
 def _norm_source(src: str) -> str:
@@ -358,21 +363,20 @@ def submit_program(
     def reject(**kw):
         led["rejections"] += 1
         _record_notes(store, "__main__", notes, promoted=False)
-        _fingerprint_reject(led, c_source)  # every program reject is a code verdict
-        _journal_rejected_source(
-            led,
-            {
-                "mode": "program",
-                "stage": kw.get("stage", kw["reason"]),
-                "c_source": c_source,
-            },
-        )
+        stage = kw.get("stage", kw["reason"])
+        if stage not in PROGRAM_NO_VERDICT_STAGES:
+            # code verdicts only: infra compiles / hidden-starvation never
+            # judged the model — no fingerprints, no failure-supply bodies
+            _fingerprint_reject(led, c_source)
+            _journal_rejected_source(
+                led, {"mode": "program", "stage": stage, "c_source": c_source}
+            )
         _journal(
             led,
             {
                 "mode": "program",
                 "outcome": "reject",
-                "stage": kw.get("stage", kw["reason"]),
+                "stage": stage,
             },
         )
         store.save_ledger(led)
@@ -391,7 +395,13 @@ def submit_program(
 
     ok, err = compile_model(c_source, model)
     if not ok:
-        return reject(reason="compile", detail=err)
+        # infra detail keeps reason "compile" for contract stability; the
+        # journal stage names it honestly (and skips flail/supply stores)
+        return reject(
+            reason="compile",
+            stage="infra" if err.startswith("compile infra:") else "compile",
+            detail=err,
+        )
     v = replay_against(model, rec)
     if not v.ok:
         return reject(reason=v.reason, stage="recorded", divergence=v.divergence)

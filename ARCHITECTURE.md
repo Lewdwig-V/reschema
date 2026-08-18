@@ -287,8 +287,11 @@ fingerprints — see the rejection payload's `duplicate` entry — and
 `rejected_sources`: the RAW c_source of each code-verdict reject with mode/
 function/stage, capped at 16 newest. That store is the phase-3 self-play
 failure supply (#111 prerequisite): all rejects at the flail guard's
-fingerprinting sites, never declaration failures (spec-no-verdict
-stages).
+fingerprinting sites, never outcomes without judgment — declaration
+failures (spec no-verdict stages, function path), transient infra compile
+failures, or hidden input-starvation (program path's
+`PROGRAM_NO_VERDICT_STAGES` mirror; the journal's `stage` still names
+them honestly).
 
 **Concurrency: single-process (or out-of-band serialized) access is
 assumed.** Ledger writes are atomic per file (temp + `os.replace`) but

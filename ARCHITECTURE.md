@@ -287,7 +287,9 @@ submissions/rejections counters, `audit` seeds, a
 capped `recent` submission journal, the `rejected_norm` flail-guard
 fingerprints — see the rejection payload's `duplicate` entry — and
 `rejected_sources`: the RAW c_source of each code-verdict reject with mode/
-function/stage, capped at 16 newest. That store is the phase-3 self-play
+function/stage (plus the declared `params` on function entries, so the
+supply re-verifies from `{task_id, function, params, c_source}` alone),
+capped at 16 newest. That store is the phase-3 self-play
 failure supply (#111 prerequisite): all rejects at the flail guard's
 fingerprinting sites, never outcomes without judgment — declaration
 failures (spec no-verdict stages, function path), transient infra compile

@@ -149,3 +149,72 @@ def test_run_experiment_dedupes_candidates_globally(tmp_path, monkeypatch):
     assert report["submit_model_calls_found"] == 2
     assert report["dupes_collapsed"] == 1
     assert len(report["candidates"]) == 1
+
+
+# --- function-mode verification (params-persistent supply) ---
+
+import pytest
+
+from tools.fodder import function_verdict, load_manifests
+
+GOOD_SUM = """#include <stdint.h>
+static int32_t clamp_it(int32_t v, int32_t lo, int32_t hi){
+    return v < lo ? lo : v > hi ? hi : v;
+}
+__attribute__((sysv_abi)) int32_t sum_range(int32_t lo, int32_t hi){
+    int32_t s=0; for(int32_t i=lo;i<=hi;i++) s=clamp_it(s+i,-1000,1000); return s;
+}"""
+BAD_SUM = "int main(){ return 0 } // not even a function Compile-wait"
+WRONG_SUM = """#include <stdint.h>
+__attribute__((sysv_abi)) int32_t sum_range(int32_t a,int32_t b){return a+b;}"""
+SUM_PARAMS = [
+    {"name": "lo", "kind": "i32", "range": [-20, 10]},
+    {"name": "hi", "kind": "i32", "range": [10, 30]},
+]
+
+
+@pytest.fixture(scope="module")
+def manifests(built_corpus):
+    from pathlib import Path
+
+    return load_manifests([Path(".reschema/corpus")])
+
+
+def test_function_verdict_classes(manifests, tmp_path):
+    # behavioral: compiles + runs, loses vs the original — THE usable fodder
+    v = function_verdict(
+        manifests, "calc::gcc-O2-sym", "sum_range", SUM_PARAMS, WRONG_SUM, tmp_path
+    )
+    assert v == "behavioral"
+    # compile gate again: garbage must not even reach cases
+    assert (
+        function_verdict(
+            manifests, "calc::gcc-O2-sym", "sum_range", SUM_PARAMS, BAD_SUM, tmp_path
+        )
+        == "compile-fail"
+    )
+    # low-budget lucky pass: RIGHT at tiny fuzz — reported honestly, never merged
+    # into behavioral counts
+    v = function_verdict(
+        manifests, "calc::gcc-O2-sym", "sum_range", SUM_PARAMS, GOOD_SUM, tmp_path
+    )
+    assert v == "ok-lucky"
+    # malformed decls from transcripts: spec, never judged
+    assert (
+        function_verdict(
+            manifests,
+            "calc::gcc-O2-sym",
+            "sum_range",
+            [{"name": "x"}],
+            GOOD_SUM,
+            tmp_path,
+        )
+        == "spec-malformed"
+    )
+    # resolvability: unknown task/function can't be verified at all
+    assert (
+        function_verdict(
+            manifests, "nope::x", "sum_range", SUM_PARAMS, GOOD_SUM, tmp_path
+        )
+        == "unresolvable"
+    )

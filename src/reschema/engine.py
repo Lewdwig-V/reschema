@@ -216,6 +216,11 @@ DUP_STORE = 8  # fingerprints kept per task ledger (recent flail is the target)
 # declaration failures (codex P2 on #101, same exclusion class as the
 # malformed-spec early return).
 DUP_NO_VERDICT_STAGES = ("spec", "arity", "skip-starvation", "infra")
+# Program-mode mirror (codex P2 on #116): infra compiles are transient
+# environment failures and hidden-starvation is input-side exhaustion — the
+# source was never judged, so it feeds neither fingerprints nor the 3A
+# failure supply.
+PROGRAM_NO_VERDICT_STAGES = ("infra", "hidden-starvation")
 
 
 def _norm_source(src: str) -> str:
@@ -290,6 +295,20 @@ def _fingerprint_reject(led: dict, c_source: str) -> None:
     del fps[:-DUP_STORE]
 
 
+REJECTED_SOURCES_STORE = 16  # like the recent journal: bounded, newest
+
+
+def _journal_rejected_source(led: dict, entry: dict) -> None:
+    """Persist the RAW rejected source for the self-play failure supply
+    (#111 prerequisite, found by review): fingerprints alone can't be
+    re-compiled. Grows at exactly the flail-guard's fingerprint sites — code
+    verdicts only (compile/replay/divergence/duplicate), never declaration
+    failures (spec/arity/starvation/infra: the source was never judged)."""
+    rs = led.setdefault("rejected_sources", [])
+    rs.append(entry)
+    del rs[:-REJECTED_SOURCES_STORE]
+
+
 def status_snapshot(store: TaskStore) -> dict:
     """Ledger+manifest status: readiness, coverage, validation telemetry."""
     led = store.ledger()
@@ -344,13 +363,20 @@ def submit_program(
     def reject(**kw):
         led["rejections"] += 1
         _record_notes(store, "__main__", notes, promoted=False)
-        _fingerprint_reject(led, c_source)  # every program reject is a code verdict
+        stage = kw.get("stage", kw["reason"])
+        if stage not in PROGRAM_NO_VERDICT_STAGES:
+            # code verdicts only: infra compiles / hidden-starvation never
+            # judged the model — no fingerprints, no failure-supply bodies
+            _fingerprint_reject(led, c_source)
+            _journal_rejected_source(
+                led, {"mode": "program", "stage": stage, "c_source": c_source}
+            )
         _journal(
             led,
             {
                 "mode": "program",
                 "outcome": "reject",
-                "stage": kw.get("stage", kw["reason"]),
+                "stage": stage,
             },
         )
         store.save_ledger(led)
@@ -369,7 +395,13 @@ def submit_program(
 
     ok, err = compile_model(c_source, model)
     if not ok:
-        return reject(reason="compile", detail=err)
+        # infra detail keeps reason "compile" for contract stability; the
+        # journal stage names it honestly (and skips flail/supply stores)
+        return reject(
+            reason="compile",
+            stage="infra" if err.startswith("compile infra:") else "compile",
+            detail=err,
+        )
     v = replay_against(model, rec)
     if not v.ok:
         return reject(reason=v.reason, stage="recorded", divergence=v.divergence)
@@ -636,6 +668,15 @@ def submit_function(
         led["submissions"] += 1
         led["rejections"] += 1
         _fingerprint_reject(led, c_source)
+        _journal_rejected_source(
+            led,
+            {
+                "mode": "function",
+                "function": func,
+                "stage": "duplicate",
+                "c_source": c_source,
+            },
+        )
         _journal(
             led,
             {
@@ -674,6 +715,15 @@ def submit_function(
         # key; spec/arity/starvation/infra stages never executed the model.
         if v.divergence.get("stage") not in DUP_NO_VERDICT_STAGES:
             _fingerprint_reject(led, c_source)
+            _journal_rejected_source(
+                led,
+                {
+                    "mode": "function",
+                    "function": func,
+                    "stage": v.divergence.get("stage", "divergence"),
+                    "c_source": c_source,
+                },
+            )
         _journal(
             led,
             {

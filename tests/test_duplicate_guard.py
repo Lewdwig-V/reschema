@@ -213,6 +213,28 @@ def test_accepted_source_near_dups_never_blocked():
     assert r["accepted"] is True  # idempotent re-accept, guard stays out
 
 
+def test_unjudged_program_outcomes_never_fingerprint(monkeypatch):
+    # codex P2 on #116: infra compile failures are transient env failures, not
+    # flail — identical resubmissions after infra outages must not be refused
+    # as duplicate loops (the function path already excludes infra verdicts).
+    from reschema import engine as eng
+
+    st = _store("rot13::gcc-O2-sym")
+    monkeypatch.setattr(
+        eng, "compile_model", lambda src, out: (False, "compile infra: no podman")
+    )
+    for _ in range(3):  # three IDENTICAL submissions, all infra-failed
+        r = eng.submit_program(st, GOOD_ROT13)
+        assert r["reason"] == "compile"
+    led = st.ledger()
+    assert not led.get("rejected_norm") and not led.get("rejected_sources")
+
+    monkeypatch.undo()
+    st.record_case("a", ["abc"], b"")
+    r = eng.submit_program(st, GOOD_ROT13)
+    assert r["accepted"] is True  # the same source sails through once judged
+
+
 def test_fingerprints_are_per_task():
     a = _store("rot13::gcc-O2-sym")
     a.record_case("a", ["abc"], b"")

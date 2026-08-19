@@ -79,7 +79,11 @@ def classify_source(src: str) -> str:
 
 def accepted_sources_for_runs(runs_dir: Path) -> set[str]:
     """Exact accepted sources persisted per task: function accepts from
-    ledger dicts, program accepts from the task dir's `model.c` artifact."""
+    ledger dicts, program accepts from the ledger's immutable
+    `program_source` record. NEVER the task dir's `model.c` — compile_model
+    rewrites that artifact on EVERY compile, including rejected attempts
+    after acceptance (codex P2 on #118); absence degrades to skipping
+    nothing, the safe direction."""
     out = set()
     for led in runs_dir.rglob("ledger.json"):
         try:
@@ -89,9 +93,17 @@ def accepted_sources_for_runs(runs_dir: Path) -> set[str]:
         for entry in d.get("accepted", []):
             if isinstance(entry, dict):
                 out.update(str(v) for v in entry.values())
-        model_c = led.parent / "model.c"
-        if model_c.exists() and "program" in d.get("accepted", []):
-            out.add(model_c.read_text())
+        if "program" in d.get("accepted", []):
+            if isinstance(d.get("program_source"), str):
+                out.add(d["program_source"])  # immutable record (current schema)
+            else:
+                codex_fallback = led.parent / "model.c"
+                if codex_fallback.exists():
+                    # LEGACY floors only: dogfood slots are killed on accept,
+                    # so model.c coincides with the winner by lifecycle. Codex
+                    # P2's corruption vector is post-accept resubmits, which
+                    # this layout can't produce.
+                    out.add(codex_fallback.read_text())
     return out
 
 
@@ -127,12 +139,24 @@ def run_experiment(
         for log in (root / "runs").glob("*/sandbox/*.log"):
             entries.extend(parse_transcript(log.read_text(errors="replace")))
     tag_verdicts(entries, accepted)
-    program = [e for e in entries if e["mode"] == "program"]
+    # codex P2 on #118: candidates are unique BODIES (mode + exact source),
+    # not repeated attempts — first occurrence keeps its provenance; verbatim
+    # replays across slot logs / floor roots collapse to one probed body.
+    unique, seen = [], set()
+    for e in entries:
+        key = (e["mode"], e["c_source"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(e)
+    dupes_collapsed = len(entries) - len(unique)
+    program = [e for e in unique if e["mode"] == "program"]
     rejected = [e for e in program if e["verdict"] == "rejected"]
     report = {
         "floors": [str(r) for r in floor_roots],
         "submit_model_calls_found": len(entries),
-        "function_mode_deferred": sum(1 for e in entries if e["mode"] == "function"),
+        "dupes_collapsed": dupes_collapsed,
+        "function_mode_deferred": sum(1 for e in unique if e["mode"] == "function"),
         "program_mode_total": len(program),
         "program_accepted_skipped": sum(
             1 for e in program if e["verdict"] == "accepted"

@@ -8,6 +8,8 @@ including its Two negative gates: garbage C must NOT compile, and
 nondeterministic behavior must NOT pass as stable.
 """
 
+import json
+
 from tools.fodder import (
     classify_source,
     parse_transcript,
@@ -87,3 +89,63 @@ def test_stability_filter_verdict_classes(tmp_path):
         'printf("%ld\\n", (long)tv.tv_usec); return 0; }'
     )
     assert stability_verdict(clocks, tmp_path) == "nondeterministic"
+
+
+def test_accepted_sources_read_the_immutable_ledger_record(tmp_path):
+    # codex P2 on #118: model.c is rewritten by every later compile (rejected
+    # attempts included) — accepted bodies come ONLY from the ledger's
+    # persisted `program_source`; absence degrades to skipping nothing.
+    from tools.fodder import accepted_sources_for_runs
+
+    tasks = tmp_path / "runs" / "x" / ".reschema" / "tasks" / "t__s"
+    tasks.mkdir(parents=True)
+    (tasks / "ledger.json").write_text(
+        json.dumps(
+            {
+                "accepted": ["program", {"fn1": "int fn1(){ return 1; }"}],
+                "submissions": 0,
+                "rejections": 0,
+                "program_source": "int main(){ return 0; }",
+            }
+        )
+    )
+    (tasks / "model.c").write_text("int main(){ return 99; }")  # later loser
+    accepted = accepted_sources_for_runs(tmp_path / "runs")
+    assert accepted == {
+        "int main(){ return 0; }",
+        "int fn1(){ return 1; }",
+    }
+
+
+def test_legacy_ledgers_fall_back_to_model_c_by_lifecycle(tmp_path):
+    # pre-store floors carry no program_source: dogfood slots die on accept,
+    # so the surviving model.c coincides with the winner by lifecycle.
+    from tools.fodder import accepted_sources_for_runs
+
+    tasks = tmp_path / "runs" / "x" / ".reschema" / "tasks" / "t__s"
+    tasks.mkdir(parents=True)
+    (tasks / "ledger.json").write_text(
+        json.dumps({"accepted": ["program"], "submissions": 0, "rejections": 0})
+    )
+    (tasks / "model.c").write_text("int main(){ return 7; }")
+    assert accepted_sources_for_runs(tmp_path / "runs") == {"int main(){ return 7; }"}
+
+
+def test_run_experiment_dedupes_candidates_globally(tmp_path, monkeypatch):
+    # codex P2 on #118: identical bodies across slot logs/floor roots are ONE
+    # candidate, not N observations — repetition must not move keep-rates.
+    from tools import fodder
+
+    (tmp_path / "runs" / "a" / "sandbox").mkdir(parents=True)
+    (tmp_path / "runs" / "b" / "sandbox").mkdir(parents=True)
+    body = "int main(){ return 0; }"
+    for d in ("a", "b"):
+        (tmp_path / "runs" / d / "sandbox" / "transcript-x.log").write_text(
+            f'⚙ reschema_submit_model {{"c_source":"{body}","task_id":"t::s"}}\n'
+        )
+    monkeypatch.setattr(fodder, "accepted_sources_for_runs", lambda runs_dir: set())
+    monkeypatch.setattr(fodder, "stability_verdict", lambda src, d: "stable")
+    report = fodder.run_experiment([tmp_path], tmp_path / "out", verbose=False)
+    assert report["submit_model_calls_found"] == 2
+    assert report["dupes_collapsed"] == 1
+    assert len(report["candidates"]) == 1

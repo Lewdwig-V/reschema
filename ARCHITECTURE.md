@@ -281,7 +281,9 @@ the cheap scout round before an agent commits recorded cases.
 
 `TaskStore` persists per-task state under `.reschema/tasks/<task_id>/`:
 canonical case traces (`trace_<label>.json`) and `ledger.json`
-(accepted entries, submissions/rejections counters, `audit` seeds, a
+(accepted entries [markers and `{func: source}` dicts], the immutable
+`program_source` body of the newest accepted program model,
+submissions/rejections counters, `audit` seeds, a
 capped `recent` submission journal, the `rejected_norm` flail-guard
 fingerprints — see the rejection payload's `duplicate` entry — and
 `rejected_sources`: the RAW c_source of each code-verdict reject with mode/

@@ -181,6 +181,24 @@ def test_program_accept_is_idempotent_and_audited(manifest):
     hidden_seed = led["audit"]["program"]["hidden_seed"]
     assert hidden_seed.startswith("hidden:rot13::gcc-O1-sym:")
     assert len(hidden_seed.rsplit(":", 1)[1]) == 32  # token_hex(16)
+    # the accepted BODY is persisted immutably, newest accept wins —
+    # never infer it from compile-artifact side effects (codex P2 on #118)
+    assert led["program_source"] == GOOD_ROT13_PROG
+
+
+def test_later_rejects_never_corrupt_the_accepted_program_source(manifest):
+    from reschema.engine import submit_program
+
+    st = _prog_store(manifest)
+    assert submit_program(st, GOOD_ROT13_PROG)["accepted"]
+    submit_program(st, BAD_ROT13_PROG)  # post-accept reject retraces model.c
+    led = st.ledger()
+    assert led["program_source"] == GOOD_ROT13_PROG  # immutable, not the loser
+    # a DIFFERENT accepted source replaces it (newest accept wins)
+    GOOD2 = GOOD_ROT13_PROG.replace("puts(argv[1]);", 'printf("%s\\n", argv[1]);')
+    assert GOOD2 != GOOD_ROT13_PROG  # same behavior, different body
+    assert submit_program(st, GOOD2)["accepted"]
+    assert st.ledger()["program_source"] == GOOD2
 
 
 def test_program_accept_payload_is_rich(manifest):

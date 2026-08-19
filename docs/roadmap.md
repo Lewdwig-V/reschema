@@ -145,7 +145,16 @@ nominated trigger for the last four).
 ## Phase 3 — Adversarial Self-Play & Curriculum Generation
 
 Harness generates new tasks/attacks from observed agent failures; a curriculum
-hardens both agent and verifier over time. Details TBD at brainstorm.
+hardens both agent and verifier over time. Brainstormed and decomposed
+2026-08-18 (five-frame divergent pass, traps pruned on record): **three
+circuits plus a measurement-governance floor**, each with an
+experiment-or-instrument entry point before any curriculum machinery ships.
+
+**Pruned in brainstorm (do not resurrect without a named trigger):**
+demoting verified-fact provenance (softens the trust contract the priming
+claim rests on), stale-fact sabotage tasks (teaches agents to distrust the
+measured mechanism), quit/permdeath taxes (distorts E's calibrated
+economics), plaza-style pass-rate pricing (premature for n=5 floors).
 
 **Entered from 2C evidence (2026-08):**
 
@@ -161,6 +170,96 @@ hardens both agent and verifier over time. Details TBD at brainstorm.
   replacing debate with boundary data. Its outcome is the named trigger for
   the deferred adaptations above (BB-interval tasks, eBPF recording,
   config-D solver hints).
+
+### 3A — Self-play engine (curriculum supply)
+
+Ledger rejected `c_source` → **compile-clean + deterministic-double-record
+filter** in the existing pinned podman image → survivors registered as new
+corpus slots. Provenance is perfect (the harness owns the build),
+information parity holds by construction (the solver wrote the source — no
+insider info possible), and the failure supply self-renews with every
+rejection. Boss-synthesis capstones splice the last-three failure classes
+into one slot requiring a clean clear for tier promotion; synthetic cheater
+gate-bypasses compile into a permanent negative-regression garden; slots
+priced by measured pass-rate with half-life culling.
+
+**Load-bearing risk:** the juiciest failure residue is UB-laden — compile to
+nondeterminism poisons ground truth. The filter's yield decides viability
+before any engine work. **Entry (#111):** offline fodder-yield
+experiment — mine `rejected_sources` (the ledger failure store that
+prerequisite review required first, #116; pre-store history comes from
+floor transcripts), compile+double-trace every rejected source, report
+keep-rates per failure class.
+
+### 3B — Judge-integrity circuitry (verifier hardener)
+
+Every verifier upgrade (seed policy, #109 coverage guidance, canonicalizer
+bump) **re-grades the last K accepted sources** under xdist-isolated
+RESCHEMA_HOME; an accept→reject flip halts curriculum. **Adjudication
+defaults to "judge regressed"** unless independent deterministic evidence
+(coverage delta, canonicalizer diff, N-fold fresh-entropy reproduction)
+proves the old accept was flattery — anything less lets a newly-blind judge
+relabel its own regression and silently delete the tripwire. A pinned
+prior-release judge (v0.2.0) cross-grades a sample per cycle as the
+co-evolution tripwire; the known-attack autoimmune battery runs per-PR in
+CI (softness unmergeable, not per-cycle archaeology); every generated attack
+carries a coverage delta (#109 machinery). Adjudicated flattery pairs are
+the highest-information preference data Phase 4 will ever see.
+
+**Load-bearing risk:** the frozen-anchor sample rate vs CI budget.
+**Entry (#112):** the isolated re-grade job + one xdist test —
+recompile last K ledger accepts in the pinned image, re-run the hidden
+gate, emit verdict-diff JSON. Measurement first, adjudication only after
+its output is trusted.
+
+### 3C — Honesty boundary (the generator's sense organ)
+
+One pure chokepoint, **`digest()`**, converts ledger failure records into
+canonicalized antigen fragments (ADDR-ordinals + structured divergence
+payload; fuzz seeds, entropy draws, gate traces, whole originals stripped)
+— schema keyed to `CANONICALIZER_VERSION` so a digest change forces a
+curriculum re-record under the same rule as canonicalizer v2. The generator
+knows nothing else; the insider ban is enforced by bandwidth, not by rule a
+future generator could break. Task proposals carry a derivation certificate
+(fragment IDs + public artifacts) and pass an engine-side **parity auditor**
+(privileged lane vs public 5-tool lane, harness-fixed budget like the
+N_FUZZ floor) that voids non-reproducible edges with a structured reject;
+admission writes a provenance-complete unit — Phase 4's eligibility filter.
+
+**Load-bearing risk:** the public-lane budget IS the definition of
+"legitimately obtainable", and parity verdicts under fresh entropy are
+nondeterministic — pinned auditor seeds or margin-banded verdicts required
+before the auditor is trustworthy. **Entry (#113):** `digest()` plus
+one snapshot-pin test (seeds/entropy/traces never survive a fragment);
+route the family-memory writer through it so enforcement exists before the
+auditor does.
+
+### 3D — Metric-epoch governance (measurement invariance)
+
+The metric parameter vector θ_E = (α, β, N^exp_min, HIDDEN_N) —
+(0.15, 0.40, 1 probe baseline, HIDDEN_N=8) — is pinned behind a
+`METRIC_EPOCH` constant with the same immutability rules as
+`CANONICALIZER_VERSION`: immutable within an epoch, zero in-flight tweaks,
+explicit epoch transitions. Ledgers and `status` stamp `metric_epoch`;
+benchmark aggregation **refuses φ across mixed epochs** without
+re-baselining or an explicit override flag. An epoch transition re-baselines
+against the frozen reference anchor suite and reports ΔE_drift first-class
+(normalized cross-epoch transfer Φ* = Φ − ΔE_drift). Without this,
+cross-epoch transfer is an uncalibrated moving target — a higher E could
+mean a more forgiving penalty curve, not better deductive generalization.
+
+**Entry (#114):** the epoch constant + ledger/status stamping + the
+mixed-epoch φ refusal in `tools/dogfood/measure.py`. Drift suite lands when
+the first transition actually looms — premature before then.
+
+### Phase-3 ordering
+
+3D's stamps are cheap and guard everything downstream of measurement; 3A's
+fodder experiment decides whether the engine exists at all; 3B's re-grade
+job starts measuring once #109 lands (it parasitizes the coverage
+machinery); 3C's chokepoint precedes the first generated task ever written.
+Curriculum machinery proper starts only when each circuit's entry
+experiment has returned its boundary data.
 
 ## Phase 4 — Preference Harvesting & Weight-Level RSI
 

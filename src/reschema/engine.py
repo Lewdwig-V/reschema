@@ -441,6 +441,10 @@ def submit_program(
         x for x in led["accepted"] if not (isinstance(x, str) and x == "program")
     ]
     led["accepted"].append("program")
+    # The accepted BODY alongside the marker: self-play mining reads this,
+    # never compile-artifact side effects (codex P2 on #118 — model.c is
+    # rewritten by every later compile). Newest accept wins, like fn dicts.
+    led["program_source"] = c_source
     led.setdefault("audit", {})["program"] = {"hidden_seed": hidden_seed}
     _journal(led, {"mode": "program", "outcome": "accept"})
     _record_notes(store, "__main__", notes, promoted=True)

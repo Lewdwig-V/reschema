@@ -175,9 +175,14 @@ SUM_PARAMS = [
 
 @pytest.fixture(scope="module")
 def manifests(built_corpus):
+    # RESCHEMA_HOME carries the corpus under xdist AND on CI's fresh checkout
+    # (where gitignored repo-relative .reschema does not exist)
+    import os
     from pathlib import Path
 
-    return load_manifests([Path(".reschema/corpus")])
+    return load_manifests(
+        [Path(os.environ.get("RESCHEMA_HOME", ".")) / ".reschema" / "corpus"]
+    )
 
 
 def test_function_verdict_classes(manifests, tmp_path):

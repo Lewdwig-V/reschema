@@ -3,6 +3,7 @@ import shutil
 
 import pytest
 
+import reschema.corpus.generate as genmod
 from reschema.corpus.generate import build
 
 
@@ -22,7 +23,45 @@ def _manifest_file(root):
     return root.joinpath("manifest.json").read_text()
 
 
-def test_targeted_single_slot_matches_full_build(root):
+# Merge/prune/order semantics are fully exercised by REAL compiles of tiny
+# stub seeds — the build+convergence logic cannot read sizes — while a full
+# 60-slot matrix rebuild per test costs ~30s per worker. Stub seed sources
+# define exactly the function names the registry expects, and the manifests
+# they generate are still REAL (addresses/sizes come from real ELF binaries).
+_STUB_SOURCES = {
+    "rot13": (
+        "__attribute__((sysv_abi, noinline)) int rot13_char(int c){ return c; }\n"
+        "__attribute__((sysv_abi, noinline)) int rot13(char *s){ return 0; }\n"
+        "int main(void){ return 0; }\n"
+    ),
+    "check": (
+        "__attribute__((sysv_abi, noinline)) unsigned pw_hash(const char *s){ return 2; }\n"
+        "__attribute__((sysv_abi, noinline)) int check_pw(const char *s){ return 1; }\n"
+        "int main(void){ return 0; }\n"
+    ),
+    "filewrite": (
+        "__attribute__((sysv_abi, noinline)) int xform_byte(int b, int i){ return b ^ i; }\n"
+        "int main(void){ return 0; }\n"
+    ),
+}
+
+
+@pytest.fixture
+def stub_seeds(tmp_path, monkeypatch):
+    d = tmp_path / "stubseeds"
+    d.mkdir()
+    for name, src in _STUB_SOURCES.items():
+        (d / f"{name}.c").write_text(src)
+    monkeypatch.setattr(genmod, "SEEDS", d)
+    return d
+
+
+def test_full_build_default_unchanged(built_corpus):
+    # counting the real default build: the session fixture already ran it
+    assert len(built_corpus) == 60
+
+
+def test_targeted_single_slot_matches_full_build(root, stub_seeds):
     full = build(root)
     want = json.dumps(_entry(full, "filewrite::gcc-O2-sym"))
 
@@ -32,17 +71,20 @@ def test_targeted_single_slot_matches_full_build(root):
     assert json.dumps(_entry(targeted, "filewrite::gcc-O2-sym")) == want
 
 
-def test_targeted_merge_is_canonical_and_coherent(root):
-    build(root)  # full-build manifest is the byte-for-byte coherence reference
+def test_targeted_merge_is_canonical_and_coherent(root, stub_seeds):
+    # Ordering/coherence assertions hold over the sym-only slice: the strip
+    # round and half the slots add no evidence to the merge logic this tests
+    # (strip correctness itself is pinned two tests down).
+    build(root, matrix=["gcc-O2-sym", "clang-O2-sym"])
     ref_text = _manifest_file(root)
 
     shutil.rmtree(root)
-    rot = build(root, seed_ids=["rot13"])
-    assert len(rot) == 12
+    rot = build(root, seed_ids=["rot13"], matrix=["gcc-O2-sym", "clang-O2-sym"])
+    assert len(rot) == 2
     assert {x["seed"] for x in json.loads(_manifest_file(root))} == {"rot13"}
 
     # merging a second seed preserves the first and lands in canonical order
-    build(root, seed_ids=["check"])
+    build(root, seed_ids=["check"], matrix=["gcc-O2-sym", "clang-O2-sym"])
     merged = json.loads(_manifest_file(root))
     assert {x["seed"] for x in merged} == {"rot13", "check"}
     assert [x["task_id"] for x in merged] == sorted(
@@ -51,7 +93,7 @@ def test_targeted_merge_is_canonical_and_coherent(root):
     )
 
     # rebuilding everything converges to the full-build manifest byte-for-byte
-    build(root)
+    build(root, matrix=["gcc-O2-sym", "clang-O2-sym"])
     assert _manifest_file(root) == ref_text
 
 
@@ -66,12 +108,7 @@ def build_sort_key(task_id):
     )
 
 
-def test_full_build_default_unchanged(root):
-    m = build(root)
-    assert len(m) == 60
-
-
-def test_full_build_prunes_stale_slots_but_targeted_preserves_them(root):
+def test_full_build_prunes_stale_slots_but_targeted_preserves_them(root, stub_seeds):
     build(root)  # full: manifest from scratch
     mf = root / "manifest.json"
     ghost = {

@@ -229,12 +229,16 @@ def batch_call_original(
     outs = []
     for case in cases:
         ql.restore(snap)
-        # #121 measurement seam: optional per-case hook (e.g. coverage
-        # probe attach/detach). Default None = zero behavior change; the
-        # snapshot is restored BEFORE the hook fires, so hook state never
-        # bleeds across cases.
+        # #121 measurement seam: optional per-case hook, called as
+        # pre_case_hook(ql, case_index) after the snapshot restore.
+        # Default None = zero behavior change. REGISTRATIONS PERSIST ACROSS
+        # RESTORES (qiling hooks are engine-level, not snapshot state — codex
+        # P2 on #124): hooks that call ql.hook_* must register ONCE (at
+        # index 0) and reset per-case state themselves; stacking a
+        # registration per case multiplies callbacks and corrupts both the
+        # measured overhead and the hook's own counters.
         if pre_case_hook is not None:
-            pre_case_hook(ql)
+            pre_case_hook(ql, len(outs))
         o = _run_case(ql, addr, params, case)
         o["batch_mode"] = "batched-snapshot"
         outs.append(o)

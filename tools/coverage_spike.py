@@ -38,8 +38,17 @@ def _hook_recorder():
         prev[0] = address
         hits[0] += 1
 
-    def hook(ql):
-        ql.hook_block(cb)
+    registered = [None]
+
+    def hook(ql, case_index):
+        """Register ONCE PER VM (qiling registrations persist across snapshot
+        restores but never across _boot_vm) and zero the bitmap once at that
+        vm's first case — the union over the batch is THE edge map the spike
+        measures. Never stack a registration per case (codex P2 on #124)."""
+        if registered[0] is not ql:  # fresh batch VM
+            registered[0] = ql
+            ql.hook_block(cb)
+            bits[:] = b"\x00" * len(bits)
 
     return hook, bits, hits
 

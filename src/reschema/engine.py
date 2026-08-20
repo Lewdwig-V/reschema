@@ -117,8 +117,15 @@ class TaskStore:
 
 
 # ponytail: manifest-driven input-space deferred
-STDIN_DRIVEN = {"check", "filewrite"}  # seed names fed via stdin; others take argv
-STDIN_BYTES_DRIVEN = {"filewrite"}  # stdin in the RAW byte domain (binary-safe seeds)
+STDIN_DRIVEN = {
+    "check",
+    "filewrite",
+    "pkfmt",
+}  # seed names fed via stdin; others take argv
+STDIN_BYTES_DRIVEN = {
+    "filewrite",
+    "pkfmt",
+}  # stdin in the RAW byte domain (binary-safe seeds)
 
 
 def _hidden_modes(seed: str) -> tuple:
@@ -414,7 +421,9 @@ def submit_program(
     rng = random.Random(hidden_seed)
     fresh = []
     for (argv, stdin), _attempt in zip(
-        hidden_input_stream(rng, modes), range(10 * HIDDEN_N), strict=False
+        hidden_input_stream(rng, modes, seed=store.meta["seed"]),
+        range(10 * HIDDEN_N),
+        strict=False,
     ):
         if len(fresh) == HIDDEN_N:
             break

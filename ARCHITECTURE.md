@@ -417,7 +417,13 @@ io-mismatch → files-mismatch → event-divergence/event-length; divergence on
 the first mismatch only.
 `hidden_input_stream` yields text charset draws by mode and `stdin-bytes`
 draws (random bytes with a guaranteed NUL and ≥0x80 byte) for binary-safe
-seeds; `STDIN_DRIVEN`/`STDIN_BYTES_DRIVEN` select modes per seed.
+seeds; `STDIN_DRIVEN`/`STDIN_BYTES_DRIVEN` select modes per seed. Seeds with
+real wire formats override this per-name: `_SEED_GRAMMARS` (`pkfmt`) makes
+60% of hidden draws seed-grammar packets (real magic/version/records + the
+structured attack variants), interleaved with the uniform stream. Without
+the grammar, a wire-format seed's hidden suite devolves into ~2^-16 natural
+magic draws — the always-`"bad magic"` stub would pass (codex P1 on #125;
+the pinned attack lives in tests/test_hidden.py).
 
 Event-divergence and files-mismatch payloads carry a `dep_slice`
 ([Terms](#terms)): the validator searches backward from the focus event for
@@ -457,10 +463,11 @@ decoded stdout previews already localize those.
   death, stop after the first crash), `compile-link` (compose), `compile`
   (batched corpus/model compile jobs), `strip` (binutils is image-pinned).
 
-### corpus/generate.py — 48-slot seed matrix
+### corpus/generate.py — 60-slot seed matrix
 
-Four seeds (`rot13`, `check`, `calc`, `filewrite`) × gcc/clang × O0/O1/O2 ×
-sym/stripped = 48 slots. All compiles run via worker `compile` jobs inside the
+Five seeds (`rot13`, `check`, `calc`, `filewrite`, `pkfmt`) × gcc/clang ×
+O0/O1/O2 × sym/stripped = 60 slots. All compiles run via worker `compile` jobs
+inside the
 image, and stripped variants are finalized with `strip -s` executed in the
 same image (binutils is image-pinned; no host binary tools are invoked in the
 corpus artifact path — host-side symtab reads happen before stripping, so
@@ -605,11 +612,26 @@ against the (non-public) original plans is kept as history, subordinate.
   host/CI glibc versions; recorder-test probe binaries included). (History:
   models compiled on the host for both levels; a later host `strip` residue
   in corpus builds moved into the image as well.)
-- **Corpus shape: 48 slots with a file-writing seed** — the `filewrite`
-  seed, the `files_written` gate, and a raw-bytes hidden domain
-  (`stdin-bytes`) make the file channel first-class; `corpus_build(seed_ids,
-  matrix)` targeting exists with merge-and-prune semantics. (History: plan
-  said 36 slots, 3 seeds, no targeting.)
+- **Corpus shape: 60 slots incl. a file-writing seed and a parser-class
+  seed** — the `filewrite` seed makes the `files_written` gate and a
+  raw-bytes hidden domain (`stdin-bytes`) first-class;
+  `corpus_build(seed_ids, matrix)` targeting exists with merge-and-prune
+  semantics. (History: plan said 36 slots, 3 seeds, no targeting.)
+  **pkfmt (added post-#121):** TLV parser — magic u16, version bounds,
+  tag-dispatch records, FNV checksum — the corpus's first real basic-block
+  domain (the #121 spike found the older seeds starving coverage signals:
+  64 cases → 14 distinct edges). Its error channel is `pk_errno` static state
+  (negative results collide with wrapped uint32 accumulators — the recorder
+  caught that at seed-rewrite review); family topology-digest stability is
+  pinned by keeping the parser a single body (at -O1+ the compiler tail-jump
+  collapses wrappers, destroying the arity heuristic's keying). Function-mode
+  exposure is deliberately `pk_version_ok` ONLY — pointer-buffer helpers
+  (`pk_extract`, `pk_checksum`) are not representable specs today (an
+  all-i32 sketch marshals pointers as register junk and passes stubs on
+  unknown tags, codex P1 on #125); the pointer-kind sketch inference that
+  would make them safe tasks is a named follow-up. Hidden sampling is
+  grammar-aligned (see validate/program `_SEED_GRAMMARS`), so its always-
+  `"bad magic"` stub class is provably rejected.
 - **Canonicalizer is v2.1** — FD and PATH ordinals plus the enforced
   version stamp. (History: planned v1 was ADDR ordinals + argv basename.)
 - **task_open carries a contract surface** — disasm slice, known callees,

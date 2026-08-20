@@ -187,7 +187,9 @@ def test_hidden_seed_fresh_per_submission(store, monkeypatch):
     # stream that can't yield inputs is a loud rejection, never a vacuous pass.
     rngs = []
     monkeypatch.setattr(
-        eng, "hidden_input_stream", lambda rng, modes: rngs.append(rng) or iter([])
+        eng,
+        "hidden_input_stream",
+        lambda rng, modes, seed=None: rngs.append(rng) or iter([]),
     )
     toks = Mock(side_effect=["aa" * 16, "bb" * 16])
     monkeypatch.setattr(eng.secrets, "token_hex", toks)
@@ -254,3 +256,54 @@ def test_cstring_overfit_model_fails_hidden(fw_store):
     assert r["stage"] == "hidden"  # recorded "hello\n" contains no NUL — passes
     # stdout prints the truncated length: clean divergence on every NUL draw.
     assert r["reason"] == "io-mismatch"
+
+
+@pytest.fixture(scope="module")
+def pk_store():
+    st = TaskStore("pkfmt::gcc-O2-sym")
+    wipe_task(st)
+    return st
+
+
+def test_pkfmt_unrepresentable_functions_are_not_function_tasks(pk_store):
+    # codex P1 on #125: pointer-buffer helpers must NOT be submittable as
+    # function tasks while the param schema can't model them (all-i32 sketch
+    # would pass stubs on unknown tags). Unknown function = structured miss...
+    with pytest.raises(KeyError, match="unknown function"):
+        from reschema.engine import submit_function
+
+        submit_function(pk_store, "pk_extract", [], "int main(){return 0;}")
+    # ...while the representable i32 surface remains a genuine function task
+    from reschema.engine import submit_function
+
+    r = submit_function(
+        pk_store,
+        "pk_version_ok",
+        [{"name": "v", "kind": "i32", "range": [0, 8]}],
+        "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t pk_version_ok(int32_t v){"
+        "if(v<2) return 0; if(v>4) return 0; return v*16; }",
+        seed=1,
+        n_fuzz=4,
+    )
+    assert r["accepted"] is True, r
+
+
+def test_pkfmt_always_magic_stub_loses_at_the_hidden_gate(pk_store):
+    # codex P1's attack, pinned: a model that prints "bad magic" + rc=1 on
+    # EVERYTHING. Without grammar-aligned hidden draws it would pass — raw
+    # bytes almost never meet 0x5AB1, so the hidden suite was vacuous HERE.
+    ALWAYS_BAD_MAGIC = (
+        '#include <stdio.h>\nint main(void){ puts("bad magic"); return 1; }\n'
+    )
+    pk_store.record_case("r0", [], bytearray([0xDE, 0xAD, 0xBE, 0xEF]))
+    r = submit_program(pk_store, ALWAYS_BAD_MAGIC)
+    assert r["accepted"] is False
+    assert r["reason"] == "io-mismatch" and r["stage"] == "hidden", r
+    # and the grammar itself is exercised: valid packets appear in bulk
+    draws = list(
+        islice(
+            hidden_input_stream(random.Random(1), ("stdin-bytes",), seed="pkfmt"), 40
+        )
+    )
+    valid = sum(1 for _, b in draws if b[:2] == b"\xb1\x5a")
+    assert 15 <= valid <= 35  # 60% grammar share draws structure

@@ -117,8 +117,15 @@ class TaskStore:
 
 
 # ponytail: manifest-driven input-space deferred
-STDIN_DRIVEN = {"check", "filewrite"}  # seed names fed via stdin; others take argv
-STDIN_BYTES_DRIVEN = {"filewrite"}  # stdin in the RAW byte domain (binary-safe seeds)
+STDIN_DRIVEN = {
+    "check",
+    "filewrite",
+    "pkfmt",
+}  # seed names fed via stdin; others take argv
+STDIN_BYTES_DRIVEN = {
+    "filewrite",
+    "pkfmt",
+}  # stdin in the RAW byte domain (binary-safe seeds)
 
 
 def _hidden_modes(seed: str) -> tuple:

@@ -30,6 +30,7 @@ FUNCS = {
     "check": ["pw_hash", "check_pw"],
     "calc": ["clamp_i32", "sum_range", "scale_buf"],
     "filewrite": ["xform_byte"],
+    "pkfmt": ["pk_version_ok", "pk_extract", "pk_checksum"],
 }
 COMPILERS = ["gcc", "clang"]
 OPTS = ["-O0", "-O1", "-O2"]

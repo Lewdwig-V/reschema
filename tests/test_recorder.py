@@ -77,7 +77,7 @@ def test_check_accepts_correct_password_stdin_roundtrip_and_determinism(manifest
 
 
 def test_manifest_has_expected_slot(manifest):
-    assert len(manifest) == 48
+    assert len(manifest) == 60
     assert OUT_ROOT.joinpath("manifest.json").exists()
 
 

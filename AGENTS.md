@@ -13,7 +13,7 @@ uv lock                   # after touching pyproject
 ```
 
 Tests run under **pytest-xdist** (`-n auto`): every worker gets its own
-`.reschema/` root via `RESCHEMA_HOME`, and the 48-slot corpus builds once per
+`.reschema/` root via `RESCHEMA_HOME`, and the 60-slot corpus builds once per
 session (never per module — `build()` is always a full rebuild). A test that
 only passes in a specific ordering or with a specific worker layout is a bug:
 fix the test, not the scheduler.

@@ -68,7 +68,7 @@ def build_sort_key(task_id):
 
 def test_full_build_default_unchanged(root):
     m = build(root)
-    assert len(m) == 48
+    assert len(m) == 60
 
 
 def test_full_build_prunes_stale_slots_but_targeted_preserves_them(root):
@@ -123,11 +123,11 @@ def test_strip_runs_in_the_toolchain_image_and_never_on_host(monkeypatch, tmp_pa
         lambda _p: {n: (0x1000, 8) for fns in gen.FUNCS.values() for n in fns},
     )
     out = gen.build(tmp_path)
-    assert len(out) == 48
+    assert len(out) == 60
     modes = [c["mode"] for c in calls]
     assert modes == ["compile", "strip"]
     strip_job = calls[1]
-    assert len(strip_job["files"]) == 24  # all stripped variants, one pod round
+    assert len(strip_job["files"]) == 30  # all stripped variants, one pod round
 
 
 def test_no_host_subprocess_for_strip(monkeypatch, tmp_path):

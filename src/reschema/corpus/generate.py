@@ -30,7 +30,13 @@ FUNCS = {
     "check": ["pw_hash", "check_pw"],
     "calc": ["clamp_i32", "sum_range", "scale_buf"],
     "filewrite": ["xform_byte"],
-    "pkfmt": ["pk_version_ok", "pk_extract", "pk_checksum"],
+    # pk_version_ok ONLY: pointer-buffer signatures (pk_extract/pk_checksum)
+    # are NOT representable specs today (codex P1 on #125) — the abi sketch
+    # all-i32's their pointers into register-junk, and a trivial `return 0`
+    # passes on unknown tags while scouts fault on needle-pointers. The
+    # pointer-kind sketch inference that would make them SAFE function tasks
+    # is a named follow-up, not this family today.
+    "pkfmt": ["pk_version_ok"],
 }
 COMPILERS = ["gcc", "clang"]
 OPTS = ["-O0", "-O1", "-O2"]

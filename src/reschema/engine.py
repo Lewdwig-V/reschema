@@ -421,7 +421,9 @@ def submit_program(
     rng = random.Random(hidden_seed)
     fresh = []
     for (argv, stdin), _attempt in zip(
-        hidden_input_stream(rng, modes), range(10 * HIDDEN_N), strict=False
+        hidden_input_stream(rng, modes, seed=store.meta["seed"]),
+        range(10 * HIDDEN_N),
+        strict=False,
     ):
         if len(fresh) == HIDDEN_N:
             break

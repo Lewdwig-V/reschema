@@ -417,7 +417,13 @@ io-mismatch → files-mismatch → event-divergence/event-length; divergence on
 the first mismatch only.
 `hidden_input_stream` yields text charset draws by mode and `stdin-bytes`
 draws (random bytes with a guaranteed NUL and ≥0x80 byte) for binary-safe
-seeds; `STDIN_DRIVEN`/`STDIN_BYTES_DRIVEN` select modes per seed.
+seeds; `STDIN_DRIVEN`/`STDIN_BYTES_DRIVEN` select modes per seed. Seeds with
+real wire formats override this per-name: `_SEED_GRAMMARS` (`pkfmt`) makes
+60% of hidden draws seed-grammar packets (real magic/version/records + the
+structured attack variants), interleaved with the uniform stream. Without
+the grammar, a wire-format seed's hidden suite devolves into ~2^-16 natural
+magic draws — the always-`"bad magic"` stub would pass (codex P1 on #125;
+the pinned attack lives in tests/test_hidden.py).
 
 Event-divergence and files-mismatch payloads carry a `dep_slice`
 ([Terms](#terms)): the validator searches backward from the focus event for
@@ -618,7 +624,14 @@ against the (non-public) original plans is kept as history, subordinate.
   (negative results collide with wrapped uint32 accumulators — the recorder
   caught that at seed-rewrite review); family topology-digest stability is
   pinned by keeping the parser a single body (at -O1+ the compiler tail-jump
-  collapses wrappers, destroying the arity heuristic's keying).
+  collapses wrappers, destroying the arity heuristic's keying). Function-mode
+  exposure is deliberately `pk_version_ok` ONLY — pointer-buffer helpers
+  (`pk_extract`, `pk_checksum`) are not representable specs today (an
+  all-i32 sketch marshals pointers as register junk and passes stubs on
+  unknown tags, codex P1 on #125); the pointer-kind sketch inference that
+  would make them safe tasks is a named follow-up. Hidden sampling is
+  grammar-aligned (see validate/program `_SEED_GRAMMARS`), so its always-
+  `"bad magic"` stub class is provably rejected.
 - **Canonicalizer is v2.1** — FD and PATH ordinals plus the enforced
   version stamp. (History: planned v1 was ADDR ordinals + argv basename.)
 - **task_open carries a contract surface** — disasm slice, known callees,

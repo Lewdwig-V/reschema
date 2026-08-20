@@ -302,6 +302,47 @@ def test_batch_call_original_matches_fresh_per_case(manifest, probe_bin):
         assert all(o["batch_mode"] == "batched-snapshot" for o in batched)
 
 
+def test_batch_pre_case_hook_fires_once_per_case_without_changing_outputs(probe_bin):
+    # #121 measurement seam: the optional hook fires once per case (after the
+    # snapshot restore), receives (ql, case_index), and MUST leave per-case
+    # outputs bit-identical.
+    pbin, syms = probe_bin
+    hits = []
+    params = [Param("x", "i32", range=(-50, 50))]
+    cases = gen_inputs(params, random.Random(41), 4)
+    plain = batch_call_original(pbin, syms["bump"][0], params, cases)
+    hooked = batch_call_original(
+        pbin, syms["bump"][0], params, cases, pre_case_hook=lambda ql, i: hits.append(i)
+    )
+    assert _strip_mode(hooked) == _strip_mode(plain) == _strip_mode(plain)
+    assert hits == list(range(len(cases)))
+
+
+def test_batch_registrations_by_hook_do_not_stack_across_cases(probe_bin):
+    # codex P2 on #124: ql.hook_* calls persist across snapshot restores.
+    # The seam caller is responsible for registering ONCE — stacking the same
+    # registration per case would multiply callbacks per case.
+    pbin, syms = probe_bin
+    registrations = []
+    fired = []
+    params = [Param("x", "i32", range=(-50, 50))]
+    cases = gen_inputs(params, random.Random(41), 4)
+
+    def cb(ql, address, size):
+        fired.append(address)
+
+    def hook(ql, idx):
+        if idx == 0:
+            registrations.append(ql.hook_block(cb))
+
+    outs = batch_call_original(pbin, syms["bump"][0], params, cases, pre_case_hook=hook)
+    assert len(registrations) == 1
+    # one registration total: block hits must not multiply per case
+    assert len(fired) > 0  # ran, and each case reported its own edges
+    for o in outs:
+        assert o["batch_mode"] == "batched-snapshot"
+
+
 def test_batch_call_original_fault_then_clean(probe_bin):
     """A crashing case must yield exit_code -1 for THAT case, with the next case clean."""
     binary, syms = probe_bin

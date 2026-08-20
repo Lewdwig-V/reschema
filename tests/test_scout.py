@@ -69,7 +69,26 @@ def test_scout_inputs_reinterprets_per_kind():
     for c in cases:
         assert c["s"] == HI_MAGIC.to_bytes(4, "little") + b"\0"
         assert c["buf"] == [c["x"]]
-        assert c["n"] == c["x"]
+        # buffer length coherence (codex P1 on #123): an i32 length_param gets
+        # the list's ACTUAL length, not the needle — n larger than the allocated
+        # array would marshal the original straight out-of-bounds
+        assert c["n"] == 1 == len(c["buf"])
+
+
+def test_scout_buffer_never_outgrows_its_length_param():
+    # negative gate: no scout case may hand a buffer function a length larger
+    # than the allocated array — that is an OOB contract, not a probe
+    params = [
+        Param("buf", "buffer_i32", length_param="n", range=(-10, 10)),
+        Param("n", "i32", range=(1, 10)),
+    ]
+    for c in scout_inputs(params, [0x4EC4EC4F, 5]):
+        assert len(c["buf"]) == c["n"]  # NEVER n > allocated
+        assert c["buf"][0] in {
+            0x4EC4EC4F,
+            0x4EC4EC4F - 0x100000000,
+            5,
+        }  # needle carried
 
 
 def test_scout_inputs_empty_immediates_yields_no_cases():

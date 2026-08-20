@@ -76,6 +76,7 @@ def scout_inputs(params: list[Param], immediates: list[int]) -> list[dict]:
         readings = [raw] if raw < 0x80000000 else [raw, raw - 0x100000000]
         for needle in readings:
             case = {}
+            length_params = {}
             for p in params:
                 if p.kind == "i32":
                     case[p.name] = needle
@@ -83,6 +84,13 @@ def scout_inputs(params: list[Param], immediates: list[int]) -> list[dict]:
                     case[p.name] = raw.to_bytes(4, "little") + b"\0"
                 elif p.kind == "buffer_i32":
                     case[p.name] = [needle]
+                    # Length coherence (codex P1 on #123): a buffer's length
+                    # param must describe the ALLOCATED list, never the
+                    # needle — n > len(buf) marshals the original out of
+                    # bounds, burning scout positions on crashes, not evidence
+                    if p.length_param:
+                        length_params[p.length_param] = len(case[p.name])
+            case.update({lp: ln for lp, ln in length_params.items() if lp in case})
             if case:
                 cases.append(case)
     return cases

@@ -313,7 +313,13 @@ exercising yet.
   ledger (counters, accept marker idempotent, journal, `audit.program`).
 - **submit_function** compiles and differential-fuzzes via the worker; the
   tool boundary floors `n_fuzz` at `N_FUZZ=64`; a void spec with no
-  memory-channel param is rejected up front; accepts carry
+  memory-channel param is rejected up front; the draw itself is uniform +
+  a **static-immediates scout slice** (validate/scout.py, #109-A): seeds
+  carved fresh from the original's own `.text` per round (cmp/test/sub/add/imul
+  immediates reinterpreted per Param kind, including beyond declared ranges),
+  capped at min(16, n_fuzz/4) — the binary is the pheromone: no cross-
+  submission memory, no entropy-policy violation, and wrong-branch stubs on
+  sparse cmp sites provably die (tests/test_scout.py). Accepts carry
   `compared/skipped/seed` and write `audit[func] = {seed, n_fuzz}`.
 - **compose** links awaited sources per-TU through the worker's
   `compile-link` mode; duplicate externally-visible symbols map to a

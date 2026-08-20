@@ -231,9 +231,10 @@ puts(argv[1]); return 0; }
     assert submit_program(st, GOOD_ROT13_PROG)["accepted"] is True
     good_char = r"""#include <stdint.h>
 __attribute__((sysv_abi)) int32_t rot13_char(int32_t c){
-    if(c>=97&&c<=122) return 97+(c-97+13)%26;
-    if(c>=65&&c<=90) return 65+(c-65+13)%26;
-    return c;
+    int32_t b = c & 0xFF;  // original is char-typed: low byte carries the rot
+    if(b>=97&&b<=122) return 97+(b-97+13)%26;
+    if(b>=65&&b<=90) return 65+(b-65+13)%26;
+    return b;
 }"""
     r = submit_function(
         st,

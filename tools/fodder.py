@@ -173,11 +173,18 @@ def function_verdict(
             seed=FODDER_FN_SEED,
             n_fuzz=FODDER_FN_N,
         )
-    except Exception:  # noqa: BLE001 — infra faults are not fodder verdicts
-        return "compile-fail"
+    except Exception:  # noqa: BLE001 — transport-level faults: never judged
+        return "infra"
     if v.ok:
         return "ok-lucky"
     stage = v.divergence.get("stage", "divergence") if v.divergence else "divergence"
+    # codex P1 on #119: infra stages return from the validator WITHOUT
+    # judging the candidate — never pool them with behavioral fodder.
+    # spec stages from the validator's own floor mean the decl is the fault.
+    if stage == "spec":
+        return "spec-malformed"
+    if stage in ("infra", "skip-starvation", "arity"):
+        return "infra"
     return "compile-fail" if stage in ("compile", "link", "symbol") else "behavioral"
 
 
@@ -211,9 +218,18 @@ def run_experiment(
     # codex P2 on #118: candidates are unique BODIES (mode + exact source),
     # not repeated attempts — first occurrence keeps its provenance; verbatim
     # replays across slot logs / floor roots collapse to one probed body.
+    # codex P2 on #119: a FUNCTION candidate's identity includes its declared
+    # params (verification depends on the decl): body+params, or the same
+    # source degraded to its empty-decl first attempt would mask the real one.
     unique, seen = [], set()
     for e in entries:
-        key = (e["mode"], e["c_source"])
+        key = (
+            e["mode"],
+            e["c_source"],
+            json.dumps(e.get("params"), sort_keys=True)
+            if e["mode"] == "function"
+            else None,
+        )
         if key in seen:
             continue
         seen.add(key)

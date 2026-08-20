@@ -223,3 +223,66 @@ def test_function_verdict_classes(manifests, tmp_path):
         )
         == "unresolvable"
     )
+
+
+def test_function_verdict_never_counts_infra_as_behavioral(tmp_path, monkeypatch):
+    # codex P1 on #119: validate_function RETURNS stage "infra" (worker
+    # missing) — it does not raise. An infra outage must be its own class in
+    # the totals, never pooled with candidates the original actually judged.
+    from reschema.validate.function import FnVerdict
+
+    monkeypatch.setattr(
+        "reschema.validate.function.validate_function",
+        lambda *a, **kw: FnVerdict(False, {"stage": "infra", "detail": "no podman"}),
+    )
+    from tools import fodder
+
+    assert (
+        fodder.function_verdict(
+            {"t::s": {"binary": "/b", "functions": {"f": {"addr": 1}}}},
+            "t::s",
+            "f",
+            [{"name": "c", "kind": "i32"}],
+            "int f(){return 0;}",
+            tmp_path,
+        )
+        == "infra"
+    )
+
+
+def test_dedupe_keeps_distinct_param_decls_for_one_body(tmp_path, monkeypatch):
+    # codex P2 on #119: identity of a function candidate = body + DECLARED
+    # params. Same C source with params:[] turned real params is two
+    # verifiable candidates, not a dup of the first.
+    from tools import fodder
+
+    (tmp_path / "runs" / "a" / "sandbox").mkdir(parents=True)
+    (tmp_path / "runs" / "b" / "sandbox").mkdir(parents=True)
+    body = "int32_t f(int32_t c){ return c; }"
+    import json as j
+
+    p1 = j.dumps({"c_source": body, "function": "f", "params": [], "task_id": "t::s"})
+    p2 = j.dumps(
+        {
+            "c_source": body,
+            "function": "f",
+            "params": [{"name": "c", "kind": "i32"}],
+            "task_id": "t::s",
+        }
+    )
+    (tmp_path / "runs" / "a" / "sandbox" / "transcript-a.log").write_text(
+        f"⚙ reschema_submit_model {p1}\n"
+    )
+    (tmp_path / "runs" / "b" / "sandbox" / "transcript-b.log").write_text(
+        f"⚙ reschema_submit_model {p2}\n"
+    )
+    monkeypatch.setattr(fodder, "accepted_sources_for_runs", lambda runs_dir: set())
+    monkeypatch.setattr(fodder, "stability_verdict", lambda src, d: "stable")
+    monkeypatch.setattr(
+        fodder, "function_verdict", lambda t, tid, fn, ps, src, d: "behavioral"
+    )
+    monkeypatch.setattr(fodder, "load_manifests", lambda roots: {})
+    report = fodder.run_experiment([tmp_path], tmp_path / "out", verbose=False)
+    assert report["submit_model_calls_found"] == 2
+    assert report["dupes_collapsed"] == 0  # params differ: not duplicates
+    assert len(report["candidates"]) == 2

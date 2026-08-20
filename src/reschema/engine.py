@@ -702,15 +702,17 @@ def submit_function(
         }
     # ponytail: agent-controlled cost (fresh Qiling VM per case) — clamp runaway budgets
     n_fuzz = min(n_fuzz, 4 * N_FUZZ)
+    fmeta = _fn_meta(store, func)
     v = validate_function(
         store.meta["binary"],
-        _fn_meta(store, func)["addr"],
+        fmeta["addr"],
         func,
         ps,
         c_source,
         store.dir / f"{func}.so",
         seed=seed,
         n_fuzz=n_fuzz,
+        size=fmeta["size"],  # the scout scrape reads the manifest-true window
     )
     led["submissions"] += 1
     _record_notes(store, func, notes, promoted=v.ok)

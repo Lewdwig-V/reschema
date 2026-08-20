@@ -61,6 +61,7 @@ def validate_function(
     so_path: Path,
     seed: int | None = None,
     n_fuzz: int = N_FUZZ,
+    size: int | None = None,
 ) -> FnVerdict:
     if len(params) > len(BAREGS):
         return FnVerdict(
@@ -98,6 +99,15 @@ def validate_function(
     # (test_batch_call_original_matches_fresh_per_case).
     # Model results come back in one worker round trip.
     cases = gen_inputs(params, rng, n_fuzz)
+    declared_ids = {id(c) for c in cases}
+    # #109A scout slice: seeds carved fresh from the ORIGINAL's own .text
+    # (the binary is the pheromone) — cmp-family immediates reinterpreted per
+    # Param kind, occupying AT MOST a harness-owned quarter of the envelope.
+    # rng consumption is untouched: scout cases replace positions, never draw.
+    from .scout import merge_scout_cases, scout_inputs, scrape_immediates
+
+    immediates = scrape_immediates(binary, addr, size or 0x400)
+    cases = merge_scout_cases(cases, scout_inputs(params, immediates), n_fuzz)
     kept: list[tuple[dict, dict]] = []
     skipped = 0
     for case, want in zip(cases, batch_call_original(binary, addr, params, cases)):
@@ -125,6 +135,10 @@ def validate_function(
             sort_keys=True,
         )
         for case, _ in kept
+        # The floor judges the AGENT's declared draw space only: harness
+        # scouts (109-A) add evidence ON TOP and must never launder a
+        # one-point declaration into apparent variation (#100 stays binding).
+        if id(case) in declared_ids
     }
     if len(distinct) < 2:
         # Same vacuity class as skip-starvation/void-floor, one door over: with

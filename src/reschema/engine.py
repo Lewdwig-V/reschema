@@ -679,6 +679,7 @@ def submit_function(
                 "function": func,
                 "stage": "duplicate",
                 "c_source": c_source,
+                "params": [p.to_json() for p in ps],
             },
         )
         _journal(
@@ -726,6 +727,7 @@ def submit_function(
                     "function": func,
                     "stage": v.divergence.get("stage", "divergence"),
                     "c_source": c_source,
+                    "params": [p.to_json() for p in ps],
                 },
             )
         _journal(

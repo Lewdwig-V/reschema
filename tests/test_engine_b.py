@@ -288,12 +288,41 @@ def test_function_rejects_persist_raw_sources_but_decl_failures_never(store):
             "function": "sum_range",
             "stage": "divergence",
             "c_source": WRONG,
+            "params": [
+                {
+                    "name": "lo",
+                    "kind": "i32",
+                    "direction": "in",
+                    "length_param": None,
+                    "range": [-20, 10],
+                    "ret": "i32",
+                },
+                {
+                    "name": "hi",
+                    "kind": "i32",
+                    "direction": "in",
+                    "length_param": None,
+                    "range": [10, 30],
+                    "ret": "i32",
+                },
+            ],
         }
     ]
     # spec-stage rejects (no code verdict) do NOT persist a body
     r2 = submit_function(store, "sum_range", [], WRONG, seed=1, n_fuzz=8)
     assert r2["accepted"] is False and r2["divergence"]["stage"] == "spec"
     assert len(store.ledger()["rejected_sources"]) == 1
+
+
+def test_function_rejected_sources_params_persist_on_duplicate_stage(store):
+    # params must ride the entry whatever the stage — the fodder pipeline
+    # re-verifies from {task_id, function, params, c_source} alone.
+    submit_function(store, "sum_range", PARAMS, WRONG, seed=1, n_fuzz=8)
+    submit_function(store, "sum_range", PARAMS, WRONG, seed=1, n_fuzz=8)
+    r = submit_function(store, "sum_range", PARAMS, WRONG, seed=1, n_fuzz=8)
+    assert r["accepted"] is False and r.get("reason") == "duplicate"
+    rs = store.ledger()["rejected_sources"]
+    assert rs[-1]["stage"] == "duplicate" and rs[-1]["params"][0]["name"] == "lo"
 
 
 def test_submit_function_empty_params_never_accepted_never_poisoned(

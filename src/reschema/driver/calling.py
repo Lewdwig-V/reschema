@@ -194,7 +194,11 @@ def _fn_has_syscall(binary: str, addr: int) -> bool | None:
 
 
 def batch_call_original(
-    binary: str, addr: int, params: list[Param], cases: list[dict]
+    binary: str,
+    addr: int,
+    params: list[Param],
+    cases: list[dict],
+    pre_case_hook=None,
 ) -> list[dict]:
     """call_original for a whole case list; same per-case trace schema.
 
@@ -225,6 +229,12 @@ def batch_call_original(
     outs = []
     for case in cases:
         ql.restore(snap)
+        # #121 measurement seam: optional per-case hook (e.g. coverage
+        # probe attach/detach). Default None = zero behavior change; the
+        # snapshot is restored BEFORE the hook fires, so hook state never
+        # bleeds across cases.
+        if pre_case_hook is not None:
+            pre_case_hook(ql)
         o = _run_case(ql, addr, params, case)
         o["batch_mode"] = "batched-snapshot"
         outs.append(o)

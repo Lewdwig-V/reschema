@@ -302,6 +302,21 @@ def test_batch_call_original_matches_fresh_per_case(manifest, probe_bin):
         assert all(o["batch_mode"] == "batched-snapshot" for o in batched)
 
 
+def test_batch_pre_case_hook_fires_without_changing_outputs(probe_bin):
+    # #121 measurement seam: the optional hook fires once per case (after the
+    # snapshot restore) and MUST leave per-case outputs bit-identical.
+    pbin, syms = probe_bin
+    hits = []
+    params = [Param("x", "i32", range=(-50, 50))]
+    cases = gen_inputs(params, random.Random(41), 4)
+    plain = batch_call_original(pbin, syms["bump"][0], params, cases)
+    hooked = batch_call_original(
+        pbin, syms["bump"][0], params, cases, pre_case_hook=hits.append
+    )
+    assert _strip_mode(hooked) == _strip_mode(plain) == _strip_mode(plain)
+    assert len(hits) == len(cases)
+
+
 def test_batch_call_original_fault_then_clean(probe_bin):
     """A crashing case must yield exit_code -1 for THAT case, with the next case clean."""
     binary, syms = probe_bin

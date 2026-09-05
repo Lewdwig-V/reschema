@@ -176,12 +176,25 @@ Control flow across the tour sections below, as it actually happens.
    to fresh VMs (tests/test_driver.py equivalence guard). The snapshot contract
    is pinned for syscall-free kernels only: it spans registers+memory, never
    rootfs contents, OS/fd objects, or post-save mapped regions. The structural
-   guard (not a caveat) is a syscall scan at batch entry: the function's
+   guard is a direct syscall scan at batch entry: the function's
    symtab-bounded .text slice is checked for `syscall`/`sysenter` opcodes, and
    any hit — or an unboundable slice (stripped/zero-size symbol) — reroutes
    the round to per-case fresh VMs. Each trace records its route in
    `batch_mode` (`"batched-snapshot"` vs `"fresh-vm-fallback"`), and the
    syscalling-witness test pins fallback routing + result identity.
+   This scan does not follow callees: shared-VM execution remains for known
+   syscall-free kernels, including their callees.
+   Optional `hook_scope(ql)` instrumentation owns one VM attachment and yields
+   a reset callback. Snapshot order is save → attach once → (restore → reset →
+   run) per case → detach in `finally`. Hooks and Python recorder state are
+   outside the snapshot. Fresh-VM fallback attaches/resets/detaches for each
+   VM instead of silently skipping instrumentation. Empty batches attach
+   nothing. Setup must not modify guest state; scopes release only their own
+   handles and surface instrumentation errors, including callback errors that
+   the guest-fault conversion might otherwise hide. The coverage spike resets
+   previous-block history per case, retains bitmap/hits per batch, and creates
+   fresh totals per timed trial. It checks all trial payloads for equality and
+   labels the collision-prone bitmap as occupied edge bins.
    Cases where the *original* faults are skipped — a crash is not a behavior
    spec.
 5. The model is compiled and executed in ONE worker round trip (`validate`
@@ -417,7 +430,15 @@ io-mismatch → files-mismatch → event-divergence/event-length; divergence on
 the first mismatch only.
 `hidden_input_stream` yields text charset draws by mode and `stdin-bytes`
 draws (random bytes with a guaranteed NUL and ≥0x80 byte) for binary-safe
-seeds; `STDIN_DRIVEN`/`STDIN_BYTES_DRIVEN` select modes per seed.
+seeds; `STDIN_DRIVEN`/`STDIN_BYTES_DRIVEN` select modes per seed. Seeds with
+real wire formats override this per-name: `_SEED_GRAMMARS` (`pkfmt`) makes
+60% of hidden draws seed-grammar packets (real magic/version/records + the
+structured attack variants), interleaved with the uniform stream. Truncation
+draws overclaim the final payload without adding bytes to satisfy the claim.
+Without grammar-aware draws, valid magic is rare and an always-`"bad magic"`
+stub can pass. The hidden suite is finite random sampling, not guaranteed
+path coverage or proof of equivalence (codex P1 on #125; the regression
+attack lives in tests/test_hidden.py).
 
 Event-divergence and files-mismatch payloads carry a `dep_slice`
 ([Terms](#terms)): the validator searches backward from the focus event for
@@ -457,10 +478,11 @@ decoded stdout previews already localize those.
   death, stop after the first crash), `compile-link` (compose), `compile`
   (batched corpus/model compile jobs), `strip` (binutils is image-pinned).
 
-### corpus/generate.py — 48-slot seed matrix
+### corpus/generate.py — 60-slot seed matrix
 
-Four seeds (`rot13`, `check`, `calc`, `filewrite`) × gcc/clang × O0/O1/O2 ×
-sym/stripped = 48 slots. All compiles run via worker `compile` jobs inside the
+Five seeds (`rot13`, `check`, `calc`, `filewrite`, `pkfmt`) × gcc/clang ×
+O0/O1/O2 × sym/stripped = 60 slots. All compiles run via worker `compile` jobs
+inside the
 image, and stripped variants are finalized with `strip -s` executed in the
 same image (binutils is image-pinned; no host binary tools are invoked in the
 corpus artifact path — host-side symtab reads happen before stripping, so
@@ -469,6 +491,27 @@ manifest addresses are captured pre-strip). The manifest (`task_id`, binary,
 builds in canonical full-build order; unfiltered builds regenerate the
 manifest from the current plan (stale slots pruned), targeted builds merge,
 preserving out-of-scope entries.
+
+`pkfmt` accepts exactly the header's record count, with no trailing bytes,
+at most 4096 packet bytes and 1024 bytes per record payload. Unknown record
+tags are skipped by extraction. The wire-format entry point `main` performs
+libc I/O and runs via the whole-program recorder, not snapshot batching.
+Only `pk_version_ok` is exposed as a function task. `pk_extract` and
+`pk_checksum` require a readable byte buffer for valid lengths (4..4096);
+both reject other lengths before dereference. Their unsigned results use
+guest `.bss` `pk_errno` for errors, reset at each call and included in the
+memory snapshot. Magic/version validation belongs to `main`; checksum only
+hashes the bytes after the header. No arbitrary-pointer safety is promised.
+
+`tests/test_pkfmt.py` checks the public surface and snapshot/fresh-VM route
+on all 12 build slots. On the six symbol-bearing builds it also checks the
+three helper slices for calls, external/indirect jumps and syscall opcodes,
+and invokes the buffer helpers with explicit test-only ABI setup, guarded
+buffers, size/shape boundaries, and restored state in both case orders.
+These are bounded regression checks, not a general snapshot-safety proof:
+the driver's opcode screen does not follow callees, and stripped functions
+still take the fresh-VM fallback. Byte-buffer Param support and new coverage
+and timing measurements remain follow-ups.
 
 ### disasm/ — task_open facts
 
@@ -605,11 +648,27 @@ against the (non-public) original plans is kept as history, subordinate.
   host/CI glibc versions; recorder-test probe binaries included). (History:
   models compiled on the host for both levels; a later host `strip` residue
   in corpus builds moved into the image as well.)
-- **Corpus shape: 48 slots with a file-writing seed** — the `filewrite`
-  seed, the `files_written` gate, and a raw-bytes hidden domain
-  (`stdin-bytes`) make the file channel first-class; `corpus_build(seed_ids,
-  matrix)` targeting exists with merge-and-prune semantics. (History: plan
-  said 36 slots, 3 seeds, no targeting.)
+- **Corpus shape: 60 slots incl. a file-writing seed and a parser-class
+  seed** — the `filewrite` seed makes the `files_written` gate and a
+  raw-bytes hidden domain (`stdin-bytes`) first-class;
+  `corpus_build(seed_ids, matrix)` targeting exists with merge-and-prune
+  semantics. (History: plan said 36 slots, 3 seeds, no targeting.)
+  **pkfmt (added post-#121):** TLV parser — magic u16, version bounds,
+  tag-dispatch records, FNV checksum. The #121 spike motivated a richer
+  corpus, but its historical 14-edge
+  count and 1.18x overhead verdict predate the complete hook-lifecycle repair
+  and must be remeasured with `uv run python -m tools.coverage_spike` before
+  reuse. Its error channel is `pk_errno` static state
+  (negative results collide with wrapped uint32 accumulators — the recorder
+  caught that at seed-rewrite review). Function-mode
+  exposure is deliberately `pk_version_ok` ONLY — pointer-buffer helpers
+  (`pk_extract`, `pk_checksum`) are not representable specs today (an
+  all-i32 sketch marshals pointers as register junk and passes stubs on
+  unknown tags, codex P1 on #125); the pointer-kind sketch inference that
+  would make them safe tasks is a named follow-up. Hidden sampling is
+  grammar-aligned (see validate/program `_SEED_GRAMMARS`), improving the
+  chance of rejecting an always-`"bad magic"` stub; a finite hidden draw
+  does not guarantee rejection of every overfit model.
 - **Canonicalizer is v2.1** — FD and PATH ordinals plus the enforced
   version stamp. (History: planned v1 was ADDR ordinals + argv basename.)
 - **task_open carries a contract surface** — disasm slice, known callees,

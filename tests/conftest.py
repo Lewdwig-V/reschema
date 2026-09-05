@@ -4,7 +4,7 @@ Budget: the docs promise the full suite in ~2 minutes. The autouse fixture
 makes that a hard bound — a suite that burns past it exits failed
 (RESCHEMA_TEST_BUDGET_S overrides the default for profiling runs).
 
-Corpus: build() is ALWAYS a full rebuild (48 slots, two container rounds,
+Corpus: build() is ALWAYS a full rebuild (60 slots, two container rounds,
 ~9s); one session-scoped build replaces the per-module copies.
 """
 
@@ -58,7 +58,7 @@ def pytest_sessionfinish(session, exitstatus):
 
 @pytest.fixture(scope="session")
 def built_corpus():
-    """The 48-slot corpus, built once per test session."""
+    """The 60-slot corpus, built once per test session."""
     from reschema.corpus.generate import build
 
     return build()

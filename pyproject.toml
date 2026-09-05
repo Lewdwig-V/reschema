@@ -13,7 +13,7 @@ dependencies = [
     "qiling>=1.4.6,<1.5",  # recorder/calling rely on 1.4.x hook & dispatch APIs (see their comments); <1.5 guards that surface
     "capstone",
     "pyelftools",
-    "mcp==2.0.*",  # tests import private mcp.client._memory; narrowed until that API settles
+    "mcp==2.1.*",  # tests import private mcp.client._memory; narrowed until that API settles
 ]
 
 [tool.uv]

@@ -11,6 +11,8 @@ stdin-vs-argv lives in STDIN_DRIVEN), so the call is plain.
 
 from __future__ import annotations
 
+from typing import Any
+
 from mcp.server.mcpserver import MCPServer
 
 from ..engine import (
@@ -69,7 +71,7 @@ def corpus_build(
 
 
 @server.tool()
-def task_open(task_id: str, function: str | None = None) -> dict:
+def task_open(task_id: str, function: str | None = None) -> dict[str, Any]:
     """Open a task and learn its contract.
 
     TWO MODES, selected by whether `function` is given:
@@ -122,7 +124,7 @@ def experiment(
     params: list[dict] | None = None,
     case: dict | None = None,
     quiet: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Run a ground-truth experiment and GET the canonical trace back.
 
     Program mode: supply argv (plain strings, args after the program) and/or
@@ -167,7 +169,7 @@ def submit_model(
     seed: int | None = None,
     n_fuzz: int | None = None,
     notes: list[str] | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Submit a C world-model for judgment. COMPARISON CONTRACT:
 
     Program mode (no function): your source is compiled, then replayed in two
@@ -228,7 +230,7 @@ def submit_model(
 
 
 @server.tool()
-def status(task_id: str) -> dict:
+def status(task_id: str) -> dict[str, Any]:
     """Progress, readiness, and validation telemetry for a task.
 
     - `readiness`: recorded_cases vs the hidden-gate minimum (8 fresh inputs);

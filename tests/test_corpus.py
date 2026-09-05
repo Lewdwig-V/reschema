@@ -38,7 +38,8 @@ def test_corpus_builds_with_addresses(manifest):
 
 def test_pkfmt_family_lands_as_first_real_target(manifest):
     # pkfmt: parser-class seed added after the #121 spike showed the corpus
-    # starving coverage signals (64 cases -> 14 distinct edges on sum_range).
+    # motivating a richer coverage domain (historical edge counts need rerunning
+    # after the hook-lifecycle repair; they are not a test oracle).
     # function-mode surface is deliberately ONLY the representable i32
     # function (pointer-buffer helpers await pointer-kind sketch inference).
     p = _gcc_slot(manifest, "pkfmt", "-O2", False)

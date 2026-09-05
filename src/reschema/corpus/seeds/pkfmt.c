@@ -4,7 +4,8 @@
 // stdout is a textual summary; exit 0 ok / 1 bad magic-or-version / 2 truncate.
 //
 // Design purpose (post-#121): rot13/calc-scale seeds starve every
-// coverage-class signal (an entire 64-case run produced 14 distinct edges).
+// coverage-class signal (historical spike counts need remeasurement after the
+// hook-lifecycle repair; they are not a coverage guarantee).
 // This family supplies a real basic-block domain, genuine cmp-immediate
 // thresholds (magic, bounds, tags, FNV constants), and a multi-function call
 // chain — while staying deterministic, syscall-free in the named functions

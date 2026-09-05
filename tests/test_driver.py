@@ -1,5 +1,7 @@
 import random
 import re
+from contextlib import contextmanager
+from itertools import pairwise
 
 import pytest
 
@@ -7,6 +9,7 @@ from reschema.corpus.generate import _symtab
 from reschema.driver.calling import batch_call_original, call_original, gen_inputs
 from reschema.driver.podrun import run_worker
 from reschema.driver.spec import Param
+from tools.coverage_spike import _hook_recorder
 
 MODEL = r"""
 #include <stdint.h>
@@ -254,7 +257,11 @@ def test_batch_syscalling_original_falls_back_to_fresh_vms(probe_bin):
     binary, syms = probe_bin
     params = [Param("x", "i32", range=(-50, 50))]
     cases = gen_inputs(params, random.Random(80), 8)
-    outs = batch_call_original(binary, syms["pidish"][0], params, cases)
+    scope, _, hits = _hook_recorder()
+    outs = batch_call_original(
+        binary, syms["pidish"][0], params, cases, hook_scope=scope
+    )
+    assert hits[0] > 0
     assert [o["batch_mode"] for o in outs] == ["fresh-vm-fallback"] * len(cases)
     assert all(o["exit_code"] == 0 for o in outs)  # the syscall really ran
     fresh = [call_original(binary, syms["pidish"][0], params, c) for c in cases]
@@ -297,24 +304,66 @@ def test_batch_call_original_matches_fresh_per_case(manifest, probe_bin):
         fresh = [call_original(binary, addr, params, c) for c in cases]
         batched = batch_call_original(binary, addr, params, cases)
         assert _strip_mode(batched) == fresh
+        scope, _, hits = _hook_recorder()
+        hooked = batch_call_original(binary, addr, params, cases, hook_scope=scope)
+        assert hooked == batched
+        assert hits[0] > 0
         # syscall-free kernels only: the snapshot path must serve all of them
         # (bump's static-state isolation included)
         assert all(o["batch_mode"] == "batched-snapshot" for o in batched)
 
 
-def test_batch_pre_case_hook_fires_without_changing_outputs(probe_bin):
-    # #121 measurement seam: the optional hook fires once per case (after the
-    # snapshot restore) and MUST leave per-case outputs bit-identical.
+def test_batch_hook_scope_resets_each_case_and_preserves_outputs(probe_bin):
     pbin, syms = probe_bin
-    hits = []
+    resets = []
+    scopes = []
     params = [Param("x", "i32", range=(-50, 50))]
     cases = gen_inputs(params, random.Random(41), 4)
+
+    @contextmanager
+    def scope(ql):
+        scopes.append("enter")
+        try:
+            yield lambda: resets.append(ql)
+        finally:
+            scopes.append("exit")
+
     plain = batch_call_original(pbin, syms["bump"][0], params, cases)
-    hooked = batch_call_original(
-        pbin, syms["bump"][0], params, cases, pre_case_hook=hits.append
-    )
-    assert _strip_mode(hooked) == _strip_mode(plain) == _strip_mode(plain)
-    assert len(hits) == len(cases)
+    hooked = batch_call_original(pbin, syms["bump"][0], params, cases, hook_scope=scope)
+    assert hooked == plain
+    assert len(resets) == len(cases) and all(ql is resets[0] for ql in resets)
+    assert scopes == ["enter", "exit"]
+
+
+def test_batch_registrations_by_hook_do_not_stack_across_cases(probe_bin):
+    # Preserve #124's regression with real callback deltas, not only a
+    # registration count: every identical case must pay for each block once.
+    pbin, syms = probe_bin
+    registrations = []
+    fired = []
+    params = [Param("x", "i32", range=(-50, 50))]
+    cases = [{"x": 7}] * 4
+    boundaries = []
+
+    def cb(ql, address, size):
+        fired.append(address)
+
+    @contextmanager
+    def scope(ql):
+        handle = ql.hook_block(cb)
+        registrations.append(handle)
+        try:
+            yield lambda: boundaries.append(len(fired))
+        finally:
+            boundaries.append(len(fired))
+            ql.hook_del(handle)
+
+    outs = batch_call_original(pbin, syms["bump"][0], params, cases, hook_scope=scope)
+    assert len(registrations) == 1
+    deltas = [b - a for a, b in pairwise(boundaries)]
+    assert deltas[0] > 0 and deltas == [deltas[0]] * len(cases)
+    for o in outs:
+        assert o["batch_mode"] == "batched-snapshot"
 
 
 def test_batch_call_original_fault_then_clean(probe_bin):
@@ -324,8 +373,14 @@ def test_batch_call_original_fault_then_clean(probe_bin):
     good1 = {"buf": [1, 2, 3, 4], "n": 4}
     boom = {"buf": [1, 2, 3, 4], "n": 10_000_000}  # walks off the mapped stack
     good2 = {"buf": [5, 6, 7, 8], "n": 4}
-    outs = batch_call_original(
-        binary, syms["fallible"][0], params, [good1, boom, good2]
+    cases = [good1, boom, good2]
+    outs = batch_call_original(binary, syms["fallible"][0], params, cases)
+    scope, _, _ = _hook_recorder()
+    assert (
+        batch_call_original(
+            binary, syms["fallible"][0], params, cases, hook_scope=scope
+        )
+        == outs
     )
     assert [o["exit_code"] for o in outs] == [0, -1, 0]
     assert outs[1]["events"][-1]["sc"] == "crash"

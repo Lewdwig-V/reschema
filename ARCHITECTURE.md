@@ -176,12 +176,25 @@ Control flow across the tour sections below, as it actually happens.
    to fresh VMs (tests/test_driver.py equivalence guard). The snapshot contract
    is pinned for syscall-free kernels only: it spans registers+memory, never
    rootfs contents, OS/fd objects, or post-save mapped regions. The structural
-   guard (not a caveat) is a syscall scan at batch entry: the function's
+   guard is a direct syscall scan at batch entry: the function's
    symtab-bounded .text slice is checked for `syscall`/`sysenter` opcodes, and
    any hit — or an unboundable slice (stripped/zero-size symbol) — reroutes
    the round to per-case fresh VMs. Each trace records its route in
    `batch_mode` (`"batched-snapshot"` vs `"fresh-vm-fallback"`), and the
    syscalling-witness test pins fallback routing + result identity.
+   This scan does not follow callees: shared-VM execution remains for known
+   syscall-free kernels, including their callees.
+   Optional `hook_scope(ql)` instrumentation owns one VM attachment and yields
+   a reset callback. Snapshot order is save → attach once → (restore → reset →
+   run) per case → detach in `finally`. Hooks and Python recorder state are
+   outside the snapshot. Fresh-VM fallback attaches/resets/detaches for each
+   VM instead of silently skipping instrumentation. Empty batches attach
+   nothing. Setup must not modify guest state; scopes release only their own
+   handles and surface instrumentation errors, including callback errors that
+   the guest-fault conversion might otherwise hide. The coverage spike resets
+   previous-block history per case, retains bitmap/hits per batch, and creates
+   fresh totals per timed trial. It checks all trial payloads for equality and
+   labels the collision-prone bitmap as occupied edge bins.
    Cases where the *original* faults are skipped — a crash is not a behavior
    spec.
 5. The model is compiled and executed in ONE worker round trip (`validate`
@@ -619,8 +632,10 @@ against the (non-public) original plans is kept as history, subordinate.
   semantics. (History: plan said 36 slots, 3 seeds, no targeting.)
   **pkfmt (added post-#121):** TLV parser — magic u16, version bounds,
   tag-dispatch records, FNV checksum — the corpus's first real basic-block
-  domain (the #121 spike found the older seeds starving coverage signals:
-  64 cases → 14 distinct edges). Its error channel is `pk_errno` static state
+  domain. The #121 spike motivated a richer corpus, but its historical 14-edge
+  count and 1.18x overhead verdict predate the complete hook-lifecycle repair
+  and must be remeasured with `uv run python -m tools.coverage_spike` before
+  reuse. Its error channel is `pk_errno` static state
   (negative results collide with wrapped uint32 accumulators — the recorder
   caught that at seed-rewrite review); family topology-digest stability is
   pinned by keeping the parser a single body (at -O1+ the compiler tail-jump

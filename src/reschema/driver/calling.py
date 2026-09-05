@@ -16,6 +16,8 @@ import random
 import shutil
 import struct
 import tempfile
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 
 from elftools.elf.elffile import ELFFile
@@ -170,10 +172,11 @@ def call_original(binary: str, addr: int, params: list[Param], case: dict) -> di
 
 
 def _fn_has_syscall(binary: str, addr: int) -> bool | None:
-    """True/False on whether the function at addr executes a syscall opcode.
+    """True/False on whether the function slice contains a syscall opcode.
 
     None = unanswerable here: the slice is bounded by the binary's own symtab,
-    so a stripped or zero-size symbol leaves no honest extent to scan."""
+    so a stripped or zero-size symbol leaves no honest extent to scan.
+    This direct-opcode screen does not establish purity of callees."""
     with open(binary, "rb") as f:
         sym = ELFFile(f).get_section_by_name(".symtab")
         if not sym:
@@ -198,44 +201,61 @@ def batch_call_original(
     addr: int,
     params: list[Param],
     cases: list[dict],
-    pre_case_hook=None,
+    *,
+    hook_scope: Callable[[Qiling], AbstractContextManager[Callable[[], None]]]
+    | None = None,
 ) -> list[dict]:
     """call_original for a whole case list; same per-case trace schema.
 
     Isolation (batched-snapshot): ql.save() after boot/SENTINEL map, ql.restore()
     before every case — registers AND memory (incl. fsbase/gsbase) return to the
-    pristine post-init state, so case N cannot leave residue for case N+1. A
-    fault only costs its own case: restore before the next case wipes the wedged
-    emulation state.
+    pristine post-init state for known syscall-free kernels. A fault only costs
+    its own case: restore resets guest state and the next run restarts emulation.
 
     The snapshot spans registers+memory ONLY — rootfs contents, OS/fd objects
     and post-save mapped regions are outside it, so the contract holds for
-    syscall-free kernels only. Guard: the function's symtab-bounded slice is
-    scanned for syscall-executing opcodes; ANY hit (or an unboundable slice —
+    syscall-free kernels only (including callees). The function's symtab-bounded
+    slice is scanned for syscall-executing opcodes; ANY hit (or an unboundable slice —
     stripped/zero-size symbol) reroutes the round to per-case fresh VMs. Each
     trace records which: batch_mode = "batched-snapshot" | "fresh-vm-fallback".
+
+    hook_scope(ql) owns instrumentation for ONE VM: enter once, yield a
+    zero-argument reset callback, and remove owned handles on every exit.
+    Reset runs after restore and before each case. Hooks and Python recorder
+    state are outside the snapshot; setup must not mutate guest state. In the
+    fallback, each fresh VM gets its own scope/reset/cleanup cycle. Aggregate
+    recorder state belongs to the batch's caller, not to a VM attachment.
+    Scope/reset errors propagate; scopes must also surface callback errors that
+    _run_case may have caught as guest faults. Empty batches create no scope.
     """
     _guard_arity(params)
+    if not cases:
+        return []
     if _fn_has_syscall(binary, addr) is not False:
         # Syscalling or unscannable original: per-case fresh VMs. (Fresh VMs
         # were the pre-batch behavior for every path — the suite already paid
         # this cost everywhere before #80, so the fallback has no new worst case.)
-        outs = [call_original(binary, addr, params, c) for c in cases]
-        for o in outs:
+        outs = []
+        for case in cases:
+            ql = _boot_vm(binary)
+            with (
+                hook_scope(ql) if hook_scope is not None else nullcontext()
+            ) as before_case:
+                if before_case is not None:
+                    before_case()
+                o = _run_case(ql, addr, params, case)
             o["batch_mode"] = "fresh-vm-fallback"
+            outs.append(o)
         return outs
     ql = _boot_vm(binary)
     snap = ql.save()
     outs = []
-    for case in cases:
-        ql.restore(snap)
-        # #121 measurement seam: optional per-case hook (e.g. coverage
-        # probe attach/detach). Default None = zero behavior change; the
-        # snapshot is restored BEFORE the hook fires, so hook state never
-        # bleeds across cases.
-        if pre_case_hook is not None:
-            pre_case_hook(ql)
-        o = _run_case(ql, addr, params, case)
-        o["batch_mode"] = "batched-snapshot"
-        outs.append(o)
+    with hook_scope(ql) if hook_scope is not None else nullcontext() as before_case:
+        for case in cases:
+            ql.restore(snap)
+            if before_case is not None:
+                before_case()
+            o = _run_case(ql, addr, params, case)
+            o["batch_mode"] = "batched-snapshot"
+            outs.append(o)
     return outs

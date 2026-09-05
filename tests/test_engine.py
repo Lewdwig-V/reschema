@@ -161,7 +161,9 @@ def test_unjudged_outcomes_never_enter_the_failure_supply(manifest, monkeypatch)
     monkeypatch.setattr(
         eng,
         "hidden_input_stream",
-        lambda rng, modes: iter([]),  # input draw starves: harness-side failure
+        lambda rng, modes, seed=None: iter(
+            []
+        ),  # input draw starves: harness-side failure
     )
     st2.record_case("b", ["world"], b"")
     r2 = eng.submit_program(st2, GOOD_ROT13_PROG)

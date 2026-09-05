@@ -36,6 +36,17 @@ def test_corpus_builds_with_addresses(manifest):
     assert stripped["functions"]["rot13"]["addr"] != 0  # address captured pre-strip
 
 
+def test_pkfmt_function_address_and_size(manifest):
+    # Historical edge counts need rerunning after the hook-lifecycle repair;
+    # they are not a test oracle.
+    # function-mode surface is deliberately ONLY the representable i32
+    # function (pointer-buffer helpers await pointer-kind sketch inference).
+    p = _gcc_slot(manifest, "pkfmt", "-O2", False)
+    assert set(p["functions"]) == {"pk_version_ok"}
+    for f in p["functions"].values():
+        assert f["addr"] and f["size"] and f["size"] > 8
+
+
 def test_stripped_has_no_symtab(manifest):
     s = next(x for x in manifest if x["stripped"])
     with open(s["binary"], "rb") as f:

@@ -146,7 +146,7 @@ claims about what the image contains.
 # step zero: the pinned toolchain image (once per machine/toolchain change)
 podman build -t localhost/reschema-toolchain:1 -f Containerfile .
 uv sync                                    # python deps: qiling 1.4.6, mcp 2.x
-uv run python -m reschema.corpus.generate  # builds the 48-slot corpus
+uv run python -m reschema.corpus.generate  # builds the 60-slot corpus
 uv run pytest -q                           # full suite (~2 min; emulation is the cost)
 ```
 
@@ -178,7 +178,7 @@ a program task is the level-A verdict on reusing them.
 
 ```
 src/reschema/
-  corpus/generate.py   # seeds → 48-slot build matrix + manifest
+  corpus/generate.py   # seeds → 60-slot build matrix + manifest
   exec/                # qiling recorder, canonicalizer (rules v2.1)
   validate/            # program gate, function gate
   driver/              # call driver (SENTINEL trap), param specs, input gen

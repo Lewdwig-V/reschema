@@ -259,16 +259,57 @@ _CHARSET = (
 )
 
 
+def _pkfmt_grammar_packet(rng: random.Random) -> bytes:
+    """pkfmt seed-grammar generator (codex P1 on #125): construction
+    knowledge of the format's own shape, so hidden suites on this seed see
+    real packets with appreciable probability. 60% of draws are
+    built from these with structured variety: real magic, version range,
+    records 0-2, len fields matching payloads, plus minority attack-variants
+    — flipped magic, out-of-range versions, and overclaimed record lengths
+    (the truncation class). Draws never precede recorded cases semantically:
+    they're fresh entropy, just grammar-shaped."""
+    magic_bad = rng.random() < 0.15
+    ver = rng.choice((2, 3, 3, 4, 4, 5))  # range [2..4] valid; ~1/6 bad
+    n = rng.randint(0, 2)
+    pkt = [0xB1, 0x5A, ver, n]
+    for index in range(n):
+        ln = rng.randint(0, 6)
+        declared = ln
+        # Overclaim only the last payload: no following record's bytes can
+        # accidentally satisfy its length. Keep the actual payload short.
+        if index == n - 1 and rng.random() < 0.18:
+            declared += rng.randint(8, 32)
+        pkt += [rng.choice((0x20, 0x30)), declared & 0xFF, (declared >> 8) & 0xFF]
+        pkt += [rng.randrange(256) for _ in range(ln)]
+    if magic_bad:
+        pkt[0] ^= 0xFF
+    return bytes(pkt)
+
+
+# Per-seed hidden grammar overrides. Seeds with real wire formats get the
+# submission-hardening they need here (the engine consults this by name);
+# seeds without one take the uniform stream, unchanged.
+_SEED_GRAMMARS = {"pkfmt": _pkfmt_grammar_packet}
+
+
 def hidden_input_stream(
-    rng: random.Random, modes: tuple
+    rng: random.Random, modes: tuple, seed: str | None = None
 ) -> Iterator[tuple[list[str], bytes]]:
     """Endless candidate inputs from the task input space.
 
     Byte-domain stdin ("stdin-bytes"): raw random bytes, every draw guaranteed to
     contain a NUL and a >=0x80 byte — text/C-string overfits must fail reliably
     (random CONTENT keeps draws unguessable; the corner bytes are by construction).
+
+    Grammar-aware seeds (_SEED_GRAMMARS): 60% of draws come from the seed's
+    own packet generator (fresh entropy, structured variety, attack variants),
+    interleaved with the uniform stream so robustness coverage does not die.
     """
+    grammar = _SEED_GRAMMARS.get(seed) if seed else None
     while True:
+        if grammar is not None and rng.random() < 0.6:
+            yield [], grammar(rng)
+            continue
         if "stdin-bytes" in modes:
             body = bytearray(rng.randrange(256) for _ in range(rng.randint(4, 48)))
             nul, hi = rng.sample(range(len(body)), 2)  # distinct: corner bytes survive

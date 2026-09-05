@@ -262,7 +262,7 @@ _CHARSET = (
 def _pkfmt_grammar_packet(rng: random.Random) -> bytes:
     """pkfmt seed-grammar generator (codex P1 on #125): construction
     knowledge of the format's own shape, so hidden suites on this seed see
-    real packets (never the always-reject trivialization). 60% of draws are
+    real packets with appreciable probability. 60% of draws are
     built from these with structured variety: real magic, version range,
     records 0-2, len fields matching payloads, plus minority attack-variants
     — flipped magic, out-of-range versions, and overclaimed record lengths
@@ -272,11 +272,14 @@ def _pkfmt_grammar_packet(rng: random.Random) -> bytes:
     ver = rng.choice((2, 3, 3, 4, 4, 5))  # range [2..4] valid; ~1/6 bad
     n = rng.randint(0, 2)
     pkt = [0xB1, 0x5A, ver, n]
-    for _ in range(n):
+    for index in range(n):
         ln = rng.randint(0, 6)
-        if rng.random() < 0.18:  # overclaim: truncation/induced-fault class
-            ln += rng.randint(8, 32)
-        pkt += [rng.choice((0x20, 0x30)), ln & 0xFF, (ln >> 8) & 0xFF]
+        declared = ln
+        # Overclaim only the last payload: no following record's bytes can
+        # accidentally satisfy its length. Keep the actual payload short.
+        if index == n - 1 and rng.random() < 0.18:
+            declared += rng.randint(8, 32)
+        pkt += [rng.choice((0x20, 0x30)), declared & 0xFF, (declared >> 8) & 0xFF]
         pkt += [rng.randrange(256) for _ in range(ln)]
     if magic_bad:
         pkt[0] ^= 0xFF

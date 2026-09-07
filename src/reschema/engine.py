@@ -15,12 +15,19 @@ import re
 import secrets
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 from .driver import podrun
 from .driver.spec import Param
 from .exec.canonical import CANONICALIZER_VERSION, canonicalize
 from .exec.recorder import record
+from .feedback import (
+    CONTINUATION_FEEDBACK_VERSION,
+    FEEDBACK_DEADLINE_ENV,
+    FEEDBACK_ENV,
+    FEEDBACK_PROBE_CEILING_ENV,
+)
 from .memory import read_family
 from .validate.function import N_FUZZ, validate_function
 from .validate.program import compile_model, hidden_input_stream, replay_against
@@ -386,8 +393,7 @@ def submit_program(
                 "stage": stage,
             },
         )
-        store.save_ledger(led)
-        return {"accepted": False, **kw}
+        return _rejection_response(store, led, {"accepted": False, **kw})
 
     verdict = _flail_verdict(led.get("rejected_norm", []), _norm_source(c_source))
     if verdict is not None:  # flail loop, refused BEFORE the gate spend
@@ -546,11 +552,11 @@ def _abi_template(func: str, facts: dict) -> str:
 """
 
 
-def _repair_directive(store: TaskStore) -> dict | None:
+def _repair_directive(store: TaskStore, *, led: dict | None = None) -> dict | None:
     """Two-pass repair coaching (research slot 2B-5): rejections are answered
     FIRST with abstract bit-logic repair, idiomatic annotation after acceptance.
     Guidance only, attached when the task ledger shows rejection history."""
-    led = store.ledger()
+    led = store.ledger() if led is None else led
     rej = [e for e in led.get("recent", []) if e.get("outcome") == "reject"]
     if not rej:
         return None
@@ -564,6 +570,72 @@ def _repair_directive(store: TaskStore) -> dict | None:
         ],
         "provenance": "coaching guidance derived from your rejection history, not a verified fact",
     }
+
+
+def _rejection_response(store: TaskStore, led: dict, out: dict) -> dict:
+    """Persist an already-accounted rejection; optionally coach once per task.
+
+    Only existing public rejection fields and accepted function names inform
+    coaching. No judge call, progress inference, memory promotion, or extra
+    accounting. The marker survives reopens and recent-journal eviction.
+    """
+    last = led["recent"][-1]
+    eligible = (
+        os.environ.get(FEEDBACK_ENV) == CONTINUATION_FEEDBACK_VERSION
+        and "continuation_feedback" not in led
+        and "program" not in led["accepted"]
+        # Fail closed for new/unclassified stages. Starvation and infra faults
+        # say nothing about how to repair the submitted candidate.
+        and last["stage"]
+        in {
+            "spec",
+            "arity",
+            "compile",
+            "link",
+            "symbol",
+            "duplicate",
+            "recorded",
+            "hidden",
+            "divergence",
+        }
+    )
+    if eligible:
+        # Optional authoritative limits supplied by the budget owner. These
+        # only suppress coaching: they never implement or reset a guard.
+        try:
+            deadline = os.environ.get(FEEDBACK_DEADLINE_ENV)
+            ceiling = os.environ.get(FEEDBACK_PROBE_CEILING_ENV)
+            eligible = (not deadline or time.time() < float(deadline)) and (
+                not ceiling or led.get("probes", 0) <= int(ceiling)
+            )
+        except ValueError:
+            eligible = False  # malformed host metadata must not break a verdict
+    if eligible:
+        out["continuation_feedback"] = {
+            "version": CONTINUATION_FEEDBACK_VERSION,
+            "provenance": "procedural coaching, not a verified fact",
+            "task_complete": False,
+            "candidate": {k: last[k] for k in ("mode", "function") if k in last},
+            "message": "This candidate was rejected; the program task remains unfinished. "
+            "Rejection is an expected part of recovery. The reported rejection "
+            "gives you a concrete discrepancy to investigate.",
+            "evidence": ("divergence" if "divergence" in out else "detail")
+            + " in this response",
+            "accepted_functions": sorted(
+                name
+                for entry in led["accepted"]
+                if isinstance(entry, dict)
+                for name in entry
+            ),
+            "scope": "These are previously accepted function models. Their acceptance "
+            "does not validate this candidate or any revised candidate.",
+            "next_actions": "Within the harness limits, repair against the reported "
+            "discrepancy, run a distinguishing experiment, or revisit an assumption.",
+            "repair_directive": _repair_directive(store, led=led),
+        }
+        led["continuation_feedback"] = CONTINUATION_FEEDBACK_VERSION
+    store.save_ledger(led)
+    return out
 
 
 def open_function_task(store: TaskStore, func: str) -> dict:
@@ -670,8 +742,9 @@ def submit_function(
                 "stage": "spec",
             },
         )
-        store.save_ledger(led)
-        return {"accepted": False, "reason": "spec", "detail": str(e)}
+        return _rejection_response(
+            store, led, {"accepted": False, "reason": "spec", "detail": str(e)}
+        )
     # Flail guard (#95): same shape as the program path, refused before the
     # fuzz VM spend. NOTE: spec rejects above are NOT fingerprinted — the
     # source was never judged, only the declaration was.
@@ -700,15 +773,18 @@ def submit_function(
                 "stage": "duplicate",
             },
         )
-        store.save_ledger(led)
-        return {
-            "accepted": False,
-            "reason": "duplicate",
-            "detail": (
-                f"near-duplicate of {n_dup} earlier rejected submission(s) "
-                f"({d_dup} normalized-char diff) — change approach or stop"
-            ),
-        }
+        return _rejection_response(
+            store,
+            led,
+            {
+                "accepted": False,
+                "reason": "duplicate",
+                "detail": (
+                    f"near-duplicate of {n_dup} earlier rejected submission(s) "
+                    f"({d_dup} normalized-char diff) — change approach or stop"
+                ),
+            },
+        )
     # ponytail: agent-controlled cost (fresh Qiling VM per case) — clamp runaway budgets
     n_fuzz = min(n_fuzz, 4 * N_FUZZ)
     fmeta = _fn_meta(store, func)
@@ -750,8 +826,9 @@ def submit_function(
                 "stage": v.divergence.get("stage", "divergence"),
             },
         )
-        store.save_ledger(led)
-        return {"accepted": False, "divergence": v.divergence}
+        return _rejection_response(
+            store, led, {"accepted": False, "divergence": v.divergence}
+        )
     # Newest accepted source wins: a re-accept also passed validation, so replace.
     existing = next(
         (f for f in led["accepted"] if isinstance(f, dict) and func in f), None

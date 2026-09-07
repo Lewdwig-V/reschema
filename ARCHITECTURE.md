@@ -279,6 +279,29 @@ detail}` — unknown task/function, malformed params crossing the wire, or
 harness faults (corrupt ledger, missing image). The `internal` detail names
 the exception class; it is a structured report, not a traceback page.
 
+**Optional rejection coaching (#127):** the host can set
+`RESCHEMA_CONTINUATION_FEEDBACK=rejection-once-v1` to attach
+`continuation_feedback` on the first repairable rejection while the program
+task is unfinished. Default/unrecognized settings are off; the MCP tool
+schema and baseline payloads are unchanged. The engine references only the
+current response's `detail`/`divergence` and previously accepted function
+names, explicitly scoped to those earlier models. It reuses `repair_directive`
+and labels all feedback as procedural coaching, never a `verified_fact`.
+No hidden progress, extra cases, resource estimates, or new seeds are exposed.
+
+A `continuation_feedback` version marker is saved with the existing rejection
+ledger write. It survives task reopens and journal eviction, applies across
+both submission modes, and disappears only with task-state reset. Compile,
+link, symbol, spec, arity, duplicate and behavior rejections are eligible;
+infra, starvation, unknown stages, accepts and completed tasks are not.
+Budget owners may supply `RESCHEMA_FEEDBACK_DEADLINE` (Unix seconds) and
+`RESCHEMA_FEEDBACK_PROBE_CEILING` (the existing guard's inclusive ceiling).
+Reached deadlines, exceeded ceilings, or malformed limits suppress coaching
+without changing verdicts or guards. No remaining-budget counts are shown.
+Feedback text, reused repair policy, and cadence are snapshot-pinned; changes
+require a new treatment revision. Delivery is once per task, not a runner
+restart or continuation policy (#128).
+
 ## Components
 
 ### mcp/server.py — 5 tools, dispatch only
@@ -597,6 +620,19 @@ flat. Reports land `report-<family>.md` beside the JSONL under
 tools.dogfood.driver <campaign.toml> --out <dir> [--pool N]` (AGENTS.md
 carries the smoke checklist). 46 CI-safe tests run the whole pipeline against
 `FakeRunner`; no LLM, podman, or endpoint in CI.
+
+Add `--continuation-feedback` to select `rejection-once-v1` for a campaign.
+Use a separate `--out` directory to compare it with the default baseline.
+Every run header, including infra errors and synthetic priming failures,
+records `continuation_feedback: off|rejection-once-v1`. The runner explicitly
+pins the MCP environment, so inherited standalone feedback settings cannot
+enable coaching in a baseline run. Enabled slots supply their existing
+deadline and probe ceiling solely to suppress feedback after a hard stop.
+Resume and reporting refuse mixed feedback treatments; unstamped historical
+records are treated as baseline. Prompts, slot exits, validation budgets,
+probe/submission costs and efficiency formulas remain unchanged. This patch
+does not establish an improvement in model persistence; that requires a
+separate controlled campaign.
 
 ## Key architectural decisions
 

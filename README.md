@@ -201,6 +201,9 @@ which is when the original function returns.)
 - `docs/benchmark-protocol.md` - the cross-task transfer benchmark (methods;
   CI-pinned reference run, live-agent protocol pending).
 - `docs/roadmap.md` - phase order beyond the current milestone.
+- [Long-horizon reasoning harness proposal](docs/proposals/long-horizon-reasoning-harness.md)
+  - a proposed Lean-backed generalisation, with a separate implementation repository
+    recommended; design discussion only.
 
 For agents working on this repo, `AGENTS.md` holds the contributor conventions
 (TDD rules, trust model, entropy policy).

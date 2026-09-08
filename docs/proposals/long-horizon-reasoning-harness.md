@@ -22,6 +22,10 @@ evidence semantics, dependency invalidation, verification, budgets, and task
 completion on those foundations. Evaluate AutoSaddler later for offline harness
 optimisation against a fixed task contract.
 
+Distinguish rules, which permit recorded exceptions, from gates, which require
+checked evidence before a protected transition. Preserve that distinction in
+the task contract, stored state, and execution boundary.
+
 The research hypothesis is that a fixed model can complete longer, more
 interdependent tasks when it can reuse checked reasoning and recover from
 changed assumptions without reconstructing its whole argument in prose.
@@ -33,7 +37,7 @@ contracts, and benchmark accounting remain the baseline for the experiment.
 
 ## Motivation and scope
 
-An agent may discover a useful rule yet lose it during context compaction,
+An agent may discover a useful regularity yet lose it during context compaction,
 silently strengthen a tentative assumption, or revise an input without revisiting
 dependent conclusions. More persistent prose alone does not ensure that those
 conclusions remain applicable.
@@ -183,8 +187,9 @@ from the live project's evidence ledger.
 
 The optimiser may change how the agent searches for evidence or constructs a
 proof. It may not change the objective, trusted verifier, proof acceptance policy,
-budget enforcement, or recorded evidence to improve its score. Enforce that
-boundary outside mutable candidates and evaluate candidates against the fixed
+gate classification or applicability, budget enforcement, or recorded evidence
+to improve its score. Enforce that boundary outside mutable candidates and
+evaluate candidates against the fixed
 failure cases below. Keep training traces, development selection, and final
 held-out evaluation separate. Report optimisation cost as well as task execution
 cost. Harness optimisation is a separately measured treatment; it is not a
@@ -204,6 +209,9 @@ view from those records.
 | Record | Minimum information |
 | --- | --- |
 | Objective | User requirement, completion checks, scope, authorised revision |
+| Policy requirement | Stable identifier, contract version, explicit rule or gate kind, scope, and enforcement definition |
+| Rule exception | Rule and version, affected decision, recorded rationale, supporting evidence, expected consequences, and actor |
+| Gate evaluation | Gate and contract version, exact transition and input versions, checker identity, evidence references, and outcome |
 | Observation | Source, acquisition operation and inputs, raw result or blob reference, time, environment version |
 | Claim | Precise statement, interpretation, supporting and conflicting observations, scope, explicit assumptions |
 | Artifact | Content digest, language, definitions or target declaration, input and dependency versions |
@@ -229,6 +237,78 @@ satisfy the restart test. Reuse storage libraries; implement the ledger's record
 and transaction semantics without replacing LangGraph's checkpoint engine.
 Use a single controller as ledger writer. Multi-agent coordination and concurrent
 mutation are deferred until the serial recovery semantics work.
+
+## Rules and gates
+
+A **rule** guides behaviour and has an explicit opt-out path with a recorded
+rationalisation. A **gate** controls whether a particular transition is
+permitted and has no opt-out path. The distinction is part of the contract,
+not a matter of emphasis in a prompt. Here, rule means a behavioural policy;
+learned regularities and inference rules belong to the project model.
+
+| Requirement kind | How work proceeds | Durable decision |
+| --- | --- | --- |
+| Rule | Follow the rule, or record a scoped exception before departing from it | Followed, or excepted with rationale and provenance |
+| Gate | Supply evidence accepted by the designated checker for this transition | Passed with checked evidence, or blocked with an explicit missing obligation |
+
+A useful formulation test is:
+
+> When an agent wants to skip it, does its formulation give it a concrete
+> question it cannot answer?
+
+The missing answer must be a checkable fact, artifact, or authorisation required
+by the contract. A persuasive explanation of why checking seems unnecessary
+does not supply that answer. The formulation makes the obligation legible;
+enforcement at the transition boundary makes it a gate.
+
+| Example | Concrete question |
+| --- | --- |
+| Rule: prefer a small experiment before an expensive run | If departing from this approach, what is the recorded reason and scope? |
+| Gate: accept a Lean artifact only after proof checking | Which verifier-owned result checks this exact artifact against the pinned target and permitted axioms? |
+| Gate: apply a theorem only with supported premises | Which current evidence establishes each required premise for this input and environment? |
+| Gate: complete the task only after its required checks pass | Which recorded results satisfy every required completion check for this objective version? |
+
+### Preserve the distinction mechanically
+
+Represent rules and gates as distinct tagged records. Only a rule decision has
+an exception constructor; a gate decision cannot carry a waiver or accept a
+rationale in place of evidence. Reject missing or unknown kinds when loading
+configuration, importing records, or migrating schemas. Do not infer enforcement
+strength from prose, confidence, urgency, or the agent's preferred next action.
+
+Each gate names its protected transition, applicability predicate, evidence
+requirements, and designated checker. Its decision binds the contract version,
+artifact and input versions, and relevant environment. The host validates the
+evidence's origin and scope; an agent-authored success label or invented receipt
+is insufficient. Lean proofs are one evidence type. Test results, observed
+external state, or approval by a designated reviewer can satisfy other gates
+when the contract specifies them.
+
+Evaluate applicability under the protected contract. A conditional gate need
+not apply outside its declared scope, but the agent cannot declare it irrelevant
+by rationale. Unknown applicability blocks the affected transition. Missing or
+stale evidence, checker failure, and exhausted budgets also leave that transition
+blocked; they never convert the gate into advice. The agent can investigate the
+missing obligation, work elsewhere, or finish with a blocked outcome.
+
+Enforce gates at the host operation that commits acceptance, dispatches an
+external effect, or records completion. Check current dependencies at that point;
+an earlier pass cannot authorise reuse after a relevant change. All entry paths,
+including direct tools, retries, and resumed workflows, use the same enforcement.
+Bind validation and commitment to one state revision, or revalidate if it changes.
+
+Pin the gate definitions and their enforcement outside agent- and optimiser-writable
+artifacts. Context summaries retain their identifiers and retrieve authoritative
+records; checkpoints retain the contract version. Schema migrations must preserve
+kind and enforcement or reject the migration. Contract changes require a separate,
+explicit revision by the designated contract owner; weakening or removing a gate
+must be identified in that revision. It does not count as passing the old gate.
+Existing runs cannot silently adopt a weaker contract on resume.
+
+Rules should retain their exception path where judgment is intended. Gates should
+identify specific transitions and attainable evidence requirements. This lets the
+agent adapt its investigation while keeping acceptance conditions stable. A record
+of a rule exception explains a decision; it cannot discharge an associated gate.
 
 ## Lean's role and the verification boundary
 
@@ -354,13 +434,15 @@ Each iteration:
    history queryable by code.
 2. Choose a question that blocks progress. State a hypothesis or proposed
    change and the observation or check that would distinguish its outcomes.
+   Record any rule exception and its rationale before acting on it.
 3. Execute the investigation or check and persist its result, including
    unsuccessful attempts and structured errors.
 4. Update support and applicability, propagate staleness, and recompute affected
    pure artifacts. Feed concrete discrepancies or missing obligations back to
    the agent.
-5. Check the whole objective. Continue, change approach, surface a necessary
-   clarification, or finish with the evidence required by the task contract.
+5. Check the whole objective and its gates. Continue, change approach, surface
+   a necessary clarification, or finish with the evidence required by the task
+   contract.
 
 Guided tenacity uses observed progress: what still holds, what changed, which
 specific obligation remains, and whether another attempt could add information.
@@ -391,7 +473,8 @@ Build one complete vertical slice before a general framework:
    cumulative budget. Demonstrate recovery without a bespoke execution engine.
 2. **Lean gate:** a small approved library, explicit targets and hypotheses,
    bounded proof attempts, independent checking, and separate validation and
-   applicability records.
+   applicability records. Use distinct rule and gate records; demonstrate a
+   recorded rule exception and a gate that remains blocked under attempted bypass.
 3. **Changed-premise recovery:** a controlled data-transformation task with a
    revised timestamp or identifier assumption. Demonstrate targeted staleness,
    recomputation, and correct completion after a fresh-session restart.
@@ -486,6 +569,13 @@ Each gate should have a negative witness, following ReSchema's conventions.
 | A worker fails after a ledger write but before its graph checkpoint | Resume deduplicates the operation and reconciles the checkpoint |
 | An optimiser candidate changes the judge, target, or budget enforcement | Candidate is rejected independently of its reported task score |
 | A proposed harness update relies on private held-out traces | Evidence construction refuses those inputs; evaluation remains separate |
+| An agent presents a rule exception as satisfying a gate | Exception remains auditable; the gate still requires its own evidence |
+| An agent supplies a convincing rationale instead of gate evidence | Protected transition remains blocked |
+| A summary or schema migration drops a gate's kind | Reload retrieves the authoritative gate or rejects the record; no rule default |
+| A worker invents a passing receipt or reuses one for changed inputs | Host rejects its origin or scope and requires current evidence |
+| An agent labels a gate irrelevant, or its checker times out | Protected applicability check and evidence requirement still apply |
+| A direct tool call or resumed node bypasses the normal workflow | The operation boundary still enforces the same gate |
+| A candidate narrows a gate's scope or changes it into a rule | Independent contract checks reject the downgrade |
 
 ## Decisions to settle before implementation
 
@@ -493,6 +583,9 @@ Each gate should have a negative witness, following ReSchema's conventions.
 - Select the initial Lean library, validation procedure, and permitted trust
   boundary, including how external computation returns checkable evidence.
 - Define a task's required assurance and who may revise its formal targets.
+- Classify its behavioural requirements as rules or gates, and define each
+  gate's concrete question, applicability predicate, checker, and protected
+  transition; name the authority for explicit contract revisions.
 - Decide the initial dependency-capture mechanism and conservative fallback.
 - Pin runner and orchestration versions, checkpoint storage, and the worker
   event adapter; confirm the serial crash-recovery boundary.

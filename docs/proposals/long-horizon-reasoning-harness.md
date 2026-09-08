@@ -115,6 +115,7 @@ package versions and source revisions when implementing it.
 | LangGraph | Workflow execution, persistent checkpoints, interruption and resumption | Nodes for investigation, validation, applicability updates, and completion |
 | LangChain, where useful | Model and tool integrations | Adapt only interfaces the chosen worker does not already supply |
 | mini-swe-agent | Model/action loop, execution environments, trajectories | Bounded worker adapter and access to project operations |
+| Hindsight, optional | Memory retrieval, consolidation, and reflection | Versioned links between memories, evidence, and Lean artifacts; checked status on recall |
 | AutoSaddler V2, after the baseline | Trace-driven candidate harness changes, evaluation and selection | Scenario plugin, permitted mutation surface, and task evaluator adapter |
 | Lean 4 | Formal language, elaboration, proof checking | Pinned targets, evidence-to-premise links, and independent acceptance gate |
 | Existing domain tools | Observations, execution and domain checks | Provenance, scope, refresh rules, and completion contract |
@@ -237,6 +238,115 @@ satisfy the restart test. Reuse storage libraries; implement the ledger's record
 and transaction semantics without replacing LangGraph's checkpoint engine.
 Use a single controller as ledger writer. Multi-agent coordination and concurrent
 mutation are deferred until the serial recovery semantics work.
+
+## Hindsight memory and Lean artifacts
+
+Evaluate [Hindsight](https://hindsight.vectorize.io/) as an optional retrieval
+and reflection layer. Its `retain`, `recall`, and `reflect` operations provide
+memory ingestion, search, and synthesis. Its
+[observations](https://hindsight.vectorize.io/developer/observations) consolidate
+source memories, and mental models maintain summaries for recurring questions.
+These could save us implementing general memory search and consolidation.
+
+The proposed bridge is bidirectional but has different acceptance requirements
+in each direction. Memory can suggest a formal claim; a verifier decides whether
+its proof is acceptable. Checked artifacts can supply material for memories;
+the memories remain interpretations with links to the authoritative records.
+An arbitrary prose memory has no guaranteed, lossless translation into Lean.
+
+### Memory to formal model
+
+1. Recall relevant memories and their sources. Hindsight can return
+   [source facts and text chunks](https://hindsight.vectorize.io/developer/api/recall).
+   Resolve their references against the project ledger; fetch missing sources
+   directly when retrieval budgets truncate them. Missing retrieval results
+   do not establish that evidence is absent or that a prerequisite is satisfied.
+2. Propose a versioned claim with scope, supporting and conflicting evidence,
+   and explicit assumptions. A memory may map to several formal claims, and
+   several memories may support one claim. Keep those links explicit.
+3. Have the working model propose Lean definitions, conditional statements,
+   and proofs. Hindsight's
+   [structured reflection output](https://hindsight.vectorize.io/developer/api/reflect)
+   could supply candidate claim records; matching a JSON schema does not
+   establish their meaning or truth.
+4. Apply the existing target-review, proof-checking, and premise-applicability
+   gates. Record accepted formal artifacts and unresolved obligations separately.
+   A proof of the translation cannot by itself establish that the translation
+   captures the original requirement. Keep empirical premises in the ledger;
+   do not import remembered statements as trusted Lean axioms.
+
+### Formal model to memory
+
+For each checked artifact, export a compact record containing its exact statement,
+explicit premises, validation method, and current applicability, together with
+stable references. The adapter's canonical link record includes the project and
+claim IDs, claim revision, Lean declaration and artifact digest, verifier result,
+premise IDs, source event IDs, and ledger revision. These are our adapter fields,
+not assumed built-in Hindsight proof semantics.
+
+Render the formal statement and status fields from authoritative records. An LLM
+may add an explanation, example, or lesson; keep that prose visibly separate
+from the exact fields. Retain this material so future sessions can discover
+useful lemmas and previous failed approaches. On recall, resolve the references
+and attach current status from the ledger before permitting reuse. A generated
+summary's assertion that something is proved never supplies gate evidence.
+
+Use Hindsight's [document IDs and metadata](https://hindsight.vectorize.io/developer/api/retain)
+for provenance links. Metadata values are strings. A document ID upsert can
+replace extracted memories, so use a stable ID per exported version and retain
+the immutable originals in the project store. Memory extraction and refresh
+must not become the storage path for the only copy of a Lean artifact or raw
+observation.
+
+For example, remember that a migration preserved unique identifiers for input
+snapshot A. Formalise the reusable result that an injective mapping preserves
+uniqueness when its input identifiers are unique, and link the checks establishing
+those premises for A. Export a memory explaining when this lemma helps. If input
+snapshot B contains duplicate identifiers, its application is unsupported while
+the conditional theorem remains checked. The next session should retrieve that
+distinction and the concrete duplicate witness, then reconsider the migration.
+
+### Revision and authority
+
+Commit evidence changes and applicability invalidation to the ledger immediately.
+Queue memory exports and affected summary refreshes through a durable outbox;
+retry with stable export IDs. Hindsight projections may lag or fail, so gate
+decisions always consult the ledger. Track which ledger revision each export
+represents and reject stale status even if memory retrieval presents it as current.
+
+Hindsight's [mental-model documentation](https://hindsight.vectorize.io/developer/api/mental-models)
+provides refresh and provenance facilities, but documents that deletion alone
+does not raise its staleness flag. Retractions therefore need explicit ledger
+events and targeted refresh or regeneration. Its freshness mechanism cannot
+replace the project's dependency invalidation.
+
+Preserve source lineage around the feedback loop. Exporting a checked result,
+summarising it, and recalling that summary adds no independent supporting
+evidence. Deduplicate support by original observation and validation identities.
+Hindsight's observation `proof count` refers to supporting memories; it is not
+a Lean proof. Likewise, its term observation denotes consolidated knowledge,
+whereas this proposal uses observation for a recorded tool or environment result.
+
+Keep rules and gates in the protected contract. Recalled instructions and
+reflection directives cannot reclassify a gate, widen an exception, or declare
+their own verification successful. Use recalled content as provenance-labelled
+data; load governing instructions independently from the contract.
+
+### Integration and pilot boundary
+
+The existing [LangGraph integration](https://hindsight.vectorize.io/sdks/integrations/langgraph)
+offers tools, memory nodes, and a store adapter. Its documented store adapter
+uses ranked recall for key lookup and treats deletion as a no-op. Use explicit
+client calls behind the bridge for memory operations; retain exact ledger access
+and workflow checkpoints under their existing owners. Configure memory context
+placement explicitly instead of promoting retrieved prose to governing instructions.
+
+Add this adapter after the baseline recovery slice. Compare ordinary indexed
+ledger retrieval with Hindsight under the same formalisation and gate policy;
+charge retention, consolidation, reflection, and refresh costs. The first test
+should complete the identifier example in both directions, inject changed
+evidence, and resume while memory refresh is delayed. Keep Hindsight optional
+until its retrieval benefit justifies its additional service and model work.
 
 ## Rules and gates
 
@@ -576,6 +686,10 @@ Each gate should have a negative witness, following ReSchema's conventions.
 | An agent labels a gate irrelevant, or its checker times out | Protected applicability check and evidence requirement still apply |
 | A direct tool call or resumed node bypasses the normal workflow | The operation boundary still enforces the same gate |
 | A candidate narrows a gate's scope or changes it into a rule | Independent contract checks reject the downgrade |
+| A memory summary omits a theorem premise or calls a conjecture proved | Recall resolves exact artifact and ledger status; the summary cannot satisfy a gate |
+| Exported proof results are recalled as fresh corroborating memories | Shared source lineage prevents counting the same evidence again |
+| Evidence is retracted while memory refresh is delayed | Ledger invalidation blocks stale reuse and queues a targeted refresh |
+| A recalled memory lacks source records due to retrieval truncation | Fetch the authoritative records or leave the obligation unresolved |
 
 ## Decisions to settle before implementation
 
@@ -593,6 +707,14 @@ Each gate should have a negative witness, following ReSchema's conventions.
 
 ## References
 
+- [Hindsight overview](https://hindsight.vectorize.io/),
+  [retain](https://hindsight.vectorize.io/developer/api/retain),
+  [recall](https://hindsight.vectorize.io/developer/api/recall),
+  [reflect](https://hindsight.vectorize.io/developer/api/reflect),
+  [observations](https://hindsight.vectorize.io/developer/observations),
+  [mental models](https://hindsight.vectorize.io/developer/api/mental-models), and
+  [LangGraph integration](https://hindsight.vectorize.io/sdks/integrations/langgraph):
+  memory capabilities and limits relevant to the proposed Lean adapter.
 - [LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview),
   [persistence](https://docs.langchain.com/oss/python/langgraph/persistence), and
   [checkpointers](https://docs.langchain.com/oss/python/langgraph/checkpointers):

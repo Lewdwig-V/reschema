@@ -16,8 +16,11 @@ so new evidence can trigger targeted recomputation and reconsideration.
 Use **Lean 4 as the primary language for the formal project model**: definitions,
 executable functions, specifications, conditional theorems, and reusable proofs.
 Keep empirical evidence and the agent's current justification for applying a
-theorem in a separate, versioned ledger. A small controller owns persistence,
-verification, budgets, and task completion.
+theorem in a separate, versioned ledger. Reuse LangGraph for durable orchestration
+and mini-swe-agent for bounded working sessions. The new controller implements
+evidence semantics, dependency invalidation, verification, budgets, and task
+completion on those foundations. Evaluate AutoSaddler later for offline harness
+optimisation against a fixed task contract.
 
 The research hypothesis is that a fixed model can complete longer, more
 interdependent tasks when it can reuse checked reasoning and recover from
@@ -96,6 +99,101 @@ This is a parallel research direction, not a new prerequisite for the existing
 scoped. This document does not implement those issues or combine their
 experimental conditions.
 
+## Reuse existing infrastructure
+
+Build the pilot as a composition of existing projects. The following division
+is a proposed integration, not a claim that these packages already implement
+the complete workflow. Upstream capabilities were checked on 2026-09-08; pin
+package versions and source revisions when implementing it.
+
+| Component | Reuse | Project-specific work |
+| --- | --- | --- |
+| LangGraph | Workflow execution, persistent checkpoints, interruption and resumption | Nodes for investigation, validation, applicability updates, and completion |
+| LangChain, where useful | Model and tool integrations | Adapt only interfaces the chosen worker does not already supply |
+| mini-swe-agent | Model/action loop, execution environments, trajectories | Bounded worker adapter and access to project operations |
+| AutoSaddler V2, after the baseline | Trace-driven candidate harness changes, evaluation and selection | Scenario plugin, permitted mutation surface, and task evaluator adapter |
+| Lean 4 | Formal language, elaboration, proof checking | Pinned targets, evidence-to-premise links, and independent acceptance gate |
+| Existing domain tools | Observations, execution and domain checks | Provenance, scope, refresh rules, and completion contract |
+
+LangGraph is the relevant orchestration layer within the LangChain ecosystem;
+its use does not require a separate LangChain agent loop. Its checkpoints save
+workflow state, while stores hold application-defined data. Neither assigns
+the evidence and applicability semantics proposed here. In particular, the
+workflow graph is distinct from the graph of dependencies between project
+claims and artifacts. See the [LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview)
+and [persistence documentation](https://docs.langchain.com/oss/python/langgraph/persistence).
+
+The [SWE-agent maintainers](https://swe-agent.com/latest/) now recommend
+mini-swe-agent as the default; SWE-agent is in maintenance mode. Start with
+[mini-swe-agent](https://mini-swe-agent.com/latest/) for its small, replaceable
+worker loop and environment adapters. Keep full SWE-agent as an alternative
+if experiments need its specialised tool interfaces or history processors.
+Expose project operations through shell-accessible commands for the initial
+worker; an MCP transport remains an optional interface for other hosts.
+
+### One owner for each kind of state
+
+LangGraph owns the outer project workflow. A node invokes a bounded worker
+session with an objective, ledger revision, artifact references, and a remaining
+budget. The worker returns proposed changes, unresolved questions, trajectory
+references, and usage. The controller validates those results and commits the
+resulting project events before advancing the workflow. Use the worker's native
+model adapter unless a concrete integration requires LangChain. Adding another
+agent loop around the same work would create competing retry and budget policies.
+
+The project ledger is authoritative for observations, applicability, action
+attempts, and cumulative usage. Checkpoints carry references and execution
+cursors; worker trajectories are supporting artifacts. Commit ledger events
+under stable operation identifiers, and make retries return an existing result
+when the operation already completed. If the ledger and checkpoint disagree
+after a crash, reconcile the checkpoint from committed events before continuing.
+Do not require a distributed transaction across framework internals.
+
+An outer checkpoint does not make every command inside an unfinished worker
+session resumable. Record operation attempts and observations through a host
+wrapper as they occur, and preserve candidate files separately from accepted
+artifacts. After failure, reconcile pending operations and start a fresh bounded
+session from durable state. This is consistent with LangGraph's documented
+[checkpoint boundaries](https://docs.langchain.com/oss/python/langgraph/checkpointers).
+Reserve budget before dispatch and reconcile actual usage; unresolved usage
+retains its reservation across restarts.
+
+Configure an existing isolated execution environment for worker commands and
+Lean generation. Workers can edit candidate workspaces; the controller mediates
+external effects and writes accepted evidence and validation records. Environment
+adapters still need permissions and resource limits configured for this design.
+Keep this interface replaceable so a coding-oriented worker does not define the
+scope of future task domains.
+
+### AutoSaddler as a later optimisation stage
+
+[AutoSaddler](https://github.com/microsoft/AutoSaddler) proposes harness updates
+from execution traces and evaluates candidate changes. Use that machinery once
+there is a reproducible baseline and a meaningful task suite. Optimise prompts,
+retrieval policies, and bounded investigation strategies between experiment
+batches, then freeze the selected harness for each task run.
+
+Its paper includes SWE-agent experiments, but the current V2 documentation
+ships fake and Meta-ARE scenarios. Treat this stack as a new integration:
+implement an external [scenario plugin](https://github.com/microsoft/AutoSaddler/blob/main/docs/scenario-integration.md)
+using an existing component-map or Git harness space. Supply task cases,
+evaluation, trace evidence, permitted edits, and provenance. Reuse the optimiser's
+candidate and run storage for optimisation experiments; it has a separate purpose
+from the live project's evidence ledger.
+
+The optimiser may change how the agent searches for evidence or constructs a
+proof. It may not change the objective, trusted verifier, proof acceptance policy,
+budget enforcement, or recorded evidence to improve its score. Enforce that
+boundary outside mutable candidates and evaluate candidates against the fixed
+failure cases below. Keep training traces, development selection, and final
+held-out evaluation separate. Report optimisation cost as well as task execution
+cost. Harness optimisation is a separately measured treatment; it is not a
+prerequisite for testing whether the knowledge and Lean layers help.
+
+The remaining new work is substantial in semantics but narrower in infrastructure:
+versioned evidence, dependency capture and invalidation, proof applicability,
+acceptance gates, and adapters joining these to existing runners and evaluators.
+
 ## Durable project state
 
 Treat the project as a build system for knowledge: artifacts name the inputs
@@ -124,9 +222,12 @@ disputed. A passing test remains a historical result even when its input data
 or environment is superseded. Review-based judgments retain their method and
 reviewer provenance; they do not become formal proofs.
 
-The initial implementation can use SQLite transactions for the event ledger
-and dependency records, with content-addressed files for larger artifacts.
-Use a single controller as writer. Multi-agent coordination and concurrent
+For a local pilot, use an existing persistent LangGraph checkpointer and SQLite
+transactions for the project event ledger and dependency records, with
+content-addressed files for larger artifacts. An in-memory checkpointer cannot
+satisfy the restart test. Reuse storage libraries; implement the ledger's record
+and transaction semantics without replacing LangGraph's checkpoint engine.
+Use a single controller as ledger writer. Multi-agent coordination and concurrent
 mutation are deferred until the serial recovery semantics work.
 
 ## Lean's role and the verification boundary
@@ -239,11 +340,12 @@ a dependency graph alone does not detect changes in an unobserved world.
 
 ## Controller and recovery
 
-The controller exposes a small set of operations through an MCP server or
+The controller exposes a small set of operations through a CLI, MCP server, or
 equivalent transport: open project, observe, propose artifact, validate,
 perform authorised action, and inspect state. These are proposed capabilities,
 not changes to ReSchema's five-tool contract. Transport alone does not provide
-durable execution; the host runner owns scheduling and resumption.
+durable execution; LangGraph owns outer scheduling and resumption, and the
+controller enforces the project-specific state transitions and recovery rules.
 
 Each iteration:
 
@@ -283,8 +385,10 @@ effects. Arbitrary APIs do not provide an exactly-once execution guarantee.
 
 Build one complete vertical slice before a general framework:
 
-1. **Ledger and restart:** one agent, one writer, versioned objectives and
-   evidence, reproducible artifacts, and an honest cumulative budget.
+1. **Existing runner, ledger, and restart:** a bounded mini-swe-agent worker
+   within a LangGraph workflow, a persistent checkpointer, one ledger writer,
+   versioned objectives and evidence, reproducible artifacts, and an honest
+   cumulative budget. Demonstrate recovery without a bespoke execution engine.
 2. **Lean gate:** a small approved library, explicit targets and hypotheses,
    bounded proof attempts, independent checking, and separate validation and
    applicability records.
@@ -303,6 +407,11 @@ No multi-agent swarm, universal ontology, learned controller, weight updates,
 new theorem-proving foundation, or arbitrary external writes are needed for
 this pilot. Start the operational recovery test against a controlled fake
 service with observable outcomes.
+
+After the baseline comparisons work, add the AutoSaddler scenario plugin as a
+separate experiment. First run a deterministic integration smoke test, then a
+small bounded optimisation over training cases with development selection.
+Publish the frozen candidate and evaluate it on untouched held-out tasks.
 
 ## Evaluation and decision criteria
 
@@ -374,6 +483,9 @@ Each gate should have a negative witness, following ReSchema's conventions.
 | The controller crashes after an external action | Outcome is reconciled before any retry |
 | An agent session restarts after exhausting its budget | Counters and limits persist |
 | A private judge returns limited feedback | Only that exposed feedback enters the agent's evidence store |
+| A worker fails after a ledger write but before its graph checkpoint | Resume deduplicates the operation and reconciles the checkpoint |
+| An optimiser candidate changes the judge, target, or budget enforcement | Candidate is rejected independently of its reported task score |
+| A proposed harness update relies on private held-out traces | Evidence construction refuses those inputs; evaluation remains separate |
 
 ## Decisions to settle before implementation
 
@@ -382,10 +494,24 @@ Each gate should have a negative witness, following ReSchema's conventions.
   boundary, including how external computation returns checkable evidence.
 - Define a task's required assurance and who may revise its formal targets.
 - Decide the initial dependency-capture mechanism and conservative fallback.
+- Pin runner and orchestration versions, checkpoint storage, and the worker
+  event adapter; confirm the serial crash-recovery boundary.
 - Agree the pilot's cost limits and repository name.
 
 ## References
 
+- [LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview),
+  [persistence](https://docs.langchain.com/oss/python/langgraph/persistence), and
+  [checkpointers](https://docs.langchain.com/oss/python/langgraph/checkpointers):
+  reusable orchestration and storage boundaries.
+- [SWE-agent](https://swe-agent.com/latest/) and
+  [mini-swe-agent](https://mini-swe-agent.com/latest/): current upstream runner
+  recommendation and execution model.
+- [AutoSaddler repository](https://github.com/microsoft/AutoSaddler),
+  [V2 architecture](https://github.com/microsoft/AutoSaddler/blob/main/docs/v2-architecture.md),
+  [scenario integration](https://github.com/microsoft/AutoSaddler/blob/main/docs/scenario-integration.md),
+  and [paper](https://arxiv.org/abs/2608.23041): harness optimisation and the
+  integration boundary; paper results do not establish this proposed stack.
 - [ReSchema architecture](../../ARCHITECTURE.md),
   [deduction cache](../../src/reschema/memory.py), and
   [benchmark protocol](../benchmark-protocol.md): current boundaries and

@@ -103,6 +103,26 @@ This is a parallel research direction, not a new prerequisite for the existing
 scoped. This document does not implement those issues or combine their
 experimental conditions.
 
+### ReSchema adapter contract
+
+Keep the adapter in the pilot repository and route worker requests through a
+controller-owned wrapper to ReSchema's MCP tools. The current benchmark disables
+the worker's shell and file tools; a shell-capable pilot worker needs enforced
+isolation from corpus sources, private judge state, and enforcement code. Give
+it a candidate workspace and mediated operations, with no direct access to the
+judge's filesystem or process. Preserve the evidence already exposed by the
+public tools; do not read private data into the project ledger.
+
+Do not bypass the MCP wrapper by importing engine operations: the function fuzz
+budget floor is enforced at that boundary. The public `submit_model` tool also
+accepts an explicit deterministic `seed`, so public access alone does not enforce
+fresh entropy. Production adapter calls leave `seed` unset; deterministic seeds
+are confined to explicit test configurations. Keep the fuzz-budget policy under
+controller ownership, preserve the MCP floor and ceiling, and apply the same
+policy across comparison conditions. Worker and optimiser edits cannot change
+these settings. Function acceptance remains a scoped building block; only the
+existing program-acceptance condition establishes ReSchema task completion.
+
 ## Reuse existing infrastructure
 
 Build the pilot as a composition of existing projects. The following division
@@ -573,6 +593,23 @@ retrying; if that cannot be done safely, stop that action for intervention.
 Replaying history may rerun pure checks but must not blindly repeat side
 effects. Arbitrary APIs do not provide an exactly-once execution guarantee.
 
+Treat ReSchema probes and submissions as state-changing operations under this
+rule, even when their purpose is observation or validation. They change counters
+and may update accepted state; the current public interface has no operation IDs
+or durable per-call receipts, and function probes do not persist their returned
+observations. Record the attempt and reserve budget before dispatch. Persist
+the exposed response when received; a retry with the same operation ID and
+inputs returns that recorded response without another judge call. Reject reuse
+of an operation ID with different inputs.
+
+After an interrupted call, use `status` only to reconcile facts it actually
+exposes. Aggregate counters and cumulative acceptance are not an exact receipt
+or a replacement for a lost observation. If the outcome cannot be established
+for that attempt, retain the unknown outcome and budget reservation and block
+automatic replay pending intervention. Automatic recovery that needs stronger
+receipts requires a separately scoped ReSchema interface change; this pilot
+must not promise it from a wrapper alone or reset judge state on restart.
+
 ## Smallest useful pilot
 
 Build one complete vertical slice before a general framework:
@@ -676,6 +713,10 @@ Each gate should have a negative witness, following ReSchema's conventions.
 | The controller crashes after an external action | Outcome is reconciled before any retry |
 | An agent session restarts after exhausting its budget | Counters and limits persist |
 | A private judge returns limited feedback | Only that exposed feedback enters the agent's evidence store |
+| A shell-capable worker attempts to read judge state or call engine operations directly | Isolation and the mediated tool boundary deny access |
+| A worker or optimiser supplies a production seed or changes the fuzz-budget policy | The adapter rejects the override and preserves controller-owned validation settings |
+| A ReSchema response is lost after dispatch | Reconcile only attributable evidence; otherwise retain the unknown outcome and reservation without automatic replay |
+| A completed ReSchema wrapper operation is retried after restart | Matching operation ID and inputs return its durable response without a new judge call; changed inputs are rejected |
 | A worker fails after a ledger write but before its graph checkpoint | Resume deduplicates the operation and reconciles the checkpoint |
 | An optimiser candidate changes the judge, target, or budget enforcement | Candidate is rejected independently of its reported task score |
 | A proposed harness update relies on private held-out traces | Evidence construction refuses those inputs; evaluation remains separate |

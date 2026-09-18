@@ -41,7 +41,7 @@ class LateWriterFake(FakeRunner):
         return super().exited()
 
 
-def _spec(cond="unprimed", idx=0):
+def _spec(cond="unprimed", idx=0, **kwargs):
     return SlotSpec(
         family="rot13",
         condition=cond,
@@ -49,6 +49,7 @@ def _spec(cond="unprimed", idx=0):
         slot_index=idx,
         rep=1,
         task_id="rot13::gcc-O0-sym",
+        **kwargs,
     )
 
 
@@ -65,6 +66,32 @@ def test_primed_chain_shares_memory_root(tmp_path, stub_corpus):
     a = layout_root(_spec("primed", 0), tmp_path / "runs", stub_corpus)
     b = layout_root(_spec("primed", 1), tmp_path / "runs", stub_corpus)
     assert a == b  # same root: slot 0's verified_fact must be visible at slot 1
+
+
+def test_explicit_state_group_shares_only_the_named_trial_root(tmp_path, stub_corpus):
+    shared_a = layout_root(
+        _spec("unprimed", 0, state_group="trial-1"),
+        tmp_path / "runs",
+        stub_corpus,
+    )
+    shared_b = layout_root(
+        _spec("unprimed", 1, state_group="trial-1"),
+        tmp_path / "runs",
+        stub_corpus,
+    )
+    isolated = layout_root(
+        _spec("unprimed", 1, state_group="trial-2"),
+        tmp_path / "runs",
+        stub_corpus,
+    )
+    other_condition = layout_root(
+        _spec("primed", 1, state_group="trial-1"),
+        tmp_path / "runs",
+        stub_corpus,
+    )
+    assert shared_a == shared_b
+    assert shared_a != isolated
+    assert shared_a != other_condition
 
 
 def test_layout_repins_canonical_manifest_over_agent_rebuild(tmp_path, stub_corpus):

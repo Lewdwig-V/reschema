@@ -53,12 +53,7 @@ class SlotGuard:
 def layout_root(spec: SlotSpec, runs_dir: Path, corpus_source: Path) -> Path:
     """Primed chains share one root across slots; unprimed gets a fresh root
     per slot — memory-cold-by-filesystem, the CI isolation invariant."""
-    chain = (
-        f"{spec.family}-primed-r{spec.rep}"
-        if spec.condition == "primed"
-        else spec.slot_id
-    )
-    root = runs_dir / chain
+    root = runs_dir / spec.state_root_id
     corp = root / ".reschema/corpus"
     # Manifest "binary" paths are baked at corpus build time (generate.py)
     # and resolve in the ORIGINAL corpus root, never in this mount — the

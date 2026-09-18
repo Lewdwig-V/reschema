@@ -17,6 +17,11 @@ class SlotSpec:
     slot_index: int  # 0..2 position in the chain
     rep: int
     task_id: str  # "<family>::<slot>"
+    # Optional filesystem-sharing key for richer comparisons: independent
+    # trials/conditions get distinct roots, while sibling branches inside the
+    # SAME trial can point at one shared RESCHEMA_HOME without changing record
+    # names or task ids.
+    state_group: str | None = None
 
     @property
     def slot_id(self) -> str:
@@ -28,6 +33,22 @@ class SlotSpec:
         slot_id across their 3 slots, so later slots disambiguate by index."""
         return (
             f"{self.slot_id}-s{self.slot_index}"
+            if self.condition == "primed"
+            else self.slot_id
+        )
+
+    @property
+    def state_root_id(self) -> str:
+        """Filesystem identity of the slot's RESCHEMA_HOME.
+
+        Default behavior stays protocol-shaped: primed chains reuse one root
+        across their slots, unprimed runs stay memory-cold per slot. Richer
+        comparison harnesses can override that with an explicit group key.
+        """
+        if self.state_group is not None:
+            return f"{self.family}-{self.condition}-{self.state_group}"
+        return (
+            f"{self.family}-primed-r{self.rep}"
             if self.condition == "primed"
             else self.slot_id
         )

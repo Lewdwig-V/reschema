@@ -20,7 +20,7 @@ def test_agent_outcome_kinds():
 
 
 def test_slot_result_name_naming():
-    def spec(condition: str, slot_index: int) -> SlotSpec:
+    def spec(condition: str, slot_index: int, **kwargs) -> SlotSpec:
         return SlotSpec(
             family="rot13",
             condition=condition,
@@ -28,6 +28,7 @@ def test_slot_result_name_naming():
             slot_index=slot_index,
             rep=1,
             task_id="rot13::gcc-O0-sym",
+            **kwargs,
         )
 
     p = spec("primed", 0)
@@ -37,3 +38,7 @@ def test_slot_result_name_naming():
     u = spec("unprimed", 1)
     assert u.slot_id == "rot13-unprimed-gcc-O0-sym-r1"
     assert u.result_stem == u.slot_id
+
+    shared = spec("unprimed", 1, state_group="trial-7")
+    assert shared.result_stem == shared.slot_id
+    assert shared.state_root_id == "rot13-unprimed-trial-7"

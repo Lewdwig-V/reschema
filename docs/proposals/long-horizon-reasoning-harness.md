@@ -2,6 +2,8 @@
 
 **Status:** proposed; design discussion, no implementation commitment.  
 **Date:** 2026-09-08.  
+**Updated:** 2026-09-18 — include a bounded Dream-RSI-style pilot experiment.
+
 **Repository recommendation:** review this proposal in ReSchema; implement an
 approved pilot in a separate repository, with ReSchema as its first external domain
 adapter. The new project's name remains open.
@@ -19,8 +21,11 @@ Keep empirical evidence and the agent's current justification for applying a
 theorem in a separate, versioned ledger. Reuse LangGraph for durable orchestration
 and mini-swe-agent for bounded working sessions. The new controller implements
 evidence semantics, dependency invalidation, verification, budgets, and task
-completion on those foundations. Evaluate AutoSaddler later for offline harness
-optimisation against a fixed task contract.
+completion on those foundations. Design a replaceable exploration policy and
+replayable investigation records from the start. After the fixed-policy baseline
+works, include a bounded Dream-RSI-style experiment that improves search scheduling
+through recorded outcomes. Evaluate AutoSaddler later for broader harness
+optimisation against the same fixed task contract.
 
 Distinguish rules, which permit recorded exceptions, from gates, which require
 checked evidence before a protected transition. Preserve that distinction in
@@ -30,6 +35,9 @@ The research hypothesis is that a fixed model can complete longer, more
 interdependent tasks when it can reuse checked reasoning and recover from
 changed assumptions without reconstructing its whole argument in prose.
 Measure whether this saves more error and rework than formalisation costs.
+Separately test whether replay-based search improvement adds to those gains.
+The pilot must distinguish the benefits of knowledge management, search policy,
+and their combination; neither hypothesis depends on changing model weights.
 
 This proposal adds no Lean dependency, runtime behaviour, or new acceptance
 path to ReSchema. Its C models, existing validators, entropy policy, MCP
@@ -127,8 +135,9 @@ existing program-acceptance condition establishes ReSchema task completion.
 
 Build the pilot as a composition of existing projects. The following division
 is a proposed integration, not a claim that these packages already implement
-the complete workflow. Upstream capabilities were checked on 2026-09-08; pin
-package versions and source revisions when implementing it.
+the complete workflow. Existing integration capabilities were checked on 2026-09-08;
+Dream-RSI's paper and release status were checked on 2026-09-17. Pin package
+versions and source revisions when implementing it.
 
 | Component | Reuse | Project-specific work |
 | --- | --- | --- |
@@ -136,7 +145,8 @@ package versions and source revisions when implementing it.
 | LangChain, where useful | Model and tool integrations | Adapt only interfaces the chosen worker does not already supply |
 | mini-swe-agent | Model/action loop, execution environments, trajectories | Bounded worker adapter and access to project operations |
 | Hindsight, optional | Memory retrieval, consolidation, and reflection | Versioned links between memories, evidence, and Lean artifacts; checked status on recall |
-| AutoSaddler V2, after the baseline | Trace-driven candidate harness changes, evaluation and selection | Scenario plugin, permitted mutation surface, and task evaluator adapter |
+| Dream-RSI-style pilot treatment | Published method for replay-based exploration-policy improvement; no released runtime assumed | Shared live/replay policy interface, discovery records, replay evaluator, and bounded policy development |
+| AutoSaddler V2, later experiment | Trace-driven candidate harness changes, evaluation and selection | Scenario plugin, permitted mutation surface, and task evaluator adapter |
 | Lean 4 | Formal language, elaboration, proof checking | Pinned targets, evidence-to-premise links, and independent acceptance gate |
 | Existing domain tools | Observations, execution and domain checks | Provenance, scope, refresh rules, and completion contract |
 
@@ -155,6 +165,33 @@ worker loop and environment adapters. Keep full SWE-agent as an alternative
 if experiments need its specialised tool interfaces or history processors.
 Expose project operations through shell-accessible commands for the initial
 worker; an MCP transport remains an optional interface for other hosts.
+
+### Keep the worker interface small
+
+Use sandboxed shell execution and ordinary file access as the worker's default
+interfaces. Present permitted observations, source material, and project state
+as well-documented, searchable files; let the worker write scripts, inspect raw
+results, and choose its own investigative sequence. The ledger schema and replay
+policy interface are host implementation contracts, not a growing menu of tools
+or forms that the working model must complete at every reasoning step. Moving
+the same rigid sequence into CLI subcommands would not remove that burden.
+
+Capture operation provenance, snapshots, and resource usage in the host. Ask the
+worker for semantic dependencies or claim interpretations only where they cannot
+be captured mechanically; such declarations remain proposals requiring checks.
+Expose only the necessary mediated commands for domain operations and submitting
+artifacts to acceptance checks. Ordinary exploration and local scratch files do
+not become accepted evidence merely because the worker wrote them. Preserve
+read-only authoritative state and enforced isolation from private judge state;
+a shell must not provide a route around the existing operation boundaries.
+
+[Vercel's d0 case study](https://vercel.com/blog/we-removed-80-percent-of-our-agents-tools)
+motivates testing this simpler interface: its replacement used shell-based file
+exploration while retaining a SQL execution tool. The reported comparison covered
+five queries, so it is motivation rather than a universal result. Keep the same
+small worker interface across pilot conditions and measure host/formatting overhead;
+add specialised tools only when a measured benefit warrants them. Search scheduling
+may evolve outside the worker without prescribing its internal reasoning steps.
 
 ### One owner for each kind of state
 
@@ -190,7 +227,12 @@ adapters still need permissions and resource limits configured for this design.
 Keep this interface replaceable so a coding-oriented worker does not define the
 scope of future task domains.
 
-### AutoSaddler as a later optimisation stage
+### Optimisation boundaries and later AutoSaddler integration
+
+The pilot's first optimisation treatment changes only exploration scheduling,
+as specified in [Exploration policy and offline replay](#exploration-policy-and-offline-replay).
+Keep it separate from broader prompt, retrieval, or worker changes: recorded
+worker outcomes do not establish how a changed worker would have behaved.
 
 [AutoSaddler](https://github.com/microsoft/AutoSaddler) proposes harness updates
 from execution traces and evaluates candidate changes. Use that machinery once
@@ -206,15 +248,18 @@ evaluation, trace evidence, permitted edits, and provenance. Reuse the optimiser
 candidate and run storage for optimisation experiments; it has a separate purpose
 from the live project's evidence ledger.
 
-The optimiser may change how the agent searches for evidence or constructs a
-proof. It may not change the objective, trusted verifier, proof acceptance policy,
-gate classification or applicability, budget enforcement, or recorded evidence
+Both optimisation treatments operate outside the trusted controller. Within
+its declared mutation surface, an optimiser may change how the agent searches
+for evidence or constructs a proof. It may not change the objective, trusted
+verifier, proof acceptance policy, gate classification or applicability, budget
+enforcement, or recorded evidence
 to improve its score. Enforce that boundary outside mutable candidates and
 evaluate candidates against the fixed
 failure cases below. Keep training traces, development selection, and final
 held-out evaluation separate. Report optimisation cost as well as task execution
-cost. Harness optimisation is a separately measured treatment; it is not a
-prerequisite for testing whether the knowledge and Lean layers help.
+cost. Optimisation is a separately measured treatment; it is not a prerequisite
+for testing whether the knowledge and Lean layers help. AutoSaddler integration
+remains a later experiment, independent of completing the replay-based pilot.
 
 The remaining new work is substantial in semantics but narrower in infrastructure:
 versioned evidence, dependency capture and invalidation, proof applicability,
@@ -238,6 +283,9 @@ view from those records.
 | Artifact | Content digest, language, definitions or target declaration, input and dependency versions |
 | Validation | Exact artifact and target, checker identity and version, method, outcome, conditions, evidence references |
 | Decision or action | Objective, dependencies, preconditions, intended effect, attempt identifier, observed outcome |
+| Exploration world | Root workspace and permitted context digests, objective/contract and environment versions, worker/model configuration, shared knowledge revision, and dataset split |
+| Investigation node | World and primary parent IDs, input/output snapshots, branch-visible context, operation/result references, observation reveal order, completion or unknown status, and actual usage |
+| Exploration policy and evaluation | Immutable policy code digest, allowed interface version, training-world manifest, replay coverage and represented costs, actual optimisation costs, selection result, and live deployment round |
 
 The controller records every agent-visible operation and observation. It keeps
 private validator inputs and unrevealed reference data outside the agent's
@@ -256,8 +304,124 @@ transactions for the project event ledger and dependency records, with
 content-addressed files for larger artifacts. An in-memory checkpointer cannot
 satisfy the restart test. Reuse storage libraries; implement the ledger's record
 and transaction semantics without replacing LangGraph's checkpoint engine.
-Use a single controller as ledger writer. Multi-agent coordination and concurrent
-mutation are deferred until the serial recovery semantics work.
+Use a single controller as ledger writer. Establish serial recovery semantics
+first. Later bounded investigations may run in isolated workspaces under that
+controller; workers never mutate shared authoritative state concurrently.
+General multi-agent coordination remains outside this pilot.
+
+## Exploration policy and offline replay
+
+[Dream-RSI](https://arxiv.org/html/2609.14858v1) improves executable exploration
+policies by replaying recorded discovery trees, then deploying a selected policy
+to collect new history. The coding model and evaluator stay fixed. Replay avoids
+rerunning recorded discovery attempts; developing policy code and collecting
+new outcomes still cost computation. Its improvement guarantee concerns the
+selection score on fixed replay history, not performance on future tasks.
+
+Adopt this method as a bounded pilot treatment. As of 2026-09-17, the
+[official repository](https://github.com/zhengkid/Dream-RSI#release-plan) says
+the full codebase and reproduction scripts are being prepared. Commit to the
+interface and a small implementation of the published method; assess upstream
+reuse when code becomes available. Do not claim an installed integration or an
+exact reproduction before the implementation and protocol have been checked.
+
+### Policy interface and branch semantics
+
+Extract search selection from the trusted controller. The same policy interface
+runs with a live executor or replay executor: it receives the currently revealed,
+permitted observations, eligible root/branch IDs, and remaining host-owned limits;
+it returns a bounded batch of root or branch-leaf continuations, or an empty batch
+to stop. The root opens a new investigation; a leaf continues its own investigation.
+The host validates selections, reserves budget, dispatches bounded worker sessions,
+and owns validation, applicability, evidence commitment, and task completion.
+Stopping exploration does not declare success or discharge a gate.
+
+Begin with a fixed policy and one worker. After recovery works, admit bounded
+parallel batches with separate workspaces and one ledger writer. Freeze policy
+code within each live rollout. Between training rollouts, a policy-development
+agent may revise only scheduling code: which eligible investigations to continue,
+when to open another branch, batch width within the host cap, and when to stop.
+Keep worker prompts, model/inference settings, tools, retrieval configuration,
+task contract, and evaluator fixed within a replay-compatible set of worlds.
+
+Run policy code in a resource-bounded sandbox with only the declared observation
+interface. It has no direct access to the full trace store, private judge data,
+held-out records, enforcement code, or live tools. The host enforces the same
+operation boundaries for fixed and evolved policies. Invalid actions, policy
+crashes, and timeouts produce recorded failures with costs charged, not relaxed
+gates or an unreported fallback policy.
+
+A discovery tree records attempt ancestry; the claim-dependency graph records
+support and applicability. Preserve both and link their records rather than
+equating them. Each bounded investigation starts from a pinned workspace and
+permitted project-context snapshot and inherits only its branch's subsequent
+history. Worker context includes the relevant observations and retrieval results,
+not merely files. Controller accounting remains global across all branches.
+Record a fixed per-investigation allowance as part of each transition's inputs;
+the host reserves that allowance before dispatch and reconciles actual usage.
+The policy may select attempts but cannot change their internal limits. Keep the
+changing global balance in the host/policy view rather than injecting it into
+worker context; otherwise reordered attempts may no longer be replay-compatible.
+
+Do not inject a sibling's findings into an active branch. Publish reusable
+results into shared worker context at explicit rollout boundaries, after normal
+validation and applicability checks; the changed context starts a new world.
+An external premise, objective, or environment change ends the affected world
+and triggers the ordinary invalidation process before further live work. A pinned
+worker snapshot never authorises committing a result against stale live premises.
+
+The first replay task family uses controlled, versioned inputs and isolated
+candidate workspaces. Stateful ReSchema probes and submissions remain mediated
+and serialised under the existing adapter contract, with shared accounting and
+no judge reset per branch. Unless their relevant state dependencies can be
+represented faithfully, exclude those traces from replay and retain ReSchema
+as a live baseline adapter. Its inclusion does not require new private judge
+access or stronger recovery receipts than its public interface supplies.
+
+### Replay semantics and selection
+
+Replay starts at a recorded root and reveals outcomes only after the policy
+selects the corresponding continuation. Each branch follows its recorded parent
+order; selecting the root reveals the next recorded root child in recorded order.
+Never expose descendant results, hidden completion labels, or later evidence in
+the policy's current view. Use only feedback exposed by the task contract;
+private evaluator data stays outside both live and replay observation interfaces.
+
+Replay is restricted to recorded transitions under matching workspace, context,
+worker, contract, and environment versions. A missing continuation, lost response,
+or incompatible snapshot is an unsupported transition, not a predicted outcome
+or an observed failed investigation. End that replay as unsupported and report
+coverage separately. For the initial pilot, require supported evaluation on the
+entire fixed selection-world set before promoting a candidate; do not silently
+drop worlds where it fails. Support exhaustion does not prove that a live branch
+is exhausted. New outcomes must be collected in a subsequent live rollout.
+If no candidate, including the incumbent, satisfies the support criterion, retain
+the deployed policy without claiming an improvement and collect additional history
+only within the declared live budget.
+
+Execute replay against an immutable trace projection without live tool credentials.
+It must never issue probes or submissions, rerun side effects, or append new
+observations, validations, or acceptance records to the live project ledger.
+Replay evaluation records belong to optimisation history and reference their
+source events; replaying evidence creates no additional corroboration. This is
+distinct from crash recovery, which retains the existing unknown-outcome and
+budget-reservation rules.
+
+Predeclare a fixed selection objective based on recorded, independently checked
+task outcomes and represented investigation cost. Use the same success definition
+for both knowledge conditions; proof counts and self-reported progress cannot
+substitute for task success. Include the incumbent policy among candidates.
+Charge each selected attempt's recorded usage, including failures, to the
+represented live budget. Keep that counter separate from actual replay CPU and
+policy-development inference costs. Do not infer wall-clock speedup from batch
+width without live measurement. The cost of producing seed histories also counts.
+
+Separate policy-training worlds, development selection, and untouched final tasks
+by task instance and lineage. Restrict policy-development feedback to authorised
+training/development data and prevent descendants of a trace crossing those splits.
+Keep held-out records inaccessible to the optimiser and freeze policy code before
+final evaluation. Replay success is a reason to test a policy live, not proof of
+generalisation or permission to change acceptance requirements.
 
 ## Hindsight memory and Lean artifacts
 
@@ -550,14 +714,16 @@ a dependency graph alone does not detect changes in an unobserved world.
 
 ## Controller and recovery
 
-The controller exposes a small set of operations through a CLI, MCP server, or
+The controller implements a small set of operations behind a CLI, MCP server, or
 equivalent transport: open project, observe, propose artifact, validate,
-perform authorised action, and inspect state. These are proposed capabilities,
+perform authorised action, and inspect state. These are internal capabilities,
+not a requirement to expose six specialised tools to the working model, and are
 not changes to ReSchema's five-tool contract. Transport alone does not provide
 durable execution; LangGraph owns outer scheduling and resumption, and the
 controller enforces the project-specific state transitions and recovery rules.
 
-Each iteration:
+Each bounded iteration has the following responsibilities. They describe the
+controller/worker contract, not a mandatory sequence of model-facing tool calls:
 
 1. Load the objective, relevant supported artifacts, pending obligations,
    stale dependencies, and cumulative budget. Leave the complete permitted
@@ -573,6 +739,13 @@ Each iteration:
 5. Check the whole objective and its gates. Continue, change approach, surface
    a necessary clarification, or finish with the evidence required by the task
    contract.
+
+In the replay treatment, the exploration policy chooses which branch receives
+the next bounded investigation; the worker chooses its concrete hypothesis and
+experiment within that branch's context. LangGraph still runs the outer workflow,
+and the host still enforces operation permissions and commits accepted results.
+Apply the branch-context and rollout-boundary rules above when sharing knowledge;
+policy selection cannot bypass invalidation, recovery, or completion checks.
 
 Guided tenacity uses observed progress: what still holds, what changed, which
 specific obligation remains, and whether another attempt could add information.
@@ -618,6 +791,8 @@ Build one complete vertical slice before a general framework:
    within a LangGraph workflow, a persistent checkpointer, one ledger writer,
    versioned objectives and evidence, reproducible artifacts, and an honest
    cumulative budget. Demonstrate recovery without a bespoke execution engine.
+   Include the exploration-policy interface and discovery records from the start,
+   initially using a fixed policy and serial execution.
 2. **Lean gate:** a small approved library, explicit targets and hypotheses,
    bounded proof attempts, independent checking, and separate validation and
    applicability records. Use distinct rule and gate records; demonstrate a
@@ -632,14 +807,25 @@ Build one complete vertical slice before a general framework:
 5. **Third task family:** add a repository migration with changed
    requirements and repeat the same recovery exercise. This tests whether the
    abstraction survives outside the initial fixture and reverse engineering.
+6. **Replay-based search improvement:** after the fixed-policy comparisons work,
+   use one controlled task family to demonstrate the complete cycle. Collect
+   training discovery trees with the fixed policy, develop bounded scheduler
+   revisions through offline replay, and select a supported candidate including
+   the incumbent. Deploy it for a second live training rollout and add that new
+   history to the replay pool; run another bounded improvement round to exercise
+   the feedback loop. Freeze the development-selected policy and evaluate it on
+   untouched tasks. Preserve the fixed-policy comparison even if optimisation
+   fails to improve it. This stage tests the method without requiring every
+   domain adapter to support counterfactual replay.
 
-No multi-agent swarm, universal ontology, learned controller, weight updates,
-new theorem-proving foundation, or arbitrary external writes are needed for
-this pilot. Start the operational recovery test against a controlled fake
-service with observable outcomes.
+No multi-agent swarm, universal ontology, weight updates, new theorem-proving
+foundation, or arbitrary external writes are needed for this pilot. The only
+evolved controller component is the bounded exploration policy; the enforcement
+controller stays fixed. Start the operational recovery test against a controlled
+fake service with observable outcomes.
 
-After the baseline comparisons work, add the AutoSaddler scenario plugin as a
-separate experiment. First run a deterministic integration smoke test, then a
+After this pilot, consider the AutoSaddler scenario plugin as a separate, broader
+experiment. First run a deterministic integration smoke test, then a
 small bounded optimisation over training cases with development selection.
 Publish the frozen candidate and evaluate it on untouched held-out tasks.
 
@@ -656,11 +842,33 @@ and execution tools within each comparison. Measure these conditions:
 | D | C plus dependency tracking and applicability invalidation |
 | E | D plus the Lean formalisation and proof workflow |
 
+Run A-E first with the same fixed exploration policy. Then, on the controlled
+replay task family, compare C and E under fixed and replay-improved scheduling:
+
+| Knowledge condition | Fixed exploration | Replay-improved exploration |
+| --- | --- | --- |
+| C: log, executable models, regression checks | Executable-model baseline | Search improvement with the simpler knowledge workflow |
+| E: full proposed workflow | Knowledge-management treatment | Combined knowledge and search treatment |
+
+This four-condition comparison separates search gains from knowledge-management
+gains and tests whether their combination adds value. Retain D in the original
+A-E comparison to isolate Lean's contribution. Do not double every pilot condition
+or require replay support in all three task families.
+
+Use identical worker capabilities, initial branch structure, fixed-policy code,
+task instances, and host caps across the scheduling comparison. Train a separate
+policy for C and E with the same optimisation budget and task split; each sees
+only the knowledge and feedback allowed in its condition. Do not supply E's
+applicability records to C or replay outcomes across incompatible worker contexts.
+Apply the same lineage split and final evaluator to all four conditions. Keep
+Hindsight and broader AutoSaddler changes out of this comparison.
+
 Keep the tool palette, including Lean where applicable, equally available;
 vary the workflow and enforcement policy. Record whether a baseline agent
 spontaneously uses those tools. Additional tool-removal ablations can then
-separate access from policy. Pin prompts and controller behaviour; do not
-silently add retries or extra reasoning to the strongest condition.
+separate access from policy. Pin prompts and enforcement behaviour; change only
+the declared exploration policy in the scheduling treatment. Do not silently
+add retries or extra reasoning to the strongest condition.
 
 Run repeated trials with fresh workspaces on development tasks and a separate
 held-out task set. Include both frontier and small models. Predeclare token,
@@ -668,6 +876,15 @@ tool, proof-check, and total cost/time caps; report quality versus actual total
 cost because equal model tokens do not imply equal prover or execution cost.
 Charge every attempt, including failed formalisation, resumed sessions, and
 unsuccessful runs. Avoid retained-best-run-only reporting.
+
+For the scheduling treatment, predeclare both optimisation and live-execution
+caps. Report total campaign cost, cost per successful final task, and the live
+execution cost separately. Include seed-history collection, unsuccessful policy
+revisions, replay work, development evaluation, and fresh discovery rounds.
+State the task count over which any one-time optimisation cost is amortised;
+shared histories are counted once in campaign totals, never treated as free.
+The represented live cost of replay is a selection signal, not another actual
+execution charge or a substitute for measuring the optimisation overhead.
 
 Tasks should contain interdependent work, not merely many independent short
 questions. Include a forced fresh-session restart, delayed contradictory
@@ -684,8 +901,14 @@ Report:
 - Human interventions and unresolved external action outcomes.
 - Repeated experiments and invalidated work that required rebuilding.
 - Total tokens, tool/prover work, elapsed time, and cost per successful task.
+- Host orchestration and schema/formatting repair overhead, distinguished from
+  domain investigation and proof work.
 - Formalisation errors: a checked theorem whose statement misses the intended
   requirement, or an application lacking support for its premises.
+- Replay coverage, unsupported transitions, policy failures, and disagreement
+  between replay rankings and fresh live results, including regressions.
+- Improvement from evolving the policy within C and within E, and whether the
+  combined treatment improves the success/cost trade-off over either alone.
 
 Use development runs to set the minimum useful improvement and acceptable cost
 increase, then freeze them before the held-out comparison.
@@ -694,6 +917,12 @@ to justify its cost over D on more than one task family. If B or C captures
 most of the benefit, simplify the controller and retain Lean for obligations
 where it adds measurable value. If results are inconclusive, gather more
 evidence before expanding the architecture.
+
+Adopt replay-based scheduling only if fresh held-out results justify its total
+cost relative to the corresponding fixed-policy condition. A higher training
+replay score alone is insufficient. If the simple C workflow captures most of
+the combined benefit, simplify Warranted accordingly; if replay adds no useful
+gain, retain fixed scheduling. Report either outcome without weakening gates.
 
 ## Required failure cases for a future implementation
 
@@ -719,6 +948,16 @@ Each gate should have a negative witness, following ReSchema's conventions.
 | A completed ReSchema wrapper operation is retried after restart | Matching operation ID and inputs return its durable response without a new judge call; changed inputs are rejected |
 | A worker fails after a ledger write but before its graph checkpoint | Resume deduplicates the operation and reconciles the checkpoint |
 | An optimiser candidate changes the judge, target, or budget enforcement | Candidate is rejected independently of its reported task score |
+| A scheduler reads future descendants, private outcomes, or held-out records | The restricted observation interface and sandbox deny access |
+| A replay continuation has changed context, worker, or environment versions | Mark the transition unsupported; do not reuse its recorded outcome |
+| A requested continuation is missing or its response was lost | Record unsupported replay coverage without inventing an outcome or calling live tools |
+| A candidate only scores well after unsupported worlds are dropped | Refuse promotion under the fixed complete-support selection rule |
+| A sibling result is injected into another active branch | Refuse the context change within that world; publish through a validated new-world boundary |
+| A live premise changes while a branch uses its pinned snapshot | End the affected world, invalidate applicability, and recheck before accepting results |
+| Replay tries to issue a probe/submission or write live acceptance evidence | No live credentials or write path; source evidence is not counted again |
+| Branching or resuming tries to reset task counters or judge state | Shared host accounting and reservations remain authoritative |
+| A policy stops, returns an invalid branch, crashes, or exceeds its limit | Host records the outcome and usage; success still requires the ordinary completion gates |
+| An evolved policy improves replay score but regresses on held-out tasks | Report the regression and retain the fixed-policy option; no automatic deployment based on replay score |
 | A proposed harness update relies on private held-out traces | Evidence construction refuses those inputs; evaluation remains separate |
 | An agent presents a rule exception as satisfying a gate | Exception remains auditable; the gate still requires its own evidence |
 | An agent supplies a convincing rationale instead of gate evidence | Protected transition remains blocked |
@@ -744,10 +983,25 @@ Each gate should have a negative witness, following ReSchema's conventions.
 - Decide the initial dependency-capture mechanism and conservative fallback.
 - Pin runner and orchestration versions, checkpoint storage, and the worker
   event adapter; confirm the serial crash-recovery boundary.
+- Choose the controlled replay task family, branch-context manifest, sharing
+  boundary, and fixed initial policy. Specify the supported-transition check
+  and which adapter histories are eligible; ReSchema replay is not assumed.
+- Fix policy mutation permissions, sandbox limits, replay objective, training /
+  development / final lineage split, optimisation caps, and cost amortisation.
 - Agree the pilot's cost limits and repository name.
 
 ## References
 
+- [Vercel: We removed 80% of our agent's tools](https://vercel.com/blog/we-removed-80-percent-of-our-agents-tools):
+  a small text-to-SQL case study supporting a simpler worker interface; it does
+  not establish that arbitrary tool reduction improves every task or model.
+- [Dream-RSI paper, v1](https://arxiv.org/html/2609.14858v1),
+  [project explanation](https://www.dream-rsi.com/), and
+  [official repository and release plan](https://github.com/zhengkid/Dream-RSI#release-plan):
+  replay-based exploration-policy improvement with fixed workers and evaluators.
+  The proposed isolation, unsupported-transition policy, and evidence boundaries
+  are this pilot's requirements; no upstream integration or reproduced results
+  are claimed.
 - [Hindsight overview](https://hindsight.vectorize.io/),
   [retain](https://hindsight.vectorize.io/developer/api/retain),
   [recall](https://hindsight.vectorize.io/developer/api/recall),

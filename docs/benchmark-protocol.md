@@ -230,3 +230,29 @@ trusting φ.
 The expected live signature under H1: primed trajectories rising after slot
 0 with fewer probes; friction relative to the reference run's flat 1.0s *is*
 the live-agent signal.
+
+### Explicit trial groups for other comparisons
+
+Programmatic callers of `run_slot()` can set `SlotSpec.state_group` to share
+judge state within one trial lineage. The full identity is
+`(family, condition, rep, state_group)` under the campaign directory. Different
+conditions, repetitions, and groups use distinct roots, separate from the
+legacy roots. Group labels are opaque and hashed as part of this identity;
+they are not interpreted as filesystem paths.
+
+Grouped calls preserve the task's acceptance ledger, counters, recorded traces,
+and family memory across sibling branches and restarts. Reusing the full
+identity means continuing that trial; choose a new group, repetition, or
+campaign directory for an independent trial. Calls sharing a root must be
+serialised, as required by the engine's single-writer contract. Probe ceilings
+and result counters remain cumulative within each task in the lineage.
+
+For branches of the same task, assign distinct `slot_index` values. Grouped
+result and transcript names include the trial identity and index, so sibling
+records coexist; resuming the identical spec replaces only its own record and
+transcript. The original group label is retained in `run_header.state_group`.
+
+The shipped 2C campaign driver leaves `state_group=None` and retains its
+existing primed/unprimed names and retry behaviour. Richer comparisons must
+assign groups and interpret their branch results themselves; these cumulative
+branch records are not independent samples for the 2C transfer report.

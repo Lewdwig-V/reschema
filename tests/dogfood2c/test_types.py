@@ -40,5 +40,6 @@ def test_slot_result_name_naming():
     assert u.result_stem == u.slot_id
 
     shared = spec("unprimed", 1, state_group="trial-7")
-    assert shared.result_stem == shared.slot_id
-    assert shared.state_root_id == "rot13-unprimed-trial-7"
+    assert shared.slot_id == u.slot_id  # task/condition naming stays stable
+    assert shared.result_stem != u.result_stem
+    assert shared.state_root_id != u.state_root_id

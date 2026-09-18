@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -14,13 +16,12 @@ class SlotSpec:
     family: str  # seed name, e.g. "rot13"
     condition: str  # "primed" | "unprimed"
     slot: str  # e.g. "gcc-O1-sym"
-    slot_index: int  # 0..2 position in the chain
+    slot_index: int  # chain position; grouped same-task branches need distinct indices
     rep: int
     task_id: str  # "<family>::<slot>"
-    # Optional filesystem-sharing key for richer comparisons: independent
-    # trials/conditions get distinct roots, while sibling branches inside the
-    # SAME trial can point at one shared RESCHEMA_HOME without changing record
-    # names or task ids.
+    # Explicit lineage within (family, condition, rep). Grouped calls preserve
+    # judge state across sequential branches/resumes; independent trials need
+    # a different group, repetition, or campaign directory. Task ids stay fixed.
     state_group: str | None = None
 
     @property
@@ -29,13 +30,29 @@ class SlotSpec:
 
     @property
     def result_stem(self) -> str:
-        """SINGLE owner of the result-file naming rule: primed chains share
-        slot_id across their 3 slots, so later slots disambiguate by index."""
+        """Stable per-run identity, distinct from the shared judge root.
+
+        Grouped siblings of the same task use distinct slot_index values;
+        resuming the same spec replaces only that branch's record/transcript.
+        Legacy campaign names remain unchanged.
+        """
+        if self.state_group is not None:
+            return f"{self.slot_id}-g{self._group_key}-s{self.slot_index}"
         return (
             f"{self.slot_id}-s{self.slot_index}"
             if self.condition == "primed"
             else self.slot_id
         )
+
+    @property
+    def _group_key(self) -> str:
+        # Hash the structured identity, not delimiter-joined labels: group
+        # labels are opaque (including slashes), and rep is part of the trial.
+        identity = json.dumps(
+            [self.family, self.condition, self.rep, self.state_group],
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(identity.encode()).hexdigest()
 
     @property
     def state_root_id(self) -> str:
@@ -46,7 +63,8 @@ class SlotSpec:
         comparison harnesses can override that with an explicit group key.
         """
         if self.state_group is not None:
-            return f"{self.family}-{self.condition}-{self.state_group}"
+            # The -g suffix cannot alias legacy roots, which end in -r<rep>.
+            return f"{self.family}-{self.condition}-r{self.rep}-g{self._group_key}"
         return (
             f"{self.family}-primed-r{self.rep}"
             if self.condition == "primed"

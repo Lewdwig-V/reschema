@@ -51,8 +51,10 @@ class SlotGuard:
 
 
 def layout_root(spec: SlotSpec, runs_dir: Path, corpus_source: Path) -> Path:
-    """Primed chains share one root across slots; unprimed gets a fresh root
-    per slot — memory-cold-by-filesystem, the CI isolation invariant."""
+    """Mount the corpus in a legacy slot/chain root or an explicit trial root.
+
+    Reopening a grouped root resumes its lineage; it does not reset the judge.
+    """
     root = runs_dir / spec.state_root_id
     corp = root / ".reschema/corpus"
     # Manifest "binary" paths are baked at corpus build time (generate.py)
@@ -103,6 +105,8 @@ def _record(
     poll and a guard's kill, and the post-kill ledger re-read then flips the
     outcome to accepted while the killed process's exit_kind stays as
     evidence. That pairing is by design; do not "fix" it."""
+    if spec.state_group is not None:
+        run_header = {**run_header, "state_group": spec.state_group}
     return {
         "slot_id": spec.slot_id,
         "family": spec.family,
@@ -132,18 +136,24 @@ def run_slot(
     poll_s: int | None = None,
     run_header: dict | None = None,
 ) -> Path:
+    """Run one slot or one sequential branch in an explicit state group.
+
+    Grouped callers own serialisation of the shared judge and use a new
+    group/rep/campaign for independent trials. Counters remain cumulative
+    within a grouped task, including on resume; guards use those same counters.
+    """
     guards = guards or SlotGuard()
     poll = poll_s if poll_s is not None else DEFAULT_POLL_S
     root = layout_root(spec, campaign_dir, corpus_source)
-    # Resume honesty: layout_root REUSES roots, so a driver killed mid-slot
-    # leaves the crashed agent's ledger behind — the poll loop would launder a
-    # stale "accepted"/inflated counters into the fresh run's record. Wipe THIS
-    # task's dir before the agent spawns; chain memory and sibling slot
-    # ledgers are untouched.
-    shutil.rmtree(
-        root / ".reschema/tasks" / spec.task_id.replace("::", "__"),
-        ignore_errors=True,
-    )
+    # Legacy campaign retries start this task afresh, without laundering a
+    # crashed slot's acceptance/counters. Explicit groups instead identify a
+    # continuing trial: deleting its task would erase sibling work and reset
+    # the shared budget. Fresh grouped trials get isolation from their root.
+    if spec.state_group is None:
+        shutil.rmtree(
+            root / ".reschema/tasks" / spec.task_id.replace("::", "__"),
+            ignore_errors=True,
+        )
     out = campaign_dir.parent / "results" / f"{spec.result_stem}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
 

@@ -28,6 +28,8 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from reschema.feedback import CONTINUATION_FEEDBACK_VERSION
+
 from .measure import render_report
 from .prompt import template_hash
 from .runners.base import AgentRunner, SlotSpec
@@ -93,6 +95,7 @@ def run_campaign(
     out_dir: Path,
     guards: SlotGuard | None = None,
     poll_s: int | None = None,
+    continuation_feedback: bool = False,
 ) -> int:
     """Run a TOML campaign. Records land flat in out_dir; returns 0.
 
@@ -103,6 +106,16 @@ def run_campaign(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     specs = expand_campaign(cfg_path)
+    treatment = CONTINUATION_FEEDBACK_VERSION if continuation_feedback else "off"
+    # Resuming into another treatment would silently mix arms or skip the
+    # baseline's already-finished slots. Historical unstamped records are off.
+    for path in out_dir.glob("*.jsonl"):
+        for line in path.read_text().splitlines():
+            header = json.loads(line).get("run_header") or {}
+            if header.get("continuation_feedback", "off") != treatment:
+                raise ValueError(
+                    "different continuation feedback treatment; use a separate --out directory"
+                )
     families = sorted({s.family for s in specs})
     primed_chains: dict[tuple[str, int], list[SlotSpec]] = {}
     singles: list[SlotSpec] = []
@@ -123,6 +136,7 @@ def run_campaign(
         ).hexdigest(),
         "prompt_sha256": template_hash(),
         "driver_revision": _driver_revision(),
+        "continuation_feedback": treatment,
     }
     sidecar = Path(corpus_source) / "canonicalizer_version"
     if sidecar.exists():
@@ -142,6 +156,7 @@ def run_campaign(
             guards=guards,
             poll_s=poll_s,
             run_header=run_header,
+            continuation_feedback=continuation_feedback,
         )
         # run_slot pins output to campaign_dir.parent/results; out_dir owns
         # the flat record the resume predicate reads (atomic same-fs rename)
@@ -233,6 +248,11 @@ def main(argv: list[str] | None = None) -> int:
         help="results dir — keep it INSIDE the repo (see AGENTS.md §2C smoke)",
     )
     ap.add_argument("--pool", type=int, default=4)
+    ap.add_argument(
+        "--continuation-feedback",
+        action="store_true",
+        help="opt into once-per-task rejection coaching (separate benchmark treatment)",
+    )
     args = ap.parse_args(argv)
     corpus = Path(".reschema/corpus")
     if not (corpus / "manifest.json").exists():
@@ -251,6 +271,7 @@ def main(argv: list[str] | None = None) -> int:
         corpus_source=corpus,
         pool_size=args.pool,
         out_dir=args.out,
+        continuation_feedback=args.continuation_feedback,
     )
     for md in sorted(args.out.glob("report-*.md")):
         print(f"report: {md}")

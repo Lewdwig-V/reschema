@@ -140,6 +140,13 @@ def render_report(results_dir: Path, *, family: str, out_dir: Path) -> Path:
     evidence (protocol §2/§5).
     """
     recs = _load(results_dir, family)
+    treatments = {
+        (r.get("run_header") or {}).get("continuation_feedback", "off") for r in recs
+    }
+    if len(treatments) > 1:
+        raise ValueError(
+            "mixed continuation feedback treatments; report each treatment separately"
+        )
     measured = [r for r in recs if r.get("outcome") != "infra-error"]
     accepted = [r for r in measured if r.get("accepted")]
     aborted = [r for r in measured if r.get("outcome", "").startswith("aborted")]

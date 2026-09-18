@@ -83,6 +83,9 @@ class RunnerConfig:
     # a one-name default would have each slot truncate the previous session
     # (#94). The default keeps direct runner users' old shape.
     transcript: str = "transcript.log"
+    continuation_feedback: bool = False
+    feedback_deadline: float | None = None
+    feedback_probe_ceiling: int | None = None
 
 
 @dataclass

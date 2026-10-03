@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from reschema.feedback import CONTINUATION_FEEDBACK_VERSION
+
 from .measure import slot_efficiency
 from .prompt import render, template_hash
 from .runners.base import AgentRunner, RunnerConfig, SlotSpec
@@ -135,6 +137,7 @@ def run_slot(
     guards: SlotGuard | None = None,
     poll_s: int | None = None,
     run_header: dict | None = None,
+    continuation_feedback: bool = False,
 ) -> Path:
     """Run one slot or one sequential branch in an explicit state group.
 
@@ -167,6 +170,7 @@ def run_slot(
         # record's stem (unique per slot) names the log — every chain slot's
         # session survives on disk
         transcript=f"transcript-{spec.result_stem}.log",
+        continuation_feedback=continuation_feedback,
     )
     cfg.sandbox.mkdir(parents=True, exist_ok=True)
     # corpus identity + prompt + driver revision are comparability evidence
@@ -180,6 +184,9 @@ def run_slot(
         ).hexdigest(),
         "prompt_sha256": template_hash(),
         "driver_revision": _driver_revision(),
+        "continuation_feedback": CONTINUATION_FEEDBACK_VERSION
+        if continuation_feedback
+        else "off",
     }
     sidecar = mounted / "canonicalizer_version"
     if sidecar.exists():  # stub corpora in tests carry no sidecar
@@ -206,6 +213,9 @@ def run_slot(
                 + "\n"
             )
             return out
+    if continuation_feedback:
+        cfg.feedback_deadline = time.time() + guards.timeout_s
+        cfg.feedback_probe_ceiling = guards.probe_ceiling
     runner.prepare(cfg)
     started = time.monotonic()
     runner.spawn(render(spec.task_id))

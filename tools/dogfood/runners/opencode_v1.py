@@ -10,6 +10,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from reschema.feedback import (
+    CONTINUATION_FEEDBACK_VERSION,
+    FEEDBACK_DEADLINE_ENV,
+    FEEDBACK_ENV,
+    FEEDBACK_PROBE_CEILING_ENV,
+)
+
 from .base import AgentOutcome, RunnerConfig
 
 
@@ -118,7 +125,22 @@ class OpenCodeV1Runner:
                             # a relative RESCHEMA_HOME would resolve there and
                             # write slot state into the checkout's .reschema/
                             "environment": {
-                                "RESCHEMA_HOME": str(Path(cfg.run_root).resolve())
+                                "RESCHEMA_HOME": str(Path(cfg.run_root).resolve()),
+                                # Explicit off/empty pins prevent the parent's
+                                # standalone treatment from contaminating baseline.
+                                FEEDBACK_ENV: CONTINUATION_FEEDBACK_VERSION
+                                if cfg.continuation_feedback
+                                else "off",
+                                FEEDBACK_DEADLINE_ENV: str(cfg.feedback_deadline)
+                                if cfg.continuation_feedback
+                                and cfg.feedback_deadline is not None
+                                else "",
+                                FEEDBACK_PROBE_CEILING_ENV: str(
+                                    cfg.feedback_probe_ceiling
+                                )
+                                if cfg.continuation_feedback
+                                and cfg.feedback_probe_ceiling is not None
+                                else "",
                             },
                         }
                     },

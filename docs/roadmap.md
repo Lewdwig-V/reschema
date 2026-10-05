@@ -332,6 +332,22 @@ invariant it serves. None relaxes the judge or widens v1 scope.
   at five — and reused by the dogfood driver's abort classification.
 
 Considered, not adopted: REA's "complete results by default" contract
-(conflicts with first-divergence-only hidden-state economy — deliberate);
-Ghidra/Hopper decompilation facets in `task_open` (post-v1, real-binary
-milestone; would be `inferred`-tier context, never verdict input).
+(conflicts with first-divergence-only hidden-state economy — deliberate).
+Decompiler-backed context is parked below as speculative post-1.0.
+
+## Speculative — post-1.0
+
+Not scheduled, not specced; recorded so the idea has a home when the
+real-binary milestone arrives.
+
+- **Decompiler facets in `task_open` (Ghidra/Hopper).** REA drives Hopper
+  and a bring-your-own Ghidra (headless, read-only operations) behind a
+  provider-neutral interface with deterministic provider selection and
+  digest-exact snapshot reuse. Once targets stop shipping with a manifest
+  and capstone slices stop being enough context, pseudocode, xrefs and
+  recovered types could ride alongside the disasm slice. Constraints if it
+  lands: `inferred`-tier context only, never verdict input; the provider
+  runs inside the pinned toolchain image (or its own pinned image), never
+  the host; provider identity and version are committed with the facet so a
+  provider change is visible in the ledger; absent or failing providers
+  degrade the facet to an explicit `unavailable`, not a silent omission.

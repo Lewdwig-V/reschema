@@ -12,7 +12,7 @@
   - [exec/canonical.py — canonicalize](#execcanonicalpy--canonicalize)
   - [validate/program.py — program gate](#validateprogrampy--program-gate)
   - [driver/ — marshaling, original calls, container boundary](#driver--marshaling-original-calls-container-boundary)
-  - [corpus/generate.py — 48-slot seed matrix](#corpusgeneratepy--48-slot-seed-matrix)
+  - [corpus/generate.py — 60-slot seed matrix](#corpusgeneratepy--60-slot-seed-matrix)
   - [disasm/ — task_open facts](#disasm--task_open-facts)
   - [memory.py — deduction cache](#memorypy--deduction-cache)
   - [tools/dogfood/ — 2C live-agent transfer driver](#toolsdogfood--2c-live-agent-transfer-driver)
@@ -111,7 +111,7 @@ agent ──stdio MCP──> mcp/server (5 tools, dispatch-only)
                         │    ├─ validate.program           replay gate (program)
                         │    └─ validate.function          fuzz gate (function)
                         │
-                        ├─ corpus.generate           48-slot seed matrix build
+                        ├─ corpus.generate           60-slot seed matrix build
                         ├─ driver.podrun.run_worker  one-shot podman containers
                         │    └─ driver.native_worker validate/compile/compile-link modes
                         └─ disasm.{slice, analyze}   capstone facts for task_open
@@ -651,7 +651,7 @@ separate controlled campaign.
    comparisons apply to canonicalized traces; a canonicalizer rules change
    forces corpus re-record via the sidecar check.
 5. **Corpus-as-oracle for heuristics** — `task_open`'s signature
-   guesses/callees are validated against the full 48-slot corpus matrix in
+   guesses/callees are validated against the full 60-slot corpus matrix in
    the test suite, keeping compiler/capstone drift observable in CI.
 6. **Structured judgment at every boundary** — MCP errors, compile
    failures, divergences, crashes, and starvation are all typed payloads;

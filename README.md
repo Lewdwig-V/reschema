@@ -54,8 +54,8 @@ original is garbage left in the return register.
 
 ## Corpus
 
-Synthetic seeds with perfect ground truth: 4 seeds × 2 compilers × 3
-optimization levels × 2 symbol variants = **48 build slots**, recorded via a
+Synthetic seeds with perfect ground truth: 5 seeds × 2 compilers × 3
+optimization levels × 2 symbol variants = **60 build slots**, recorded via a
 manifest. Function addresses and sizes are captured before stripping.
 
 | seed | input mode | exercises |
@@ -64,6 +64,7 @@ manifest. Function addresses and sizes are captured before stripping.
 | `check` | stdin text | password check |
 | `calc` | argv | multi-function; the level-B showcase |
 | `filewrite` | stdin raw bytes | writing a file (`out.bin`) |
+| `pkfmt` | stdin raw bytes | TLV packet parser (magic, version bounds, checksum) |
 
 Toolchain matrix: gcc and clang at O0, O1, O2, each with symbols (`sym`) and
 stripped.

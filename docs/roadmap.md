@@ -278,3 +278,76 @@ Dependencies force it:
 - **3 before 4** — preference data is worth harvesting once self-play produces
   diverse, verified trajectories; weight updates are the riskiest step and
   deserve the most mature signal.
+
+## Backlog — lessons from REA (2026-10)
+
+Cross-project review against [morluto/rea](https://github.com/morluto/rea)
+(an agent RE *toolkit*: broad, cooperative, evidence-labelled, but no
+mechanical judge). The doc-facts guard (`tests/test_doc_facts.py`) landed
+directly; the rest are unscheduled candidates, each tied to the phase whose
+invariant it serves. None relaxes the judge or widens v1 scope.
+
+- **Accept payloads state what they do not prove.** REA's rule: `unknown`,
+  `truncated`, `skipped` and `unsupported` never aggregate to `pass`. We
+  already fail loudly on starvation, but several limits live only in prose:
+  compose is linkage-only, level B never compares syscalls, the batch
+  syscall scan does not follow callees, a finite grammar-aligned hidden draw
+  cannot guarantee every overfit is rejected. Candidate: a constant,
+  snapshot-pinned `limitations` list on program/function accepts (truth-only,
+  like `TASK_INCOMPLETE_NOTE`). Serves the 3C honesty boundary.
+- **MCP prompts for the prompt-as-a-skill gap (#88).** REA ships six MCP
+  `prompts` with argument completion against session state
+  (`docs/mcp-prompts.md` there) — a working reference for moving procedural
+  coaching out of payload fields. Must stay optional: tool contracts remain
+  the judge's only interface.
+- **Verdicts commit their inputs.** REA reuses snapshots/replays only when
+  target bytes, operation, provider, profile and plan digest all match. Our
+  canonicalizer stamp guards the corpus, but ledger accepts do not appear to
+  commit the binary sha256, toolchain image digest, or validator/gate
+  version — a toolchain or gate change leaves old accepts silently "valid".
+  Candidate: stamp them on `audit` entries and have `status`/benchmark
+  aggregation flag stale accepts. Natural sibling of 3D `METRIC_EPOCH`, and a
+  prerequisite for trusting the 3A rejected-sources supply across versions.
+- **Stratify hidden draws by outcome class.** REA's obligation ledger closes
+  a claim only when positive/negative/malformed case kinds are all covered.
+  Analogue: require each hidden round to include draws landing in every
+  outcome class observed in the recorded cases (distinct exit codes, empty
+  vs non-empty stderr, files written or not), so an always-`"bad magic"`
+  stub on `pkfmt` is rejected structurally rather than probabilistically.
+  Must keep fresh per-submission entropy; starvation of a class is a loud
+  reject, as today. Serves 3B judge integrity.
+- **Declared nondeterminism before real-world binaries.** REA compares
+  captures against a caller-declared `partial_order` or `finite_traces`
+  spec with an explicit, bounded `ignore_fields` set, never promotes
+  timestamps to ordering evidence, and returns `unknown` for truncated
+  captures. Canonicalizer rules suffice for static single-threaded ELFs;
+  growing them for threaded/nondeterministic targets will not scale. ADR
+  first, no code — it touches the scope guardrails.
+- **Environment preflight (`doctor`).** REA's readiness verifier separates
+  a broken runtime from an analysis failure. Our 2C reports already have to
+  teach readers that post-preflight endpoint death reads as
+  `aborted: agent-exit`. Candidate: a structured preflight (podman present,
+  image digest matches `Containerfile`, corpus built, canonicalizer stamp
+  current) surfaced through `status` with no task id — keeps the tool table
+  at five — and reused by the dogfood driver's abort classification.
+
+Considered, not adopted: REA's "complete results by default" contract
+(conflicts with first-divergence-only hidden-state economy — deliberate).
+Decompiler-backed context is parked below as speculative post-1.0.
+
+## Speculative — post-1.0
+
+Not scheduled, not specced; recorded so the idea has a home when the
+real-binary milestone arrives.
+
+- **Decompiler facets in `task_open` (Ghidra/Hopper).** REA drives Hopper
+  and a bring-your-own Ghidra (headless, read-only operations) behind a
+  provider-neutral interface with deterministic provider selection and
+  digest-exact snapshot reuse. Once targets stop shipping with a manifest
+  and capstone slices stop being enough context, pseudocode, xrefs and
+  recovered types could ride alongside the disasm slice. Constraints if it
+  lands: `inferred`-tier context only, never verdict input; the provider
+  runs inside the pinned toolchain image (or its own pinned image), never
+  the host; provider identity and version are committed with the facet so a
+  provider change is visible in the ledger; absent or failing providers
+  degrade the facet to an explicit `unavailable`, not a silent omission.

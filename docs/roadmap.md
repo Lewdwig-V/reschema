@@ -210,7 +210,12 @@ the highest-information preference data Phase 4 will ever see.
 **Entry (#112):** the isolated re-grade job + one xdist test —
 recompile last K ledger accepts in the pinned image, re-run the hidden
 gate, emit verdict-diff JSON. Measurement first, adjudication only after
-its output is trusted.
+its output is trusted. **Delivered:** `python -m reschema.regrade`
+(ARCHITECTURE.md "regrade.py"). It covers function accepts too, replayed
+with their audit seed so a flip isolates the judge change. Program accepts
+replay the audit `hidden_seed` by default, `--fresh` for new entropy.
+Next: run it over real dogfood ledgers and feed the flips to
+adjudication.
 
 ### 3C — Honesty boundary (the generator's sense organ)
 
@@ -403,12 +408,12 @@ including errata where they disagree with the code.
   admits values the original cannot handle (a correctly typed i32 index
   past a table faults the same way, so a pointer-only hint would mislead). Negative test: `test_mistyped_spec_stub_rejected` (strict xfail
   dropped). `audit[func]` now also persists `compared`, `skipped` and the
-  accepted `params`. **Remaining:** past accepts still need the 3B
-  re-grade (#112) to find flips. Pre-change entries hold only
-  `{seed, n_fuzz}`, so #112 replays them with the family memory's
-  `verified_fact` params (`params`, `audit_seed`, `n_fuzz`), recounting
-  original memory faults. Deterministic, including pre-#139 agent-seeded
-  accepts (the effective seed was always recorded).
+  accepted `params`. Past accepts are re-judged by the #112 re-grade
+  (`python -m reschema.regrade`): pre-change entries hold only
+  `{seed, n_fuzz}`, so it replays them with the family memory's
+  `verified_fact` params (`params`, `audit_seed`, `n_fuzz`).
+  Deterministic, including pre-#139 agent-seeded accepts (the effective
+  seed was always recorded).
 - **Closed: function mode let the agent pin its own fuzz draw.**
   `submit_model(function=…, seed=…)` used to forward the agent's seed to
   `validate_function`, so an agent could fix the 64-case draw and iterate

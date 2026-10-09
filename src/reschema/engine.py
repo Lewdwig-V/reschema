@@ -365,11 +365,74 @@ def status_snapshot(store: TaskStore) -> dict:
     }
 
 
+def program_gate(
+    store: TaskStore, c_source: str, model: Path, hidden_seed: str | None = None
+) -> tuple[dict | None, str | None]:
+    """The program-mode judge, pure: compile, replay recorded cases, then the
+    hidden suite drawn from `hidden_seed` (fresh entropy when None, drawn only
+    once the recorded stage passes). Returns (None = pass | reject kwargs,
+    effective hidden seed). Writes no ledger/memory state, so the #112
+    re-grade can re-judge accepts with the audit seed or fresh entropy."""
+    rec = store.recorded()
+    ok, err = compile_model(c_source, model)
+    if not ok:
+        # infra detail keeps reason "compile" for contract stability; the
+        # journal stage names it honestly (and skips flail/supply stores)
+        return {
+            "reason": "compile",
+            "stage": "infra" if err.startswith("compile infra:") else "compile",
+            "detail": err,
+        }, None
+    v = replay_against(model, rec)
+    if not v.ok:
+        return {
+            "reason": v.reason,
+            "stage": "recorded",
+            "divergence": v.divergence,
+        }, None
+    if hidden_seed is None:  # hidden ground truth: new entropy every submission
+        hidden_seed = f"hidden:{store.meta['task_id']}:{secrets.token_hex(16)}"
+    modes = _hidden_modes(store.meta["seed"])
+    known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in rec}
+    # Double-recorded like stored cases. A flaky or crashing draw invalidates
+    # the INPUT (redraw), never the model — a crash trace is not a behavior spec.
+    rng = random.Random(hidden_seed)
+    fresh = []
+    for (argv, stdin), _attempt in zip(
+        hidden_input_stream(rng, modes, seed=store.meta["seed"]),
+        range(10 * HIDDEN_N),
+        strict=False,
+    ):
+        if len(fresh) == HIDDEN_N:
+            break
+        key = (tuple(argv), stdin.hex())
+        if key in known:
+            continue
+        known.add(key)  # dedupes both against recorded cases and within the suite
+        t = _record_stable(store.meta["binary"], argv, stdin)
+        if t is None or t["exit_code"] == -1:
+            continue
+        fresh.append(t)
+    if len(fresh) < HIDDEN_N:
+        # Loud failure over vacuous pass: too few distinct usable hidden inputs.
+        return {
+            "reason": "hidden-starvation",
+            "detail": f"{len(fresh)}/{HIDDEN_N} usable hidden inputs after 80 draws",
+        }, hidden_seed
+    v = replay_against(model, fresh)
+    if not v.ok:
+        return {
+            "reason": v.reason,
+            "stage": "hidden",
+            "divergence": v.divergence,
+        }, hidden_seed
+    return None, hidden_seed
+
+
 def submit_program(
     store: TaskStore, c_source: str, notes: list[str] | None = None
 ) -> dict:
     """Anti-hardcoding gate: replay recorded cases, then freshly-recorded hidden ones."""
-    rec = store.recorded()
     model = store.dir / "model"
     led = store.ledger()
     led["submissions"] += 1
@@ -406,50 +469,9 @@ def submit_program(
             ),
         )
 
-    ok, err = compile_model(c_source, model)
-    if not ok:
-        # infra detail keeps reason "compile" for contract stability; the
-        # journal stage names it honestly (and skips flail/supply stores)
-        return reject(
-            reason="compile",
-            stage="infra" if err.startswith("compile infra:") else "compile",
-            detail=err,
-        )
-    v = replay_against(model, rec)
-    if not v.ok:
-        return reject(reason=v.reason, stage="recorded", divergence=v.divergence)
-    modes = _hidden_modes(store.meta["seed"])
-    known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in rec}
-    # Hidden ground truth: fresh unguessable inputs (new entropy every submission),
-    # double-recorded like stored cases. A flaky or crashing draw invalidates the
-    # INPUT (redraw), never the model — a crash trace is not a behavior spec.
-    hidden_seed = f"hidden:{store.meta['task_id']}:{secrets.token_hex(16)}"
-    rng = random.Random(hidden_seed)
-    fresh = []
-    for (argv, stdin), _attempt in zip(
-        hidden_input_stream(rng, modes, seed=store.meta["seed"]),
-        range(10 * HIDDEN_N),
-        strict=False,
-    ):
-        if len(fresh) == HIDDEN_N:
-            break
-        key = (tuple(argv), stdin.hex())
-        if key in known:
-            continue
-        known.add(key)  # dedupes both against recorded cases and within the suite
-        t = _record_stable(store.meta["binary"], argv, stdin)
-        if t is None or t["exit_code"] == -1:
-            continue
-        fresh.append(t)
-    if len(fresh) < HIDDEN_N:
-        # Loud failure over vacuous pass: too few distinct usable hidden inputs.
-        return reject(
-            reason="hidden-starvation",
-            detail=f"{len(fresh)}/{HIDDEN_N} usable hidden inputs after 80 draws",
-        )
-    v = replay_against(model, fresh)
-    if not v.ok:
-        return reject(reason=v.reason, stage="hidden", divergence=v.divergence)
+    fail, hidden_seed = program_gate(store, c_source, model)
+    if fail is not None:
+        return reject(**fail)
     # Accept marker is idempotent (re-accept re-records one), audit keeps the
     # effective hidden seed so the passing suite is traceable like function mode.
     led["accepted"] = [
@@ -478,7 +500,7 @@ def submit_program(
     )
     return {
         "accepted": True,
-        "recorded_cases": len(rec),
+        "recorded_cases": len(store.recorded()),
         "hidden_cases": HIDDEN_N,
         "hidden_seed": hidden_seed,
         "task_complete": True,  # #103: program acceptance IS the slot contract

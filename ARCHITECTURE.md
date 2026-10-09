@@ -15,6 +15,7 @@
   - [corpus/generate.py — 60-slot seed matrix](#corpusgeneratepy--60-slot-seed-matrix)
   - [disasm/ — task_open facts](#disasm--task_open-facts)
   - [memory.py — deduction cache](#memorypy--deduction-cache)
+  - [regrade.py — #112 re-grade job](#regradepy--112-re-grade-job)
   - [tools/dogfood/ — 2C live-agent transfer driver](#toolsdogfood--2c-live-agent-transfer-driver)
 - [Key architectural decisions](#key-architectural-decisions)
 - [Decision records](#decision-records)
@@ -585,6 +586,34 @@ source, later family slots accept with zero probes (trajectory
 an instrumentation tautology check — it demonstrates the plumbing, not
 transfer in a live agent; a live-agent measurement is still pending (see
 `docs/benchmark-protocol.md`).
+
+### regrade.py — #112 re-grade job
+
+`uv run python -m reschema.regrade [--k K] [--fresh] [--task ID ...]`
+re-judges ledger accepts under the CURRENT verifier and prints one
+verdict-diff JSON line per accept (`task_id, unit, old_verdict,
+new_verdict, source_hash, seed, divergence?`, stamped with the
+canonicalizer version); totals go to stderr. Measurement only: it writes
+no ledger or memory state, and a flip is data for 3B adjudication, not a
+verdict on the old judge.
+
+- Order: accepts carry no timestamps, so "last K" is tasks by ledger mtime,
+  then entries newest first within a task.
+- Function accepts replay `validate_function` with the audit seed and
+  `n_fuzz`, so a flip isolates the judge change from the draw. Params come
+  from `audit[func]["params"]` or, for pre-#143 entries, the
+  `verified_fact` with the same source and audit seed.
+- The program accept re-runs `engine.program_gate` (the pure judge
+  `submit_program` wraps) on `program_source` with the audit `hidden_seed`,
+  or fresh entropy under `--fresh`.
+- No audit seed, no params, no `program_source` (pre-#118) or a slot the
+  manifest lacks is emitted as `new_verdict: "unreplayable"` with a reason,
+  never dropped.
+
+Negative tests (`tests/test_regrade.py`): a real accept reproduces; the
+pre-#143 mistyped `scale_buf` stub accept surfaces as a `spec` flip, also
+via the memory-params fallback; a planted wrong program surfaces as a
+`recorded` flip.
 
 ### tools/dogfood/ — 2C live-agent transfer driver
 

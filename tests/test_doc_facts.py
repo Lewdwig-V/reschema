@@ -104,3 +104,17 @@ def test_canonicalizer_version():
     _check(r'CANONICALIZER_VERSION\s*=\s*"([\d.]+)"', v, str)
     _check(r"rules v(\d+\.\d+)", v, str)
     _check(r"\(v(\d+\.\d+)\)", v, str)
+
+
+def test_audit_key_set_matches_engine():
+    # engine.submit_function's audit[func] keys (pinned against the ledger in
+    # test_engine_b); every doc spelling of the set must list them all.
+    keys = {"seed", "n_fuzz", "compared", "skipped", "params"}
+    hits = _hits(r"\{(seed, n_fuzz[^}]*)\}")
+    assert hits, "audit key-set guard went vacuous"
+    bad = [
+        f"{f}:{ln}: {m.group(0)!r}"
+        for f, ln, m in hits
+        if {k.strip() for k in m.group(1).split(",")} != keys
+    ]
+    assert not bad, "docs disagree with engine audit keys:\n" + "\n".join(bad)

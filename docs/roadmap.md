@@ -378,7 +378,8 @@ including errata where they disagree with the code.
   agent-facing `_abi_template` for void functions (that one gives them a
   memory channel, codex P2 on #140); it is what an agent can declare by
   hand, and for non-void pointer functions it coincides with the template.
-  **Decided (ARCHITECTURE.md ADR "Original faults stay skipped"):** no
+  **Decided (ARCHITECTURE.md ADR "Original timeouts stay skipped, memory
+  faults reject at spec"):** no
   fault-or-not compare until a genuine-fault seed exists. Reopen trigger:
   `test_ref_specs_never_fault_originals` (every reference spec × every
   slot) fails. That test is a SAMPLED tripwire (one pinned draw, default
@@ -387,8 +388,9 @@ including errata where they disagree with the code.
   spec thinned to its n≤0 survivors (eax is 0 on every one), and a
   `return 0;` stub was ACCEPTED on all 12 `scale_buf` slots with fresh
   seeds (25–37 compared, 27–39 skipped). Design call taken: count only
-  MEMORY faults (`Invalid memory read/write/fetch`, the pointer-typing
-  signature) at zero tolerance, on agent-declared cases only (109-A
+  MEMORY faults (unicorn errno READ/WRITE/FETCH × UNMAPPED/PROT/UNALIGNED,
+  the pointer-typing signature; prose matching missed PROT, so a pointer
+  ranged into the read-only image bypassed it) at zero tolerance, on agent-declared cases only (109-A
   scouts excluded, as for the #100 floor); timeouts stay skipped, because
   correct-typed `sum_range` over a declared full-i32 range times out on
   39/64 cases (`test_true_spec_faults_on_declared_range`; positive control

@@ -6,8 +6,9 @@ fresh-entropy by default (mirrors submit_program: nothing precomputable); tests 
 `seed` for determinism. Never pass vacuously: no surviving cases (skip-starvation),
 and no input VARIATION — <2 distinct surviving inputs over the round (empty params,
 all-fixed-point ranges) is a spec-stage reject, not a verdict (#100). Nor thinly:
-any MEMORY fault of the original on a declared case is a spec-stage reject (a
-pointer typed as a scalar); timeouts stay skipped (skip floor, roadmap).
+when some cases survive, any MEMORY fault (unmapped/protection/alignment) of the
+original on a declared case is a spec-stage reject (a pointer typed as a
+scalar); timeouts stay skipped (skip floor, roadmap).
 
 Containment: agent source compiles and executes ONLY inside the level-B podman
 worker (see ARCHITECTURE.md) — never in this process.
@@ -55,13 +56,10 @@ def _crash_text(crash: dict) -> str:
 
 
 def _is_mem_fault(want: dict) -> bool:
-    # calling._run_case fault convention: exit_code -1 + trailing fault event
-    # whose args[0] is "<ExcType>: <msg>"; unicorn memory faults read
-    # "Invalid memory read/write/fetch (UC_ERR_...)". Timeouts carry no args.
-    if want["exit_code"] != -1:
-        return False
-    ev = want["events"][-1]
-    return ev["sc"] == "crash" and "Invalid memory" in ev["args"][0]
+    # calling._run_case tags crash events structurally from unicorn's errno
+    # (READ/WRITE/FETCH x UNMAPPED/PROT/UNALIGNED); prose matching missed PROT
+    # faults, so a pointer ranged into the read-only image bypassed the floor.
+    return want["exit_code"] == -1 and want["events"][-1].get("mem_fault") is True
 
 
 def validate_function(
@@ -145,7 +143,7 @@ def validate_function(
         if id(case) in declared_ids and _is_mem_fault(want)
     ]
     if mem_faults:
-        # Skip floor (roadmap "skip-ratio floor"): a pointer declared as a
+        # Skip floor (roadmap "Closed: skip floor"): a pointer declared as a
         # scalar faults the original on junk addresses and thins the round to
         # the cases that never dereference it (all-i32 scale_buf: n<=0 only,
         # where a `return 0;` stub passed). Only memory faults count, at zero

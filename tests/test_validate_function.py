@@ -553,18 +553,31 @@ __attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){
 
 
 def test_mem_fault_classifier_counts_only_memory_faults():
-    """Skip floor input: unicorn memory faults count; timeouts and clean runs
-    never do (correct wide-range specs time out — must stay skipped)."""
+    """Skip floor input: unicorn's errno decides, not the message prose.
+    UNMAPPED/PROT/UNALIGNED data and fetch faults count; UC_ERR_MAP (a mapping
+    call, not a dereference), other UcErrors, timeouts and clean runs never do."""
+    from unicorn import UcError
+    from unicorn import unicorn_const as uc
+
+    from reschema.driver.calling import is_mem_fault_exc
     from reschema.validate.function import _is_mem_fault
 
-    def fault(sc, args):
-        return {"exit_code": -1, "events": [{"phase": "fault", "sc": sc, "args": args}]}
+    for op in ("READ", "WRITE", "FETCH"):
+        for why in ("UNMAPPED", "PROT", "UNALIGNED"):
+            assert is_mem_fault_exc(UcError(getattr(uc, f"UC_ERR_{op}_{why}")))
+    for errno in (uc.UC_ERR_MAP, uc.UC_ERR_INSN_INVALID, uc.UC_ERR_EXCEPTION):
+        assert not is_mem_fault_exc(UcError(errno))
+    assert not is_mem_fault_exc(RuntimeError("Invalid memory read"))
 
-    for kind in ("read", "write", "fetch"):
-        msg = f"UcError: Invalid memory {kind} (UC_ERR_{kind.upper()}_UNMAPPED)"
-        assert _is_mem_fault(fault("crash", [msg]))
-    assert not _is_mem_fault(fault("timeout", []))
-    assert not _is_mem_fault(fault("crash", ["UcError: Invalid instruction"]))
+    def fault(sc, mem_fault=None):
+        ev = {"phase": "fault", "sc": sc, "args": []}
+        if mem_fault is not None:
+            ev["mem_fault"] = mem_fault
+        return {"exit_code": -1, "events": [ev]}
+
+    assert _is_mem_fault(fault("crash", True))
+    assert not _is_mem_fault(fault("crash", False))
+    assert not _is_mem_fault(fault("timeout"))
     assert not _is_mem_fault({"exit_code": 0, "events": [], "ret": 0, "mem": {}})
 
 
@@ -582,6 +595,8 @@ def _stub_original(monkeypatch, fault_sc, fault_msg):
         for c in cases:
             if c["hi"] - c["lo"] > 1000:
                 ev = {"phase": "fault", "sc": fault_sc, "args": fault_msg}
+                if fault_sc == "crash":
+                    ev["mem_fault"] = True
                 out.append({"ret": 0, "mem": {}, "exit_code": -1, "events": [ev]})
             else:
                 out.append({"ret": 0, "mem": {}, "exit_code": 0, "events": []})
@@ -623,3 +638,20 @@ def test_skip_floor_rejects_memory_faults(monkeypatch, tmp_path):
     assert not v.ok and v.divergence["stage"] == "spec", v
     assert v.skipped > 0 and v.compared == 0, v
     assert "buffer_i32" in v.divergence["detail"], v
+
+
+def test_skip_floor_ignores_scout_memory_faults(monkeypatch, tmp_path):
+    # Harness scouts (109-A) are not the agent's declaration: a scout that
+    # memory-faults the original stays skipped; declared cases never fault.
+    from reschema.validate import scout
+
+    _stub_original(monkeypatch, "crash", ["UcError: (UC_ERR_READ_PROT)"])
+    monkeypatch.setattr(
+        scout, "scout_inputs", lambda params, imms: [{"lo": -99999, "hi": 99999}]
+    )
+    narrow = [Param("lo", "i32", range=(-10, 0)), Param("hi", "i32", range=(0, 10))]
+    v = validate_function(
+        "unused", 0, "sum_range", narrow, "", tmp_path / "m.so", seed=7
+    )
+    assert v.ok, v
+    assert v.skipped == 1, v

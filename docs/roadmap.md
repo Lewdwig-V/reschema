@@ -363,6 +363,20 @@ conditions, in [rejected-ideas.md](rejected-ideas.md).
   (#112) with the "judge regressed" default, and ships with the negative
   test AGENTS.md requires: a model that suppresses the original's
   deterministic crash.
+- **Gap: function mode lets the agent pin its own fuzz draw.**
+  `submit_model(function=…, seed=…)` forwards the agent's seed to
+  `validate_function` (documented on the tool "for determinism"), so an
+  agent can fix the 64-case draw and iterate first-divergence feedback
+  against a known case set — the memorizable-fixed-tests weakness the entropy
+  policy exists to prevent (AGENTS.md: production draws fresh per call). The
+  `N_FUZZ` floor and scout slice still apply, so this is narrower than an
+  open judge, but a pinned-seed accept is weaker evidence than a fresh one.
+  Candidate: drop `seed` from the MCP signature (engine/tests keep it, as
+  the `n_fuzz` floor already distinguishes agent boundary from internal
+  callers), record the drawn seed in `audit` as today, and add the negative
+  test — an overfit model accepted under a pinned seed must reject under a
+  fresh one. Accepts made with an agent-supplied seed should be flagged in
+  the 3B re-grade.
 - **Mutation kill rate as the per-slot judge-strength metric.** Mutate each
   seed's reference C (operator flips, off-by-ones, constant changes, dropped
   branches, chunked vs coalesced writes), run mutants through the unchanged

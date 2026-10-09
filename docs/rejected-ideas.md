@@ -132,8 +132,12 @@ corpus.
 for RL reproducibility.
 
 **Breaks:** the cost-shaped E metric (submissions are β-priced) and the
-entropy policy (fresh `secrets.token_hex(16)` per call; tests pin seeds,
-production never does).
+entropy policy (production validation draws fresh per call; tests pin
+seeds). Program-mode hidden draws honor this unconditionally — the tool
+exposes no seed. Function mode does **not** yet: `submit_model` forwards an
+agent-supplied `seed=` to the fuzz draw, an open gap tracked in
+[roadmap.md](roadmap.md) (research-survey backlog, P0). This entry refuses
+*extending* pinning; it does not claim the gap is closed.
 
 **Evidence:** union-of-agents roughly doubles single-agent rates (CyberGym:
 18.4% vs 7.2–9.4%), the opposite of what E measures. Fixed private tests

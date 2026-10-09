@@ -768,6 +768,13 @@ against the (non-public) original plans is kept as history, subordinate.
   coaching ships today as structured payload fields (`repair_directive`,
   family-memory injection) and contract-pinned tool descriptions, not as MCP
   `prompts`/`resources` — tracked as issue #88.
+- **Refused ideas are recorded, not re-argued** — ideas from the agentic-RE,
+  decompilation and code-RL literature that would break judge-only
+  acceptance, the entropy policy, first-divergence-only feedback, the trust
+  model or the scope guardrails below are listed in
+  `docs/rejected-ideas.md`, each with its evidence and an explicit "reopen
+  only if" condition. A proposal matching an entry starts from that
+  condition.
 - **Scope guardrails observed** — x86-64 static ELFs only, ≤6 register
   integer args (no stack args, no structs/floats), no multi-arch, packing, or
   symbolic equivalence; no branch coverage (explicitly cut).

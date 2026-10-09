@@ -331,9 +331,131 @@ invariant it serves. None relaxes the judge or widens v1 scope.
   current) surfaced through `status` with no task id — keeps the tool table
   at five — and reused by the dogfood driver's abort classification.
 
-Considered, not adopted: REA's "complete results by default" contract
-(conflicts with first-divergence-only hidden-state economy — deliberate).
-Decompiler-backed context is parked below as speculative post-1.0.
+Considered, not adopted: REA's "complete results by default" contract —
+recorded in [rejected-ideas.md](rejected-ideas.md) §3. Decompiler-backed
+context is parked below as speculative post-1.0.
+
+## Backlog — research survey (2026-10)
+
+From the October 2026 survey of agentic RE harnesses, neural decompilation,
+evaluation/verification, and adjacent code-RL harness design. Sources were
+mostly read as abstracts or secondary summaries and are largely
+author-reported, unreplicated 2026 preprints: re-check figures against the
+full papers before citing externally. Ranked by judge value — what makes the
+judge harder to fool first, context and tooling next, Phase 4 hygiene last.
+The ideas the survey refused are recorded, with reasons and reopen
+conditions, in [rejected-ideas.md](rejected-ideas.md).
+
+### P0 — know how strong the judge is
+
+- **Gap: level B never compares inputs on which the original faults.**
+  `validate/function.py` skips every fuzz case where the *original* crashes
+  ("a crash is not a behavior spec"), so a model that silently "fixes" the
+  original's crash is never compared on that input — exactly the
+  crash-absence divergence the 2026 literature measures (Decompile-Diverge,
+  arXiv 2609.05370). The `crash` field only catches a *model* that crashes.
+  Measure before changing the gate: many current skips are plausibly
+  harness artifacts (e.g. register-junk pointers from all-i32 sketches)
+  rather than real original behavior. Order: log per-slot `skipped` rates
+  (already on verdicts) → classify which faults are deterministic under
+  poison buffers → ADR on whether a boolean fault-or-not comparison enters
+  `field: crash`. Any accept→reject flip routes through the 3B re-grade job
+  (#112) with the "judge regressed" default, and ships with the negative
+  test AGENTS.md requires: a model that suppresses the original's
+  deterministic crash.
+- **Gap: function mode lets the agent pin its own fuzz draw.**
+  `submit_model(function=…, seed=…)` forwards the agent's seed to
+  `validate_function` (documented on the tool "for determinism"), so an
+  agent can fix the 64-case draw and iterate first-divergence feedback
+  against a known case set — the memorizable-fixed-tests weakness the entropy
+  policy exists to prevent (AGENTS.md: production draws fresh per call). The
+  `N_FUZZ` floor and scout slice still apply, so this is narrower than an
+  open judge, but a pinned-seed accept is weaker evidence than a fresh one.
+  Candidate: drop `seed` from the MCP signature (engine/tests keep it, as
+  the `n_fuzz` floor already distinguishes agent boundary from internal
+  callers), record the drawn seed in `audit` as today, and add the negative
+  test — an overfit model accepted under a pinned seed must reject under a
+  fresh one. Accepts made with an agent-supplied seed should be flagged in
+  the 3B re-grade.
+- **Mutation kill rate as the per-slot judge-strength metric.** Mutate each
+  seed's reference C (operator flips, off-by-ones, constant changes, dropped
+  branches, chunked vs coalesced writes), run mutants through the unchanged
+  gate at `HIDDEN_N`/`N_FUZZ` with pinned mutant seeds in CI, report kill
+  rate per slot. Turns 3B's known-attack battery into a measurement and
+  gives #109 a falsifiable exit criterion ("magic-branch mutant kill rate
+  moves from X to Y"). No published baseline exists for differential RE
+  judges at these budgets. Reported in CI/benchmark artifacts only, never
+  in an MCP response (rejected-ideas §4).
+
+### P1 — harden inputs and feedback without touching acceptance
+
+- **Offline hidden-input pool at `corpus_build`.** Coverage-guided fuzzing
+  (optionally SymCC/angr as a *generator*) against the original binary
+  builds a per-slot pool reaching hard branches (`pkfmt` magic, version
+  bounds, FNV checksum); the online gate draws hidden inputs from the pool
+  mixed with fresh mutations under the per-submission seed. Invariants:
+  coverage is a sampling heuristic, never acceptance; the verdict stays
+  differential replay; entropy stays fresh in which entries are drawn. Needs
+  an ADR — ARCHITECTURE records "no branch coverage (explicitly cut)" and 2C
+  deferred solver-assisted seed generation — stating harness-side input
+  generation is neither agent-facing solver help nor coverage-as-acceptance.
+  Cost lands at build time (mind the 120s suite budget). Extends #109 and
+  the stratified-draws item above.
+- **Adversary-model hackability audit per slot class.** An adversary model
+  gets a fixed budget per slot class to produce a wrong-but-accepted model;
+  the success rate becomes a first-class corpus metric (method of arXiv
+  2606.16062). Gives 3A's synthetic-cheater garden a number.
+- **Harness-rendered arithmetic in function divergences.** Function-gate
+  divergences render `expected`/`actual` as a single truncated `str()`; add
+  signed, unsigned and hex views of the *same single divergence*. Removes
+  the most-cited practitioner hallucination (base/sign conversion) without
+  revealing anything new. Payload-only.
+- **Regression telemetry across resubmissions.** Record in the ledger when a
+  resubmission fails a recorded case an earlier submission passed (the
+  failure AutoDecompiler needed explicit machinery to suppress). Starts as
+  harness-side telemetry in the ledger, surfaced only in benchmark/admin
+  reports — not in `status`, which is agent-visible. Any agent exposure
+  waits for 2C evidence.
+
+### P2 — prepare the tool surface for real binaries (five tools unchanged)
+
+- **ReF-style context in `task_open`.** Relabel jump targets in the capstone
+  slice and expose referenced `.rodata` contents, consistent with the
+  canonicalizer's ADDR-ordinal approach. `inferred` tier, never verdict
+  input, explicit `unavailable` when absent — a lightweight precursor to the
+  post-1.0 decompiler facets, under the same constraints.
+- **Caller/callee pointer-usage hints for param specs.** Offsets and widths
+  touched at caller and callee sites suggest pointer kinds (Idioms, ReSym)
+  — coaching only. Feeds the named pointer-kind sketch follow-up that would
+  make `pk_extract`/`pk_checksum` representable function tasks.
+- **Origin-keyed provenance and hostile-text labelling.** Once strings,
+  `stdout_decoded` previews and decompiler output come from attacker-chosen
+  binaries, they are hostile text in the agent's context ("When Binaries
+  Talk Back", arXiv 2607.12507: planted text drove 35/40 unsafe proposals).
+  Label binary-derived fields by origin, keep hex authoritative, and count
+  memory support per origin so repeated agent hypotheses never corroborate
+  one another. Extends two-tier provenance and the 3C `digest()`
+  chokepoint; precondition for real binaries and for the dogfood sandbox.
+- **Perturbed twin slots.** Renamed/reordered seeds with identical
+  semantics, plus a generated/public split, to separate transfer from
+  recall in 2C. SRE-Bench finds optimization level and static linking
+  matter little while scale and anti-analysis dominate — prioritize the
+  obfuscation-tier curve over more compiler/O-level permutations.
+
+### P3 — optional experiments
+
+- **Failure-lesson memory tier.** ReasoningBank's gain came from memory
+  distilled from *failures*. A third tier built from a rejected
+  submission's divergence class, routed through `digest()` (no source, no
+  entropy), tests this without touching `verified_fact`. Keep the
+  `verified_on` slot tag on everything injected (stale memories mislead —
+  MemSyco-Bench). Mind 2C config A, where memory hurt.
+- **Phase 4 hygiene.** RLEF-style split: in-episode feedback from recorded
+  cases, terminal reward from the fresh hidden gate. Replayable episodes by
+  logging each drawn seed in the audit entry *after* the draw, never by
+  pinning. Per-rollout `RESCHEMA_HOME` with a merge step instead of
+  shared-state concurrency. Every reward stamped with `METRIC_EPOCH`. An
+  optional P(accept) calibration score, kept separate from E.
 
 ## Speculative — post-1.0
 

@@ -9,7 +9,9 @@ line — not by re-arguing the idea from scratch.
 
 Provenance: the October 2026 research survey of agentic RE harnesses,
 neural decompilation, evaluation/verification and adjacent code-RL harness
-design, plus the REA comparison recorded in [roadmap.md](roadmap.md).
+design (kept in
+[research/2026-10-agentic-re-harnesses/](research/2026-10-agentic-re-harnesses/README.md)),
+plus the REA comparison recorded in [roadmap.md](roadmap.md).
 Most survey sources were read as abstracts or secondary summaries (arXiv
 full text was unreachable), and nearly all figures are author-reported;
 treat the numbers below as directional and re-check them against the full

@@ -195,6 +195,25 @@ tools/dogfood/         # phase-2C live-agent transfer driver (not in the package
 writes a planted return address on the stack and stops when RIP lands there,
 which is when the original function returns.)
 
+## Related work
+
+Agentic RE tooling, such as the MCP servers for IDA, Ghidra and Binary Ninja,
+gives agents context, but none of it checks the agent's conclusions. Neural
+decompilation work mostly judges output by recompilation or by fixed, shipped
+test suites, and 2026 results show both can be passed while behavior
+diverges. ReSchema's distinguishing feature is an **in-loop judge** with
+emulated ground truth. Every program-mode submission is replayed against
+fresh hidden inputs. Function mode fuzzes against the original as well, but
+it currently accepts an agent-supplied seed, which is a known gap (see
+`docs/roadmap.md`). Agent C is compiled only in containers. Level B runs it
+natively inside the container, and level A runs it under qiling against a
+scratch rootfs (see "Trust model" above). The nearest published neighbors
+are Decompile-Diverge (arXiv 2609.05370), which fuzzes from the original
+binary to find divergences that test suites miss, and "Recompilation Is Not
+Enough" (arXiv 2609.07201), which uses an exact-output gate on fixed tests. See
+`docs/research/2026-10-agentic-re-harnesses/` for the survey; its figures are
+largely author-reported preprints.
+
 ## Documentation
 
 - `ARCHITECTURE.md` - canonical current-state description, including the scope
@@ -204,6 +223,8 @@ which is when the original function returns.)
 - `docs/roadmap.md` - phase order beyond the current milestone.
 - `docs/rejected-ideas.md` - ideas deliberately refused, with reasons and
   reopen conditions.
+- `docs/research/` - research surveys behind the roadmap backlog (source
+  material, with errata).
 - [Long-horizon reasoning harness proposal](docs/proposals/long-horizon-reasoning-harness.md)
   - a proposed Lean-backed generalisation, with a separate implementation repository
     recommended; design discussion only.

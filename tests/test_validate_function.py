@@ -628,8 +628,10 @@ def test_skip_floor_ignores_timeouts(monkeypatch, tmp_path):
 
 
 def test_skip_floor_rejects_memory_faults(monkeypatch, tmp_path):
-    # Same thinning, but the faults are pointer-typing faults: a spec reject
-    # naming the faulting case, before any model compile.
+    # Same thinning, but the faults are memory faults: a spec reject naming
+    # the faulting case, before any model compile. All params here are i32, so
+    # the fault may be a correctly typed index run past a table: the detail
+    # must offer narrowing the range, not only retyping as a pointer.
     msg = ["UcError: Invalid memory read (UC_ERR_READ_UNMAPPED)"]
     _stub_original(monkeypatch, "crash", msg)
     v = validate_function(
@@ -638,6 +640,7 @@ def test_skip_floor_rejects_memory_faults(monkeypatch, tmp_path):
     assert not v.ok and v.divergence["stage"] == "spec", v
     assert v.skipped > 0 and v.compared == 0, v
     assert "buffer_i32" in v.divergence["detail"], v
+    assert "narrow that range" in v.divergence["detail"], v
 
 
 def test_skip_floor_ignores_scout_memory_faults(monkeypatch, tmp_path):

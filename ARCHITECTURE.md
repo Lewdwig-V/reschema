@@ -801,7 +801,11 @@ against the (non-public) original plans is kept as history, subordinate.
   least one case survives (total faulting stays `skip-starvation`), any
   MEMORY fault of the original on an agent-declared case is a
   `stage: spec` reject naming the faulting case, before the model is
-  compiled. Memory faults are classified by unicorn errno
+  compiled. A memory fault does not prove a typing error: a correctly typed
+  i32 index ranged past a table faults the same way. That spec is still
+  rejected (its declared domain exceeds what the original handles), so the
+  `detail` offers both remedies, retyping as `buffer_i32`/`cstring` or
+  narrowing the range, never a pointer-only hint. Memory faults are classified by unicorn errno
   (READ/WRITE/FETCH × UNMAPPED/PROT/UNALIGNED, `calling.MEM_FAULT_ERRNOS`),
   not message prose: only UNMAPPED says "Invalid memory", and a pointer
   ranged into the read-only static image (`UC_ERR_WRITE_PROT`) bypassed a

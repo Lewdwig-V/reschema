@@ -398,8 +398,10 @@ including errata where they disagree with the code.
   of the 120s budget). The reject is
   `stage: spec` (already in `DUP_NO_VERDICT_STAGES`: no fingerprint, no
   `rejected_sources` entry), runs before the model compiles, and its
-  `detail` names the first faulting case with a `buffer_i32`/`cstring`
-  hint. Negative test: `test_mistyped_spec_stub_rejected` (strict xfail
+  `detail` names the first faulting case and both remedies: retype a
+  dereferenced scalar as `buffer_i32`/`cstring`, or narrow a range that
+  admits values the original cannot handle (a correctly typed i32 index
+  past a table faults the same way, so a pointer-only hint would mislead). Negative test: `test_mistyped_spec_stub_rejected` (strict xfail
   dropped). `audit[func]` now also persists `compared`, `skipped` and the
   accepted `params`. **Remaining:** past accepts still need the 3B
   re-grade (#112) to find flips. Pre-change entries hold only

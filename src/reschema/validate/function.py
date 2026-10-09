@@ -158,9 +158,12 @@ def validate_function(
                     f"original faulted on {len(mem_faults)} of "
                     f"{sum(id(c) in declared_ids for c in cases)} "
                     f"declared fuzz case(s) with a memory fault — e.g. "
-                    f"{_preview(mem_faults[0])}. A parameter the function "
-                    "dereferences is likely declared as a scalar: declare it "
-                    "buffer_i32 or cstring"
+                    f"{_preview(mem_faults[0])}. The declared spec drives the "
+                    "original into invalid memory: either a parameter it "
+                    "dereferences is declared as a scalar (declare it "
+                    "buffer_i32 or cstring), or a declared range admits values "
+                    "it cannot handle, such as an index past a table (narrow "
+                    "that range)"
                 ),
                 "seed": effective_seed,
             },

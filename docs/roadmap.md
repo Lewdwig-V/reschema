@@ -377,6 +377,18 @@ including errata where they disagree with the code.
   `scale_buf` thins rather than starves (36 skipped, 28 compared, all n≤0
   where the junk pointer is never dereferenced), so skip-starvation alone
   does not flag a wrong-kind spec.
+  **Decided (ARCHITECTURE.md ADR "Original faults stay skipped"):** no
+  fault-or-not compare until a genuine-fault seed exists. Reopen trigger:
+  census `ref` rows go nonzero.
+- **Open: skip-ratio floor (spec stage).** Reject a function submission at
+  `stage: spec` when the original faults on more than a threshold share of
+  the draw, with a pointer-kind hint in `detail`. This closes the thinning
+  the census found. Recommended threshold: any fault (`skipped > 0`), since
+  true specs fault on 0/6912. Before shipping: (1) choose the threshold;
+  (2) add the negative test, sketch `scale_buf` plus a stub aimed at its
+  n≤0 survivors, rejected at `stage: spec`; (3) route flips of past
+  accepts with `skipped > 0` through the 3B re-grade (#112). A
+  genuine-fault seed (above) forces a ratio threshold instead of zero.
 - **Closed: function mode let the agent pin its own fuzz draw.**
   `submit_model(function=…, seed=…)` used to forward the agent's seed to
   `validate_function`, so an agent could fix the 64-case draw and iterate

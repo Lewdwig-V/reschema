@@ -777,6 +777,22 @@ against the (non-public) original plans is kept as history, subordinate.
   `docs/rejected-ideas.md`, each with its evidence and an explicit "reopen
   only if" condition. A proposal matching an entry starts from that
   condition.
+- **Original faults stay skipped; fault-or-not does not enter `field:
+  crash` (yet)** — `tools/crash_census.py` (2026-10-09) ran the gate's own
+  64-case draw (fuzz + 109-A scouts) over all 108 function slots: under
+  true-signature specs the originals fault on 0/6912 cases; under the
+  all-i32 sketch, 2736/6912, all pointer-as-i32 reads, all deterministic.
+  A fault-or-not compare would therefore preserve no genuine original
+  behavior on today's corpus. It would only turn spec artifacts into
+  behavior rejects, which is the wrong stage for them. Reopen when a seed
+  has a genuine reachable fault under its true spec (the census `ref`
+  rows go nonzero). That change ships with the suppressed-crash negative
+  test and routes accept→reject flips through the 3B re-grade (#112).
+  **Proposed, not shipped:** a spec-stage skip-ratio floor. Skip-starvation
+  catches only *total* skipping; the sketch `scale_buf` thins to 28
+  compared n≤0 cases and still reaches comparison. Since true specs skip
+  nothing, the evidence supports rejecting at `stage: spec` on any original
+  fault. The threshold is the open call (roadmap, "skip-ratio floor").
 - **Scope guardrails observed** — x86-64 static ELFs only, ≤6 register
   integer args (no stack args, no structs/floats), no multi-arch, packing, or
   symbolic equivalence; no branch coverage (explicitly cut).

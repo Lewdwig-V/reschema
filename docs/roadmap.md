@@ -392,7 +392,8 @@ including errata where they disagree with the code.
   scouts excluded, as for the #100 floor); timeouts stay skipped, because
   correct-typed `sum_range` over a declared full-i32 range times out on
   39/64 cases (`test_true_spec_faults_on_declared_range`; positive control
-  `test_timeout_only_faults_pass_skip_floor`). The reject is
+  `test_skip_floor_ignores_timeouts`, stubbed: each real timeout costs 3s
+  of the 120s budget). The reject is
   `stage: spec` (already in `DUP_NO_VERDICT_STAGES`: no fingerprint, no
   `rejected_sources` entry), runs before the model compiles, and its
   `detail` names the first faulting case with a `buffer_i32`/`cstring`

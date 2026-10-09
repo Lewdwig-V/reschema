@@ -20,19 +20,6 @@ SCALE_STUB = (
 )
 
 
-SUM_MODEL = (
-    "#include <stdint.h>\n"
-    "__attribute__((sysv_abi)) int32_t sum_range(int32_t lo, int32_t hi) {\n"
-    "  int32_t s = 0;\n"
-    "  for (int64_t i = lo; i <= hi; i++) {\n"
-    "    s = (int32_t)((uint32_t)s + (uint32_t)i);  /* machine-code wrap */\n"
-    "    s = s < -1000 ? -1000 : s > 1000 ? 1000 : s;\n"
-    "  }\n"
-    "  return s;\n"
-    "}\n"
-)
-
-
 def _slot(manifest, func):
     return next(
         t
@@ -100,27 +87,3 @@ def test_mistyped_spec_stub_rejected(built_corpus, tmp_path):
     )
     assert not v.ok and v.divergence["stage"] == "spec", v
     assert "buffer_i32" in v.divergence["detail"], v
-
-
-def test_timeout_only_faults_pass_skip_floor(built_corpus, tmp_path):
-    # Positive control: correct types over a wide declared range time out
-    # (never memory-fault), so the floor must not reject the spec. The
-    # correct model reaches the comparison and is accepted.
-    t = _slot(built_corpus, "sum_range")
-    f = t["functions"]["sum_range"]
-    params = [
-        Param("lo", "i32", range=(-(2**31), 2**31 - 1)),
-        Param("hi", "i32", range=(-(2**31), 2**31 - 1)),
-    ]
-    v = validate_function(
-        t["binary"],
-        f["addr"],
-        "sum_range",
-        params,
-        SUM_MODEL,
-        tmp_path / "m.so",
-        seed=7,
-        size=f["size"],
-    )
-    assert v.ok, v
-    assert v.skipped > 0, v

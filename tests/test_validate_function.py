@@ -566,3 +566,60 @@ def test_mem_fault_classifier_counts_only_memory_faults():
     assert not _is_mem_fault(fault("timeout", []))
     assert not _is_mem_fault(fault("crash", ["UcError: Invalid instruction"]))
     assert not _is_mem_fault({"exit_code": 0, "events": [], "ret": 0, "mem": {}})
+
+
+def _stub_original(monkeypatch, fault_sc, fault_msg):
+    """Skip-floor seam without emulation: the 'original' faults (fault_sc) on
+    every wide-span case and returns 0 elsewhere; the 'worker' returns 0 too.
+    The real-binary facts (wide range -> timeout, pointer-as-i32 -> memory
+    fault) are pinned in test_crash_census.py; this pins the gate's reaction
+    at no qiling cost (each real timeout burns TIMEOUT_US = 3s)."""
+    import reschema.validate.function as vf
+    from reschema.validate import scout
+
+    def original(binary, addr, params, cases):
+        out = []
+        for c in cases:
+            if c["hi"] - c["lo"] > 1000:
+                ev = {"phase": "fault", "sc": fault_sc, "args": fault_msg}
+                out.append({"ret": 0, "mem": {}, "exit_code": -1, "events": [ev]})
+            else:
+                out.append({"ret": 0, "mem": {}, "exit_code": 0, "events": []})
+        return out
+
+    def worker(job, workdir, timeout=None):
+        return {"results": [{"ret": 0, "mem": {}} for _ in job["cases"]]}
+
+    monkeypatch.setattr(vf, "batch_call_original", original)
+    monkeypatch.setattr(vf.podrun, "run_worker", worker)
+    monkeypatch.setattr(scout, "scrape_immediates", lambda b, a, n: [])
+
+
+WIDE_PARAMS = [
+    Param("lo", "i32", range=(-5000, 0)),
+    Param("hi", "i32", range=(0, 5000)),
+]
+
+
+def test_skip_floor_ignores_timeouts(monkeypatch, tmp_path):
+    # Positive control: correct-typed wide ranges time out (never memory-
+    # fault) on real originals; timeouts stay skipped and the round compares.
+    _stub_original(monkeypatch, "timeout", [])
+    v = validate_function(
+        "unused", 0, "sum_range", WIDE_PARAMS, "", tmp_path / "m.so", seed=7
+    )
+    assert v.ok, v
+    assert v.skipped > 0 and v.compared > 0, v
+
+
+def test_skip_floor_rejects_memory_faults(monkeypatch, tmp_path):
+    # Same thinning, but the faults are pointer-typing faults: a spec reject
+    # naming the faulting case, before any model compile.
+    msg = ["UcError: Invalid memory read (UC_ERR_READ_UNMAPPED)"]
+    _stub_original(monkeypatch, "crash", msg)
+    v = validate_function(
+        "unused", 0, "sum_range", WIDE_PARAMS, "", tmp_path / "m.so", seed=7
+    )
+    assert not v.ok and v.divergence["stage"] == "spec", v
+    assert v.skipped > 0 and v.compared == 0, v
+    assert "buffer_i32" in v.divergence["detail"], v

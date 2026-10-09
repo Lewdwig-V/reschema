@@ -802,7 +802,8 @@ against the (non-public) original plans is kept as history, subordinate.
   before the model is compiled (`tests/test_crash_census.py::
   test_mistyped_spec_stub_rejected`). Timeouts stay skipped: correct-typed
   `sum_range` over a declared full-i32 range times out on 39/64 cases and
-  must still be accepted (`test_timeout_only_faults_pass_skip_floor`).
+  must still be accepted (`tests/test_validate_function.py::test_skip_floor_ignores_timeouts`;
+  the real-binary timeout is pinned by `test_true_spec_faults_on_declared_range`).
   Harness scout cases (109-A) do not count, as for the #100 floor.
 - **Scope guardrails observed** — x86-64 static ELFs only, ≤6 register
   integer args (no stack args, no structs/floats), no multi-arch, packing, or

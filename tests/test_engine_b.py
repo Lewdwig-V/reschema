@@ -308,7 +308,6 @@ def test_function_rejects_persist_raw_sources_but_decl_failures_never(store):
                 {
                     "name": "lo",
                     "kind": "i32",
-                    "direction": "in",
                     "length_param": None,
                     "range": [-20, 10],
                     "ret": "i32",
@@ -316,7 +315,6 @@ def test_function_rejects_persist_raw_sources_but_decl_failures_never(store):
                 {
                     "name": "hi",
                     "kind": "i32",
-                    "direction": "in",
                     "length_param": None,
                     "range": [10, 30],
                     "ret": "i32",

@@ -74,9 +74,6 @@ MIXED = r"""
 __attribute__((sysv_abi)) void scale_buf(int *buf, int n, int factor) {
     for (int i = 0; i < n; i++) buf[i] *= factor;
 }
-__attribute__((sysv_abi)) void squares(int *buf, int n) {
-    for (int i = 0; i < n; i++) buf[i] = i * i;
-}
 __attribute__((sysv_abi)) void flip(char *s) { for (char *p = s; *p; p++) *p ^= 1; }
 """
 SCALE_PARAMS = [
@@ -227,19 +224,6 @@ def test_compile_mode_gcc_clang_and_errors(tmp_path):
     assert r["ok"] is True
     # ret is register garbage for void fns (compare skips it); mem is the channel.
     assert [c["mem"] for c in r["results"]] == [{"buf": [3, 6, 9]}, {"buf": [0, 0]}]
-
-    r = run_worker(
-        {
-            "mode": "validate",
-            "c_source": MIXED,
-            "fname": "squares",
-            "params": SCALE_PARAMS[:2],
-            "cases": [{"buf": 4, "n": 4}],  # int: out buffer of 4 elems
-        },
-        tmp_path,
-    )
-    assert r["ok"] is True
-    assert [c["mem"] for c in r["results"]] == [{"buf": [0, 1, 4, 9]}]
 
     r = run_worker(
         {

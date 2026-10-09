@@ -129,28 +129,21 @@ def test_magic_branch_stub_exposed_only_by_scouts(magic_binary, tmp_path):
             "magic",
             MAGIC_PARAMS,
             MAGIC_STUB,
-            tmp_path / "a",
             seed=1,
         )
         assert v.ok  # THE HOLE: blind uniform fuzz flatters the stub
     # DEFAULT slice active: scouts feed the magic input; the lie dies
-    v = validate_function(
-        magic_binary, addr, "magic", MAGIC_PARAMS, MAGIC_STUB, tmp_path / "b", seed=1
-    )
+    v = validate_function(magic_binary, addr, "magic", MAGIC_PARAMS, MAGIC_STUB, seed=1)
     assert not v.ok
     assert v.divergence["field"] == "ret"
     # ...and the truthful magic model passes with scouts on (no false fire)
-    v = validate_function(
-        magic_binary, addr, "magic", MAGIC_PARAMS, MAGIC_GOOD, tmp_path / "c", seed=1
-    )
+    v = validate_function(magic_binary, addr, "magic", MAGIC_PARAMS, MAGIC_GOOD, seed=1)
     assert v.ok
 
 
 def test_scout_slice_budget_is_harness_owned_and_bounded(magic_binary, tmp_path):
     addr, _size = find_sym_addr(magic_binary, "magic")
-    v = validate_function(
-        magic_binary, addr, "magic", MAGIC_PARAMS, MAGIC_GOOD, tmp_path / "d", seed=1
-    )
+    v = validate_function(magic_binary, addr, "magic", MAGIC_PARAMS, MAGIC_GOOD, seed=1)
     assert v.ok
     assert v.compared == 64  # envelope size unchanged by the slice
     # merged scout+uniform still feeds the diversity floor honestly:

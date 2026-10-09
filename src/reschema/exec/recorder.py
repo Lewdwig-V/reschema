@@ -13,7 +13,6 @@ which is discarded afterwards. Static binaries need nothing else from a rootfs.
 
 from __future__ import annotations
 
-import hashlib
 import io
 import shutil
 import tempfile
@@ -110,7 +109,6 @@ def record(
     return {
         "argv": [str(binary), *argv],
         "stdin_hex": stdin.hex(),
-        "stdin_sha256": hashlib.sha256(stdin).hexdigest(),
         "stdout": out.getvalue().hex(),
         "stderr": err.getvalue().hex(),
         "exit_code": exit_code,

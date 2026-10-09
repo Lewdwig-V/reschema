@@ -93,7 +93,6 @@ def test_mistyped_spec_stub_rejected(built_corpus, tmp_path, buf_range):
         "scale_buf",
         params,
         SCALE_STUB,
-        tmp_path / "m.so",
         seed=7,
         size=f["size"],
     )

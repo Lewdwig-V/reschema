@@ -562,12 +562,11 @@ def _abi_template(func: str, facts: dict) -> str:
             **(
                 {
                     "kind": "buffer_i32",
-                    "direction": "in_out",
                     "length_param": "arg1",
                     "range": default_range,
                 }
                 if n > 1
-                else {"kind": "cstring", "direction": "in_out"}
+                else {"kind": "cstring"}
             ),
             "ret": "void",
         }
@@ -584,7 +583,6 @@ def _abi_template(func: str, facts: dict) -> str:
 
 /* Param-spec JSON sketch (schema from the driver constants):
  *   kind: {(" | ").join(f'"{k}"' for k in KINDS)}
- *   direction: "in" (default) | "out" | "in_out"
  *   ret: "i32" (default) | "void" — carried on params[0]; a void spec with NO
  *        memory-channel param (buffer_i32/cstring) is REJECTED (compares {{}} == {{}}).
  *   length_param: scalar param name carrying a buffer_i32's length
@@ -788,7 +786,7 @@ def submit_function(
 ) -> dict:
     # ret:"void" is agent-supplied and unverifiable from the spec: the validator floors it
     # at >=1 memory-channel param (scalar-only void compares {}=={}, a no-op would pass).
-    # Beyond the floor it's the same trust class as declared directions.
+    # Beyond the floor every buffer/cstring is read back after the call anyway.
     led = store.ledger()
     led["submissions"] += 1  # every path below saves only via reject/accept
 
@@ -836,7 +834,6 @@ def submit_function(
         func,
         ps,
         c_source,
-        store.dir / f"{func}.so",
         seed=seed,
         n_fuzz=n_fuzz,
         size=fmeta["size"],  # the scout scrape reads the manifest-true window
@@ -933,7 +930,6 @@ def compose(store: TaskStore) -> tuple[bool, str]:
                 {
                     "mode": "compile-link",
                     "sources": sources,
-                    "objects": [*sources],
                     "out": "composed",
                 },
                 Path(scratch),

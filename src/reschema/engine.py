@@ -7,6 +7,7 @@ single-process (or out-of-band serialized) access is assumed.
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 import math
 import os
@@ -365,11 +366,100 @@ def status_snapshot(store: TaskStore) -> dict:
     }
 
 
+def case_key(t: dict) -> list:
+    """A recorded case's input identity (argv minus argv[0], stdin) — the same
+    identity the hidden-draw dedupe uses."""
+    return [list(t["argv"][1:]), t["stdin_hex"]]
+
+
+def case_digest(t: dict) -> str:
+    """Content digest of a recorded trace (expected outputs included), so a
+    re-grade can tell an untouched snapshot case from an edited one."""
+    blob = json.dumps(t, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def binary_digest(path: str | Path) -> str:
+    """Content identity of the corpus binary a verdict was judged against: a
+    corpus rebuild that changes it makes an old accept non-comparable (#112)."""
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
+
+
+def program_gate(
+    store: TaskStore,
+    c_source: str,
+    model: Path,
+    hidden_seed: str | None = None,
+    rec: list[dict] | None = None,
+) -> tuple[dict | None, str | None]:
+    """The program-mode judge: compile `c_source` to `model`, replay recorded
+    cases, then the hidden suite drawn from `hidden_seed` (fresh entropy when
+    None, drawn only once the recorded stage passes). Returns (None = pass |
+    reject kwargs, effective hidden seed). Writes no ledger/memory state, so
+    the #112 re-grade can re-judge accepts with the audit seed or fresh
+    entropy; `rec` (default: the store's current traces) lets it replay the
+    accept-time set."""
+    if rec is None:
+        rec = store.recorded()
+    ok, err = compile_model(c_source, model)
+    if not ok:
+        # infra detail keeps reason "compile" for contract stability; the
+        # journal stage names it honestly (and skips flail/supply stores)
+        return {
+            "reason": "compile",
+            "stage": "infra" if err.startswith("compile infra:") else "compile",
+            "detail": err,
+        }, None
+    v = replay_against(model, rec)
+    if not v.ok:
+        return {
+            "reason": v.reason,
+            "stage": "recorded",
+            "divergence": v.divergence,
+        }, None
+    if hidden_seed is None:  # hidden ground truth: new entropy every submission
+        hidden_seed = f"hidden:{store.meta['task_id']}:{secrets.token_hex(16)}"
+    modes = _hidden_modes(store.meta["seed"])
+    known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in rec}
+    # Double-recorded like stored cases. A flaky or crashing draw invalidates
+    # the INPUT (redraw), never the model — a crash trace is not a behavior spec.
+    rng = random.Random(hidden_seed)
+    fresh = []
+    for (argv, stdin), _attempt in zip(
+        hidden_input_stream(rng, modes, seed=store.meta["seed"]),
+        range(10 * HIDDEN_N),
+        strict=False,
+    ):
+        if len(fresh) == HIDDEN_N:
+            break
+        key = (tuple(argv), stdin.hex())
+        if key in known:
+            continue
+        known.add(key)  # dedupes both against recorded cases and within the suite
+        t = _record_stable(store.meta["binary"], argv, stdin)
+        if t is None or t["exit_code"] == -1:
+            continue
+        fresh.append(t)
+    if len(fresh) < HIDDEN_N:
+        # Loud failure over vacuous pass: too few distinct usable hidden inputs.
+        return {
+            "reason": "hidden-starvation",
+            "detail": f"{len(fresh)}/{HIDDEN_N} usable hidden inputs after 80 draws",
+        }, hidden_seed
+    v = replay_against(model, fresh)
+    if not v.ok:
+        return {
+            "reason": v.reason,
+            "stage": "hidden",
+            "divergence": v.divergence,
+        }, hidden_seed
+    return None, hidden_seed
+
+
 def submit_program(
     store: TaskStore, c_source: str, notes: list[str] | None = None
 ) -> dict:
     """Anti-hardcoding gate: replay recorded cases, then freshly-recorded hidden ones."""
-    rec = store.recorded()
     model = store.dir / "model"
     led = store.ledger()
     led["submissions"] += 1
@@ -406,50 +496,9 @@ def submit_program(
             ),
         )
 
-    ok, err = compile_model(c_source, model)
-    if not ok:
-        # infra detail keeps reason "compile" for contract stability; the
-        # journal stage names it honestly (and skips flail/supply stores)
-        return reject(
-            reason="compile",
-            stage="infra" if err.startswith("compile infra:") else "compile",
-            detail=err,
-        )
-    v = replay_against(model, rec)
-    if not v.ok:
-        return reject(reason=v.reason, stage="recorded", divergence=v.divergence)
-    modes = _hidden_modes(store.meta["seed"])
-    known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in rec}
-    # Hidden ground truth: fresh unguessable inputs (new entropy every submission),
-    # double-recorded like stored cases. A flaky or crashing draw invalidates the
-    # INPUT (redraw), never the model — a crash trace is not a behavior spec.
-    hidden_seed = f"hidden:{store.meta['task_id']}:{secrets.token_hex(16)}"
-    rng = random.Random(hidden_seed)
-    fresh = []
-    for (argv, stdin), _attempt in zip(
-        hidden_input_stream(rng, modes, seed=store.meta["seed"]),
-        range(10 * HIDDEN_N),
-        strict=False,
-    ):
-        if len(fresh) == HIDDEN_N:
-            break
-        key = (tuple(argv), stdin.hex())
-        if key in known:
-            continue
-        known.add(key)  # dedupes both against recorded cases and within the suite
-        t = _record_stable(store.meta["binary"], argv, stdin)
-        if t is None or t["exit_code"] == -1:
-            continue
-        fresh.append(t)
-    if len(fresh) < HIDDEN_N:
-        # Loud failure over vacuous pass: too few distinct usable hidden inputs.
-        return reject(
-            reason="hidden-starvation",
-            detail=f"{len(fresh)}/{HIDDEN_N} usable hidden inputs after 80 draws",
-        )
-    v = replay_against(model, fresh)
-    if not v.ok:
-        return reject(reason=v.reason, stage="hidden", divergence=v.divergence)
+    fail, hidden_seed = program_gate(store, c_source, model)
+    if fail is not None:
+        return reject(**fail)
     # Accept marker is idempotent (re-accept re-records one), audit keeps the
     # effective hidden seed so the passing suite is traceable like function mode.
     led["accepted"] = [
@@ -460,7 +509,16 @@ def submit_program(
     # never compile-artifact side effects (codex P2 on #118 — model.c is
     # rewritten by every later compile). Newest accept wins, like fn dicts.
     led["program_source"] = c_source
-    led.setdefault("audit", {})["program"] = {"hidden_seed": hidden_seed}
+    # ...plus what a re-grade (#112) must pin to isolate a JUDGE change: the
+    # recorded set it was judged on (later experiments add traces), the corpus
+    # binary (a rebuild changes the original), and the canonicalizer the
+    # stored traces were recorded under (a rules bump changes their format).
+    led.setdefault("audit", {})["program"] = {
+        "hidden_seed": hidden_seed,
+        "recorded": sorted([*case_key(t), case_digest(t)] for t in store.recorded()),
+        "binary": binary_digest(store.meta["binary"]),
+        "canonicalizer": CANONICALIZER_VERSION,
+    }
     _journal(led, {"mode": "program", "outcome": "accept"})
     _record_notes(store, "__main__", notes, promoted=True)
     store.save_ledger(led)
@@ -478,7 +536,7 @@ def submit_program(
     )
     return {
         "accepted": True,
-        "recorded_cases": len(rec),
+        "recorded_cases": len(store.recorded()),
         "hidden_cases": HIDDEN_N,
         "hidden_seed": hidden_seed,
         "task_complete": True,  # #103: program acceptance IS the slot contract
@@ -800,6 +858,9 @@ def submit_function(
         size=fmeta["size"],  # the scout scrape reads the manifest-true window
     )
     led["submissions"] += 1
+    # digest BEFORE any accept side effect (notes promote below): a failure
+    # here must not leave promoted notes for an accept never saved
+    bin_digest = binary_digest(store.meta["binary"]) if v.ok else None
     _record_notes(store, func, notes, promoted=v.ok)
     if not v.ok:
         led["rejections"] += 1
@@ -829,14 +890,13 @@ def submit_function(
         return _rejection_response(
             store, led, {"accepted": False, "divergence": v.divergence}
         )
-    # Newest accepted source wins: a re-accept also passed validation, so replace.
-    existing = next(
-        (f for f in led["accepted"] if isinstance(f, dict) and func in f), None
-    )
-    if existing is not None:
-        existing[func] = c_source
-    else:
-        led["accepted"].append({func: c_source})
+    # Newest accepted source wins: a re-accept also passed validation, so it
+    # replaces the old entry AND moves to the end (list order = accept recency,
+    # like the program marker; the #112 re-grade's last-K reads it).
+    led["accepted"] = [
+        f for f in led["accepted"] if not (isinstance(f, dict) and func in f)
+    ]
+    led["accepted"].append({func: c_source})
     # Audit trail (parallel to "accepted" so compose's {func: source} shape is
     # untouched): the EFFECTIVE fuzz seed (fresh entropy included) + final budget,
     # plus the skip count and accepted params so a re-grade (#112) can recount
@@ -847,6 +907,7 @@ def submit_function(
         "compared": v.compared,
         "skipped": v.skipped,
         "params": [p.to_json() for p in ps],
+        "binary": bin_digest,
     }
     _journal(led, {"mode": "function", "outcome": "accept", "function": func})
     store.save_ledger(led)

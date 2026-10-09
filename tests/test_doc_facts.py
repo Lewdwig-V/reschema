@@ -109,7 +109,7 @@ def test_canonicalizer_version():
 def test_audit_key_set_matches_engine():
     # engine.submit_function's audit[func] keys (pinned against the ledger in
     # test_engine_b); every doc spelling of the set must list them all.
-    keys = {"seed", "n_fuzz", "compared", "skipped", "params"}
+    keys = {"seed", "n_fuzz", "compared", "skipped", "params", "binary"}
     hits = _hits(r"\{(seed, n_fuzz[^}]*)\}")
     assert hits, "audit key-set guard went vacuous"
     bad = [

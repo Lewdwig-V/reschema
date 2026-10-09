@@ -2,21 +2,17 @@
 
 Dispatch only — no business logic here; the engine's structured dict returns are the
 contract. compose() is deliberately NOT exposed.
-
-mcp is pinned at >=2,<3: FastMCP (1.x API, which the plan's snippet targeted) is gone;
-MCPServer + @tool is the current equivalent. The plan also passed hidden_seed/modes
-to submit_program — engine has neither kwarg (hidden inputs take fresh entropy and
-stdin-vs-argv lives in STDIN_DRIVEN), so the call is plain.
 """
 
 from __future__ import annotations
 
+import functools
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
 from ..engine import (
-    STDIN_DRIVEN,
+    INPUT_MODE,
     TaskStore,
     experiment_function,
     open_function_task,
@@ -52,6 +48,23 @@ def _internal(e: Exception) -> dict:
     return {"error": "internal", "detail": f"{type(e).__name__}: {e}"}
 
 
+def _structured(fn):
+    """The tool boundary: faults become structured answers, never tracebacks.
+    Unknown task/function (TaskStore, _fn_meta) -> not_found; anything else
+    -> internal. functools.wraps keeps the signature MCPServer introspects."""
+
+    @functools.wraps(fn)
+    def tool(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except KeyError as e:
+            return _err(e)
+        except Exception as e:  # noqa: BLE001 — catch-all at the tool boundary
+            return _internal(e)
+
+    return tool
+
+
 def _next_label(count: int) -> str:
     """4-digit-padded trace label (#47): recorded() globs trace_<label>.json
     and sorts lexicographically, so the pad must keep case order past 99."""
@@ -59,6 +72,7 @@ def _next_label(count: int) -> str:
 
 
 @server.tool()
+@_structured
 def corpus_build(
     seed_ids: list[str] | None = None, matrix: list[str] | None = None
 ) -> list[str] | dict:
@@ -71,13 +85,11 @@ def corpus_build(
     Returns the task_id list of what was built."""
     from ..corpus.generate import build
 
-    try:
-        return [t["task_id"] for t in build(seed_ids=seed_ids, matrix=matrix)]
-    except Exception as e:  # noqa: BLE001 — catch-all at the tool boundary: faults become structured answers
-        return _internal(e)
+    return [t["task_id"] for t in build(seed_ids=seed_ids, matrix=matrix)]
 
 
 @server.tool()
+@_structured
 def task_open(task_id: str, function: str | None = None) -> dict[str, Any]:
     """Open a task and learn its contract.
 
@@ -98,31 +110,27 @@ def task_open(task_id: str, function: str | None = None) -> dict[str, Any]:
       agent-claimed); when the cache holds a verified_fact, `ready_to_submit`
       carries its source (plus params in function mode) as a copy-paste card.
     """
-    try:
-        st = TaskStore(task_id)
-        if function:
-            return open_function_task(st, function)
-        m = st.meta
-        mem = read_family(m["seed"], fn="__main__")
-        return {
-            "task_id": task_id,
-            "seed": m["seed"],
-            "compiler": m["compiler"],
-            "opt": m["opt"],
-            "stripped": m["stripped"],
-            "functions": m["functions"],
-            "input": "stdin" if m["seed"] in STDIN_DRIVEN else "argv",
-            "memory": mem,
-            # #92/#93: presentation tier, additive over the raw memory list
-            **present(mem),
-        }
-    except KeyError as e:
-        return _err(e)
-    except Exception as e:  # noqa: BLE001 — catch-all at the tool boundary: faults become structured answers
-        return _internal(e)
+    st = TaskStore(task_id)
+    if function:
+        return open_function_task(st, function)
+    m = st.meta
+    mem = read_family(m["seed"], fn="__main__")
+    return {
+        "task_id": task_id,
+        "seed": m["seed"],
+        "compiler": m["compiler"],
+        "opt": m["opt"],
+        "stripped": m["stripped"],
+        "functions": m["functions"],
+        "input": "stdin" if m["seed"] in INPUT_MODE else "argv",
+        "memory": mem,
+        # #92/#93: presentation tier, additive over the raw memory list
+        **present(mem),
+    }
 
 
 @server.tool()
+@_structured
 def experiment(
     task_id: str,
     argv: list[str] | None = None,
@@ -151,23 +159,19 @@ def experiment(
     {ret, mem} ground truth in the same layout the validator compares.
     Function experiments persist no trace file and count exactly one probe in
     the ledger."""
-    try:
-        st = TaskStore(task_id)
-        if function:
-            try:
-                return experiment_function(st, function, params or [], case or {})
-            except ValueError as e:
-                return _spec_err(e)
-        label = _next_label(len(st.recorded()))
-        t = st.record_case(label, argv or [], stdin.encode())
-        return {k: v for k, v in t.items() if k != "events"} if quiet else t
-    except KeyError as e:  # unknown task (TaskStore) or function (_fn_meta)
-        return _err(e)
-    except Exception as e:  # noqa: BLE001 — catch-all at the tool boundary: faults become structured answers
-        return _internal(e)
+    st = TaskStore(task_id)
+    if function:
+        try:
+            return experiment_function(st, function, params or [], case or {})
+        except ValueError as e:
+            return _spec_err(e)
+    label = _next_label(len(st.recorded()))
+    t = st.record_case(label, argv or [], stdin.encode())
+    return {k: v for k, v in t.items() if k != "events"} if quiet else t
 
 
 @server.tool()
+@_structured
 def submit_model(
     task_id: str,
     c_source: str,
@@ -216,27 +220,21 @@ def submit_model(
     accepted — later family slots see them via task_open's injected `memory`.
     Accepted models also auto-write a verified_fact entry (your params =>
     source mapping) other family slots can reuse verbatim."""
-    try:
-        st = TaskStore(task_id)
-        if function:
-            # Budget floor lives at the agent boundary only: internal callers
-            # (engine/tests) keep n_fuzz as given. Read N_FUZZ at call time.
-            kw: dict[str, Any] = (
-                {} if TEST_PINNED_SEED is None else {"seed": TEST_PINNED_SEED}
-            )
-            if n_fuzz is not None:
-                kw["n_fuzz"] = max(N_FUZZ, min(n_fuzz, 4 * N_FUZZ))
-            return submit_function(
-                st, function, params or [], c_source, notes=notes, **kw
-            )
-        return submit_program(st, c_source, notes=notes)
-    except KeyError as e:
-        return _err(e)
-    except Exception as e:  # noqa: BLE001 — catch-all at the tool boundary: faults become structured answers
-        return _internal(e)
+    st = TaskStore(task_id)
+    if function:
+        # Budget floor lives at the agent boundary only: internal callers
+        # (engine/tests) keep n_fuzz as given. Read N_FUZZ at call time.
+        kw: dict[str, Any] = (
+            {} if TEST_PINNED_SEED is None else {"seed": TEST_PINNED_SEED}
+        )
+        if n_fuzz is not None:
+            kw["n_fuzz"] = max(N_FUZZ, min(n_fuzz, 4 * N_FUZZ))
+        return submit_function(st, function, params or [], c_source, notes=notes, **kw)
+    return submit_program(st, c_source, notes=notes)
 
 
 @server.tool()
+@_structured
 def status(task_id: str) -> dict[str, Any]:
     """Progress, readiness, and validation telemetry for a task.
 
@@ -251,13 +249,7 @@ def status(task_id: str) -> dict[str, Any]:
       `{<function>: source}` dicts — and `audit` seeds. The ledger persists
       across runs by design (accepted work is cumulative task state, not a
       session artifact); do not read a clean ledger as a fresh task."""
-    try:
-        st = TaskStore(task_id)
-        return status_snapshot(st)
-    except KeyError as e:
-        return _err(e)
-    except Exception as e:  # noqa: BLE001 — catch-all at the tool boundary: faults become structured answers
-        return _internal(e)
+    return status_snapshot(TaskStore(task_id))
 
 
 def main():

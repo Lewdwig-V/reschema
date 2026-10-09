@@ -196,7 +196,7 @@ def test_submit_model_none_n_fuzz_stays_engine_default(monkeypatch):
 
 def test_task_open_program_mode_surfaces_input_mode():
     meta = call("task_open", task_id="rot13::gcc-O2-sym")
-    assert meta["input"] == "argv"  # rot13 not in STDIN_DRIVEN
+    assert meta["input"] == "argv"  # rot13 not in INPUT_MODE
 
 
 def test_experiment_cstring_hex_value_roundtrip():

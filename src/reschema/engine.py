@@ -20,20 +20,13 @@ import time
 from pathlib import Path
 
 from .driver import podrun
-from .driver.spec import Param
+from .driver.spec import KINDS, Param
 from .exec.canonical import CANONICALIZER_VERSION, canonicalize
 from .exec.recorder import record
-from .feedback import (
-    CONTINUATION_FEEDBACK_VERSION,
-    FEEDBACK_DEADLINE_ENV,
-    FEEDBACK_ENV,
-    FEEDBACK_PROBE_CEILING_ENV,
-)
-from .memory import read_family
+from .memory import append_fact, present, read_family
 from .validate.function import N_FUZZ, validate_function
 from .validate.program import compile_model, hidden_input_stream, replay_against
 
-# plan said parents[1]; that lands at src/ — engine.py sits at src/reschema/, so root is parents[2]
 # ponytail: correct for src-layout dev runs; pip-installed this lands under
 # site-packages (upgrade: platformdirs/importlib.resources when packaging matters)
 # RESCHEMA_HOME override: test isolation (pytest-xdist gives each worker its own
@@ -43,6 +36,14 @@ TASKS = ROOT / ".reschema" / "tasks"
 MANIFEST = ROOT / ".reschema" / "corpus" / "manifest.json"
 
 HIDDEN_N = 8  # distinct usable hidden inputs each submission must survive
+
+# Continuation-feedback treatment identity, shared with the benchmark tooling.
+# Changing feedback text, repair policy, or cadence requires a new revision;
+# the engine owns the payload, runners only select and record the treatment.
+CONTINUATION_FEEDBACK_VERSION = "rejection-once-v1"
+FEEDBACK_ENV = "RESCHEMA_CONTINUATION_FEEDBACK"
+FEEDBACK_DEADLINE_ENV = "RESCHEMA_FEEDBACK_DEADLINE"
+FEEDBACK_PROBE_CEILING_ENV = "RESCHEMA_FEEDBACK_PROBE_CEILING"
 # Cost-shaped efficiency: E = accepted * exp(-(alpha*(probes-1)+beta*(subs-1)))
 # (roadmap phase 2 sizing: probe/submission counts only, no wall-clock flake).
 E_ALPHA, E_BETA = 0.15, 0.40
@@ -125,21 +126,9 @@ class TaskStore:
 
 
 # ponytail: manifest-driven input-space deferred
-STDIN_DRIVEN = {
-    "check",
-    "filewrite",
-    "pkfmt",
-}  # seed names fed via stdin; others take argv
-STDIN_BYTES_DRIVEN = {
-    "filewrite",
-    "pkfmt",
-}  # stdin in the RAW byte domain (binary-safe seeds)
-
-
-def _hidden_modes(seed: str) -> tuple:
-    if seed in STDIN_BYTES_DRIVEN:
-        return ("stdin-bytes",)
-    return ("stdin",) if seed in STDIN_DRIVEN else ("argv",)
+# Hidden-input mode per stdin-driven seed (unlisted seeds take argv);
+# "stdin-bytes" = stdin in the RAW byte domain (binary-safe seeds).
+INPUT_MODE = {"check": "stdin", "filewrite": "stdin-bytes", "pkfmt": "stdin-bytes"}
 
 
 def _topology_digest(store: TaskStore, func: str) -> dict:
@@ -184,8 +173,6 @@ def _record_notes(
     if the submission they annotate is accepted (never by later submissions)."""
     if not notes:
         return
-    from .memory import append_fact
-
     for note in notes:
         append_fact(
             store.meta["seed"],
@@ -238,37 +225,20 @@ DUP_NO_VERDICT_STAGES = ("spec", "arity", "skip-starvation", "infra")
 PROGRAM_NO_VERDICT_STAGES = ("infra", "hidden-starvation")
 
 
+# A literal (kept, through its closing quote or EOF), or noise: a line
+# comment, a block comment (through */ or EOF), whitespace.
+_NOISE = re.compile(
+    r'("(?:\\.|[^"\\])*"?|\'(?:\\.|[^\'\\])*\'?)|//[^\n]*|/\*.*?(?:\*/|\Z)|\s+',
+    re.DOTALL,
+)
+
+
 def _norm_source(src: str) -> str:
     """Comment/whitespace-stripped fingerprint, string-literal aware.
 
     A heuristic, not a parse: deterministic and crash-free on any input.
     `//`/`/* */` sequences INSIDE literals survive; outside they die."""
-    out, i, n = [], 0, len(src)
-    while i < n:
-        c = src[i]
-        if c in "\"'":  # literal: copy through its closing quote (or EOF)
-            j = i + 1
-            while j < n:
-                if src[j] == "\\":
-                    j += 2
-                    continue
-                if src[j] == c:
-                    break
-                j += 1
-            out.append(src[i : j + 1])
-            i = j + 1
-        elif src.startswith("//", i):
-            j = src.find("\n", i)
-            i = n if j == -1 else j + 1
-        elif src.startswith("/*", i):
-            j = src.find("*/", i + 2)
-            i = n if j == -1 else j + 2
-        elif not c.isspace():
-            out.append(c)
-            i += 1
-        else:
-            i += 1
-    return "".join(out)
+    return _NOISE.sub(lambda m: m[1] or "", src)
 
 
 def _char_diff(a: str, b: str) -> int:
@@ -304,6 +274,17 @@ def _flail_verdict(fingerprints: list[str], cand: str) -> tuple[int, int] | None
     return None
 
 
+def _flail_detail(led: dict, c_source: str) -> str | None:
+    """The duplicate-reject detail when c_source is a refused loop, else None."""
+    v = _flail_verdict(led.get("rejected_norm", []), _norm_source(c_source))
+    if v is None:
+        return None
+    return (
+        f"near-duplicate of {v[0]} earlier rejected submission(s) "
+        f"({v[1]} normalized-char diff) — change approach or stop"
+    )
+
+
 def _fingerprint_reject(led: dict, c_source: str) -> None:
     fps = led.setdefault("rejected_norm", [])
     fps.append(_norm_source(c_source))
@@ -324,22 +305,26 @@ def _journal_rejected_source(led: dict, entry: dict) -> None:
     del rs[:-REJECTED_SOURCES_STORE]
 
 
+def _accepted_fns(led: dict) -> list[str]:
+    return sorted(name for e in led["accepted"] if isinstance(e, dict) for name in e)
+
+
+def efficiency(accepted: bool, probes: int, subs: int) -> float:
+    """E = accepted * exp(-(alpha*max(0,probes-1) + beta*max(0,subs-1))).
+    Both counters clamp at their baseline: legacy accepted ledgers with
+    submissions == 0 predate the bookkeeping fix and must not score > 1."""
+    return (
+        math.exp(-(E_ALPHA * max(0, probes - 1) + E_BETA * max(0, subs - 1)))
+        if accepted
+        else 0.0
+    )
+
+
 def status_snapshot(store: TaskStore) -> dict:
     """Ledger+manifest status: readiness, coverage, validation telemetry."""
     led = store.ledger()
     n_exp = led.get("probes", 0)
     n_sub = led.get("submissions", 0)
-    accepted_any = bool(led["accepted"])
-    e_value = (
-        # both counters clamped at their baseline: legacy accepted ledgers with
-        # submissions == 0 predate the bookkeeping fix and must not score > 1
-        math.exp(-(E_ALPHA * max(0, n_exp - 1) + E_BETA * max(0, n_sub - 1)))
-        if accepted_any
-        else 0.0
-    )
-    accepted_fns = sorted(
-        name for entry in led["accepted"] if isinstance(entry, dict) for name in entry
-    )
     return {
         "task_id": store.meta["task_id"],
         "recorded_cases": len(store.recorded()),
@@ -348,16 +333,14 @@ def status_snapshot(store: TaskStore) -> dict:
             "ready": len(store.recorded()) >= HIDDEN_N,
         },
         "coverage": {
-            "accepted_functions": accepted_fns,
+            "accepted_functions": _accepted_fns(led),
             "total_functions": len(store.meta["functions"]),
-            "program_accepted": any(
-                isinstance(x, str) and x == "program" for x in led["accepted"]
-            ),
+            "program_accepted": "program" in led["accepted"],
         },
         "ledger": led,
         "recent": led.get("recent", []),
         "efficiency": {
-            "E": e_value,
+            "E": efficiency(bool(led["accepted"]), n_exp, n_sub),
             "n_exp": n_exp,
             "n_sub": n_sub,
             "alpha": E_ALPHA,
@@ -435,7 +418,7 @@ def program_gate(
         }, None
     if hidden_seed is None:  # hidden ground truth: new entropy every submission
         hidden_seed = f"hidden:{store.meta['task_id']}:{secrets.token_hex(16)}"
-    modes = _hidden_modes(store.meta["seed"])
+    modes = (INPUT_MODE.get(store.meta["seed"], "argv"),)
     known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in rec}
     # Double-recorded like stored cases. A flaky or crashing draw invalidates
     # the INPUT (redraw), never the model — a crash trace is not a behavior spec.
@@ -481,36 +464,27 @@ def submit_program(
     led["submissions"] += 1
 
     def reject(**kw):
-        led["rejections"] += 1
         _record_notes(store, "__main__", notes, promoted=False)
         stage = kw.get("stage", kw["reason"])
-        if stage not in PROGRAM_NO_VERDICT_STAGES:
-            # code verdicts only: infra compiles / hidden-starvation never
-            # judged the model — no fingerprints, no failure-supply bodies
-            _fingerprint_reject(led, c_source)
-            _journal_rejected_source(
-                led, {"mode": "program", "stage": stage, "c_source": c_source}
-            )
-        _journal(
+        # code verdicts only: infra compiles / hidden-starvation never
+        # judged the model — no fingerprints, no failure-supply bodies
+        judged = (
+            None
+            if stage in PROGRAM_NO_VERDICT_STAGES
+            else {"mode": "program", "stage": stage, "c_source": c_source}
+        )
+        return _reject(
+            store,
             led,
-            {
-                "mode": "program",
-                "outcome": "reject",
-                "stage": stage,
-            },
+            {"accepted": False, **kw},
+            mode="program",
+            stage=stage,
+            judged=judged,
         )
-        return _rejection_response(store, led, {"accepted": False, **kw})
 
-    verdict = _flail_verdict(led.get("rejected_norm", []), _norm_source(c_source))
-    if verdict is not None:  # flail loop, refused BEFORE the gate spend
-        n_dup, d_dup = verdict
-        return reject(
-            reason="duplicate",
-            detail=(
-                f"near-duplicate of {n_dup} earlier rejected submission(s) "
-                f"({d_dup} normalized-char diff) — change approach or stop"
-            ),
-        )
+    dup = _flail_detail(led, c_source)
+    if dup is not None:  # flail loop, refused BEFORE the gate spend
+        return reject(reason="duplicate", detail=dup)
 
     toolchain = _toolchain_id()
     fail, hidden_seed = program_gate(store, c_source, model)
@@ -519,9 +493,7 @@ def submit_program(
     toolchain = _held_toolchain(toolchain)  # before any accept side effect
     # Accept marker is idempotent (re-accept re-records one), audit keeps the
     # effective hidden seed so the passing suite is traceable like function mode.
-    led["accepted"] = [
-        x for x in led["accepted"] if not (isinstance(x, str) and x == "program")
-    ]
+    led["accepted"] = [x for x in led["accepted"] if x != "program"]
     led["accepted"].append("program")
     # The accepted BODY alongside the marker: self-play mining reads this,
     # never compile-artifact side effects (codex P2 on #118 — model.c is
@@ -542,8 +514,6 @@ def submit_program(
     _journal(led, {"mode": "program", "outcome": "accept"})
     _record_notes(store, "__main__", notes, promoted=True)
     store.save_ledger(led)
-    from .memory import append_fact
-
     append_fact(
         store.meta["seed"],
         {
@@ -576,8 +546,6 @@ def _fn_meta(store: TaskStore, func: str) -> dict:
 def _abi_template(func: str, facts: dict) -> str:
     """Compile-ready function-mode starter, rendered from the driver's own
     constants (KINDS + Param defaults) so the schema docs can't drift."""
-    from .driver.spec import KINDS
-
     n = facts["arity_guess"]
     ret_void = not facts["returns_hint"]
     default_range = list(Param.__dataclass_fields__["range"].default)
@@ -650,6 +618,30 @@ def _repair_directive(store: TaskStore, *, led: dict | None = None) -> dict | No
     }
 
 
+def _reject(
+    store: TaskStore,
+    led: dict,
+    out: dict,
+    *,
+    mode: str,
+    stage: str,
+    func: str | None = None,
+    judged: dict | None = None,
+) -> dict:
+    """Shared reject accounting for both gates: count; when the gate JUDGED the
+    source (`judged` = its rejected_sources entry), fingerprint it for the flail
+    guard and persist it for the failure supply; journal; respond."""
+    led["rejections"] += 1
+    if judged is not None:
+        _fingerprint_reject(led, judged["c_source"])
+        _journal_rejected_source(led, judged)
+    event = {"mode": mode, "outcome": "reject"}
+    if func is not None:
+        event["function"] = func
+    _journal(led, {**event, "stage": stage})
+    return _rejection_response(store, led, out)
+
+
 def _rejection_response(store: TaskStore, led: dict, out: dict) -> dict:
     """Persist an already-accounted rejection; optionally coach once per task.
 
@@ -699,12 +691,7 @@ def _rejection_response(store: TaskStore, led: dict, out: dict) -> dict:
             "gives you a concrete discrepancy to investigate.",
             "evidence": ("divergence" if "divergence" in out else "detail")
             + " in this response",
-            "accepted_functions": sorted(
-                name
-                for entry in led["accepted"]
-                if isinstance(entry, dict)
-                for name in entry
-            ),
+            "accepted_functions": _accepted_fns(led),
             "scope": "These are previously accepted function models. Their acceptance "
             "does not validate this candidate or any revised candidate.",
             "next_actions": "Within the harness limits, repair against the reported "
@@ -718,7 +705,6 @@ def _rejection_response(store: TaskStore, led: dict, out: dict) -> dict:
 
 def open_function_task(store: TaskStore, func: str) -> dict:
     from .disasm.analyze import analyze_function, disasm_function
-    from .memory import present
 
     f = _fn_meta(store, func)
     facts = analyze_function(store.meta["binary"], store.meta["functions"])[func]
@@ -804,65 +790,42 @@ def submit_function(
     # at >=1 memory-channel param (scalar-only void compares {}=={}, a no-op would pass).
     # Beyond the floor it's the same trust class as declared directions.
     led = store.ledger()
+    led["submissions"] += 1  # every path below saves only via reject/accept
+
+    def reject(out: dict, stage: str, judged: bool = False) -> dict:
+        entry = (
+            {
+                "mode": "function",
+                "function": func,
+                "stage": stage,
+                "c_source": c_source,
+                "params": [p.to_json() for p in ps],
+            }
+            if judged
+            else None
+        )
+        return _reject(
+            store,
+            led,
+            {"accepted": False, **out},
+            mode="function",
+            stage=stage,
+            func=func,
+            judged=entry,
+        )
+
     try:
         ps = [Param.from_json(p) for p in params]
     except (KeyError, ValueError) as e:
         # Malformed spec = a rejection like any other failed validation; the ledger
         # must count it — never die before the accounting (or inside the fuzz loop).
-        led["submissions"] += 1
-        led["rejections"] += 1
-        _journal(
-            led,
-            {
-                "mode": "function",
-                "outcome": "reject",
-                "function": func,
-                "stage": "spec",
-            },
-        )
-        return _rejection_response(
-            store, led, {"accepted": False, "reason": "spec", "detail": str(e)}
-        )
+        return reject({"reason": "spec", "detail": str(e)}, "spec")
     # Flail guard (#95): same shape as the program path, refused before the
     # fuzz VM spend. NOTE: spec rejects above are NOT fingerprinted — the
     # source was never judged, only the declaration was.
-    verdict = _flail_verdict(led.get("rejected_norm", []), _norm_source(c_source))
-    if verdict is not None:
-        n_dup, d_dup = verdict
-        led["submissions"] += 1
-        led["rejections"] += 1
-        _fingerprint_reject(led, c_source)
-        _journal_rejected_source(
-            led,
-            {
-                "mode": "function",
-                "function": func,
-                "stage": "duplicate",
-                "c_source": c_source,
-                "params": [p.to_json() for p in ps],
-            },
-        )
-        _journal(
-            led,
-            {
-                "mode": "function",
-                "outcome": "reject",
-                "function": func,
-                "stage": "duplicate",
-            },
-        )
-        return _rejection_response(
-            store,
-            led,
-            {
-                "accepted": False,
-                "reason": "duplicate",
-                "detail": (
-                    f"near-duplicate of {n_dup} earlier rejected submission(s) "
-                    f"({d_dup} normalized-char diff) — change approach or stop"
-                ),
-            },
-        )
+    dup = _flail_detail(led, c_source)
+    if dup is not None:
+        return reject({"reason": "duplicate", "detail": dup}, "duplicate", judged=True)
     # ponytail: agent-controlled cost (fresh Qiling VM per case) — clamp runaway budgets
     n_fuzz = min(n_fuzz, 4 * N_FUZZ)
     fmeta = _fn_meta(store, func)
@@ -878,39 +841,18 @@ def submit_function(
         n_fuzz=n_fuzz,
         size=fmeta["size"],  # the scout scrape reads the manifest-true window
     )
-    led["submissions"] += 1
     # digest BEFORE any accept side effect (notes promote below): a failure
     # here must not leave promoted notes for an accept never saved
     bin_digest = binary_digest(store.meta["binary"]) if v.ok else None
     toolchain = _held_toolchain(toolchain) if v.ok else None
     _record_notes(store, func, notes, promoted=v.ok)
     if not v.ok:
-        led["rejections"] += 1
         # Fingerprint CODE verdicts only: divergence verdicts carry no stage
         # key; spec/arity/starvation/infra stages never executed the model.
-        if v.divergence.get("stage") not in DUP_NO_VERDICT_STAGES:
-            _fingerprint_reject(led, c_source)
-            _journal_rejected_source(
-                led,
-                {
-                    "mode": "function",
-                    "function": func,
-                    "stage": v.divergence.get("stage", "divergence"),
-                    "c_source": c_source,
-                    "params": [p.to_json() for p in ps],
-                },
-            )
-        _journal(
-            led,
-            {
-                "mode": "function",
-                "outcome": "reject",
-                "function": func,
-                "stage": v.divergence.get("stage", "divergence"),
-            },
-        )
-        return _rejection_response(
-            store, led, {"accepted": False, "divergence": v.divergence}
+        return reject(
+            {"divergence": v.divergence},
+            v.divergence.get("stage", "divergence"),
+            judged=v.divergence.get("stage") not in DUP_NO_VERDICT_STAGES,
         )
     # Newest accepted source wins: a re-accept also passed validation, so it
     # replaces the old entry AND moves to the end (list order = accept recency,
@@ -934,8 +876,6 @@ def submit_function(
     }
     _journal(led, {"mode": "function", "outcome": "accept", "function": func})
     store.save_ledger(led)
-    from .memory import append_fact
-
     append_fact(
         store.meta["seed"],
         {
@@ -952,7 +892,7 @@ def submit_function(
     )
     # #103: the completion signal must be read off the ledger, not implied by
     # mode — a function accept while the task is done reports complete too.
-    done = any(isinstance(x, str) and x == "program" for x in led["accepted"])
+    done = "program" in led["accepted"]
     out = {
         "accepted": True,
         "compared": v.compared,

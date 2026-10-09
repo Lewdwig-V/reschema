@@ -6,7 +6,7 @@ import pytest
 from conftest import wipe_task
 
 import reschema.engine as eng
-from reschema.engine import STDIN_DRIVEN, TaskStore, submit_program
+from reschema.engine import INPUT_MODE, TaskStore, submit_program
 from reschema.validate.program import hidden_input_stream
 
 
@@ -216,7 +216,7 @@ def test_hidden_inputs_stdin_mode():
 def test_filewrite_is_stdin_driven():
     # Hidden draws must carry stdin (the seed ignores argv); otherwise both gate
     # and model see empty input and the hidden suite proves nothing.
-    assert "filewrite" in STDIN_DRIVEN
+    assert INPUT_MODE["filewrite"] == "stdin-bytes"
 
 
 def test_hidden_inputs_filewrite_byte_mode():

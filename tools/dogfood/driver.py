@@ -27,7 +27,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from reschema.feedback import CONTINUATION_FEEDBACK_VERSION
+from reschema.engine import CONTINUATION_FEEDBACK_VERSION
 
 from .measure import render_report
 from .runners.base import AgentRunner, SlotSpec

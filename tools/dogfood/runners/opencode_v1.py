@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from reschema.feedback import (
+from reschema.engine import (
     CONTINUATION_FEEDBACK_VERSION,
     FEEDBACK_DEADLINE_ENV,
     FEEDBACK_ENV,

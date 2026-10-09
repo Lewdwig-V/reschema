@@ -50,3 +50,8 @@ corrections made since, the code and the roadmap win:
    regression telemetry "in `status` for humans". `status` is one of the
    five agent-facing MCP tools. That telemetry belongs in ledger records and
    benchmark/admin reports (rejected-ideas §4).
+4. **`experiment` is not read-only.** `notes/agentic-re-tools-and-agents.md`
+   §6 suggests annotating `experiment` as read-only and idempotent. It
+   increments `probes`, and in program mode it persists traces that later
+   validation replays. Only `status` qualifies as read-only (roadmap,
+   "MCP tool annotations").

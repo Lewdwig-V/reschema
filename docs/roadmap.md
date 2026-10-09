@@ -466,10 +466,14 @@ Smaller items from the survey notes that the ranked list above did not
 carry. Each is cheap or narrow, none touches acceptance, and each names the
 note it came from.
 
-- **MCP tool annotations.** Mark `experiment` and `status` as read-only and
-  idempotent, and `submit_model` and `corpus_build` as state-changing, in
-  the tool definitions (re-mcp practice). Helps clients and dogfood
-  transcripts at no judge cost. *(tools note §6)*
+- **MCP tool annotations.** Declare each tool's effects in its definition
+  (re-mcp practice), so clients know what is safe to retry. Only `status` is
+  read-only and idempotent. `experiment` is **state-changing**: it
+  increments the ledger's `probes` counter, which E prices, and in program
+  mode it persists a `trace_*.json` that later validation replays, so a
+  retry changes both the gate's inputs and E. `submit_model` and
+  `corpus_build` are state-changing. Audit `task_open` for writes before
+  annotating it. *(tools note §6, corrected in review)*
 - **Bounded tool output for real binaries.** Cursor pagination with hard
   caps on `task_open` disassembly slices and on the `status` ledger, and a
   batch form of `experiment` with per-item errors, before real binaries make

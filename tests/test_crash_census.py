@@ -69,23 +69,33 @@ def test_mistyped_pointer_artifacts_skip_deterministically(built_corpus):
     assert row["nondeterministic"] == 0, row
 
 
-@pytest.mark.xfail(
-    strict=True, reason="open gap: skip-ratio floor not shipped (roadmap)"
+@pytest.mark.parametrize(
+    "buf_range",
+    [
+        (-100, 100),  # junk low addresses: UC_ERR_*_UNMAPPED
+        # static -no-pie image: .text reads fine, the store hits
+        # UC_ERR_WRITE_PROT (prose "Write to write-protected memory" — the
+        # pre-errno classifier missed it and the stub was ACCEPTED on all 12)
+        (0x401000, 0x401FFF),
+    ],
 )
-def test_mistyped_spec_stub_rejected(built_corpus, tmp_path):
-    # Today the gate ACCEPTS this on all 12 scale_buf slots (fresh seeds).
-    # The floor turns it into a stage:spec reject; strict xfail then XPASSes
-    # and fails the run until this marker is removed.
+def test_mistyped_spec_stub_rejected(built_corpus, tmp_path, buf_range):
+    # Before the skip floor the gate ACCEPTED this on all 12 scale_buf slots
+    # (fresh seeds). Any memory fault on a declared case is now a stage:spec
+    # reject, whatever the source.
     t = _slot(built_corpus, "scale_buf")
     f = t["functions"]["scale_buf"]
+    params = _mistyped(REF["scale_buf"])
+    params[0] = Param("buf", "i32", range=buf_range)
     v = validate_function(
         t["binary"],
         f["addr"],
         "scale_buf",
-        _mistyped(REF["scale_buf"]),
+        params,
         SCALE_STUB,
         tmp_path / "m.so",
         seed=7,
         size=f["size"],
     )
     assert not v.ok and v.divergence["stage"] == "spec", v
+    assert "buffer_i32" in v.divergence["detail"], v

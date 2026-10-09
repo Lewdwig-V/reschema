@@ -213,8 +213,8 @@ the container (containment for untrusted code). They never share a substrate.
    register residue; mem is their channel). First mismatch rejects with
    `{input, field, expected, actual, seed}`.
 7. Accept: newest source wins in the ledger (`{func: c_source}`), audit keeps
-   `{seed, n_fuzz}`, and a `verified_fact` (params, source, topology digest)
-   is appended to the family cache.
+   `{seed, n_fuzz, compared, skipped, params}`, and a `verified_fact`
+   (params, source, topology digest) is appended to the family cache.
 
 ### Composition (`engine.compose`, deliberately not an MCP tool)
 
@@ -270,9 +270,10 @@ Every agent-facing verdict is a typed dict. There are three shapes:
   on the path: program-gate mechanical rejects (`compile`,
   `hidden-starvation`, `duplicate`) return top-level `{accepted: false, reason, detail}`;
   function-gate floor verdicts from the validator (arity, void-without-
-  memory-channel, no-input-variation spec, skip-starvation, infra) nest it as
-  `{accepted: false, divergence: {stage, detail}}` (skip-starvation also
-  carries the fuzz `seed`); a malformed spec JSON fails before validation as top-level
+  memory-channel, no-input-variation spec, memory-fault skip floor,
+  skip-starvation, infra) nest it as
+  `{accepted: false, divergence: {stage, detail}}` (skip-starvation, the
+  memory-fault floor and no-input-variation also carry the fuzz `seed`); a malformed spec JSON fails before validation as top-level
   `{accepted: false, reason: "spec", detail}`. Clients should read the reason
   from `divergence.stage` first and fall back to top-level `reason`.
 
@@ -358,7 +359,8 @@ exercising yet.
   capped at min(16, n_fuzz/4) — the binary is the pheromone: no cross-
   submission memory, no entropy-policy violation, and wrong-branch stubs on
   sparse cmp sites provably die (tests/test_scout.py). Accepts carry
-  `compared/skipped/seed` and write `audit[func] = {seed, n_fuzz}`.
+  `compared/skipped/seed` and write
+  `audit[func] = {seed, n_fuzz, compared, skipped, params}`.
 - **compose** links awaited sources per-TU through the worker's
   `compile-link` mode; duplicate externally-visible symbols map to a
   structured "declare helpers static" reject. Not exposed as an MCP tool.
@@ -777,8 +779,8 @@ against the (non-public) original plans is kept as history, subordinate.
   `docs/rejected-ideas.md`, each with its evidence and an explicit "reopen
   only if" condition. A proposal matching an entry starts from that
   condition.
-- **Original faults stay skipped; fault-or-not does not enter `field:
-  crash` (yet)** — `tools/crash_census.py` (2026-10-09) ran the gate's own
+- **Original timeouts stay skipped, memory faults reject at spec;
+  fault-or-not does not enter `field: crash` (yet)** — `tools/crash_census.py` (2026-10-09) ran the gate's own
   64-case draw (fuzz + 109-A scouts) over all 108 function slots: under
   true-signature specs the originals fault on 0/6912 cases; under a
   mistyped spec (every param i32), 2736/6912, all pointer-as-i32 reads, all
@@ -792,14 +794,29 @@ against the (non-public) original plans is kept as history, subordinate.
   with the
   suppressed-crash negative test and routes accept→reject flips through
   the 3B re-grade (#112).
-  **Open gap, proven:** skip-starvation catches only *total* skipping. A
-  hand-declared all-i32 `scale_buf` spec thins to its n≤0 cases (junk
-  pointer never dereferenced), and a `return 0;` stub is ACCEPTED on all 12
-  `scale_buf` slots with fresh seeds. The fix is a spec-stage skip floor
-  (roadmap, "skip-ratio floor"); the attack is pinned as a strict xfail
-  (`test_mistyped_spec_stub_rejected`). Faults are not purely a typing
-  signal: correct-typed `sum_range` over a declared full-i32 range times
-  out on 39/64 cases, so the floor must not count every fault.
+  **Fault-thinning closed by a spec-stage skip floor:** skip-starvation caught only
+  *total* skipping. A hand-declared all-i32 `scale_buf` spec thinned to its
+  n≤0 cases (junk pointer never dereferenced), and a `return 0;` stub was
+  ACCEPTED on all 12 `scale_buf` slots with fresh seeds. Now, when at
+  least one case survives (total faulting stays `skip-starvation`), any
+  MEMORY fault of the original on an agent-declared case is a
+  `stage: spec` reject naming the faulting case, before the model is
+  compiled. A memory fault does not prove a typing error: a correctly typed
+  i32 index ranged past a table faults the same way. That spec is still
+  rejected (its declared domain exceeds what the original handles), so the
+  `detail` offers both remedies, retyping as `buffer_i32`/`cstring` or
+  narrowing the range, never a pointer-only hint. Memory faults are classified by unicorn errno
+  (READ/WRITE/FETCH × UNMAPPED/PROT/UNALIGNED, `calling.MEM_FAULT_ERRNOS`),
+  not message prose: only UNMAPPED says "Invalid memory", and a pointer
+  ranged into the read-only static image (`UC_ERR_WRITE_PROT`) bypassed a
+  prose match (`tests/test_crash_census.py::test_mistyped_spec_stub_rejected`
+  pins both). Scope: the floor closes FAULT-thinned rounds only; a declared
+  range that never reaches the dereference (e.g. `n` in [-10, 0]) is the
+  general range-coverage limit, not this floor's. Timeouts stay skipped: correct-typed
+  `sum_range` over a declared full-i32 range times out on 39/64 cases and
+  must still be accepted (`tests/test_validate_function.py::test_skip_floor_ignores_timeouts`;
+  the real-binary timeout is pinned by `test_true_spec_faults_on_declared_range`).
+  Harness scout cases (109-A) do not count, as for the #100 floor.
 - **Scope guardrails observed** — x86-64 static ELFs only, ≤6 register
   integer args (no stack args, no structs/floats), no multi-arch, packing, or
   symbolic equivalence; no branch coverage (explicitly cut).

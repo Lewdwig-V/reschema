@@ -22,6 +22,8 @@ from pathlib import Path
 
 from elftools.elf.elffile import ELFFile
 from qiling import Qiling
+from unicorn import UcError
+from unicorn import unicorn_const as uc
 
 from ..disasm.analyze import function_insns
 from .spec import Param
@@ -32,6 +34,17 @@ TIMEOUT_US = 3_000_000
 # Syscall-executing opcodes (x86-64 Linux): any of these in the function slice
 # disqualifies it from the shared-VM batch path.
 SYSCALL_MNEMONICS = ("syscall", "sysenter")
+# Guest data/code access faults, keyed on unicorn's errno (the message prose
+# differs per class: only UNMAPPED says "Invalid memory"; PROT does not).
+MEM_FAULT_ERRNOS = frozenset(
+    getattr(uc, f"UC_ERR_{op}_{why}")
+    for op in ("READ", "WRITE", "FETCH")
+    for why in ("UNMAPPED", "PROT", "UNALIGNED")
+)
+
+
+def is_mem_fault_exc(e: BaseException) -> bool:
+    return isinstance(e, UcError) and e.errno in MEM_FAULT_ERRNOS
 
 
 def _guard_arity(params: list[Param]) -> None:
@@ -136,7 +149,13 @@ def _run_case(ql: Qiling, addr: int, params: list[Param], case: dict) -> dict:
             "exit_code": -1,
             # recorder.py convention: type name + message; qiling's QlErrorBase repr() recurses
             "events": [
-                {"phase": "fault", "sc": "crash", "args": [f"{type(e).__name__}: {e}"]}
+                {
+                    "phase": "fault",
+                    "sc": "crash",
+                    "args": [f"{type(e).__name__}: {e}"],
+                    # structural class for the skip floor (validate/function)
+                    "mem_fault": is_mem_fault_exc(e),
+                }
             ],
         }
     if regs.rip != SENTINEL:  # stopped anywhere but at the return trap = timed out

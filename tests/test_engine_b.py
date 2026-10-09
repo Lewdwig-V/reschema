@@ -196,7 +196,11 @@ def test_submit_function_audit_records_seed_and_budget(store):
     assert submit_function(store, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)[
         "accepted"
     ]
-    assert store.ledger()["audit"]["sum_range"] == {"seed": 1, "n_fuzz": 8}
+    audit = store.ledger()["audit"]["sum_range"]
+    assert set(audit) == {"seed", "n_fuzz", "compared", "skipped", "params"}
+    assert {k: audit[k] for k in ("seed", "n_fuzz")} == {"seed": 1, "n_fuzz": 8}
+    assert audit["params"] == [Param.from_json(p).to_json() for p in PARAMS]
+    assert audit["compared"] + audit["skipped"] == 8 and audit["skipped"] == 0
 
 
 def test_function_accept_reports_task_incomplete_with_note(store):
@@ -260,7 +264,10 @@ def test_submit_function_audit_newest_wins_and_entropy_seed(store, monkeypatch):
         "accepted"
     ]
     # re-accept replaces the seed too; fresh entropy is recorded, never None
-    assert store.ledger()["audit"]["sum_range"] == {"seed": "ent" * 8, "n_fuzz": 8}
+    audit = store.ledger()["audit"]["sum_range"]
+    assert {k: audit[k] for k in ("seed", "n_fuzz")} == {"seed": "ent" * 8, "n_fuzz": 8}
+    assert audit["params"] == [Param.from_json(p).to_json() for p in PARAMS]
+    assert audit["compared"] + audit["skipped"] == 8 and audit["skipped"] == 0
     ok, err = compose(store)  # extra ledger keys don't disturb stitching
     assert ok, err
 

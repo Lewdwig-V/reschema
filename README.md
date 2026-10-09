@@ -202,6 +202,8 @@ which is when the original function returns.)
 - `docs/benchmark-protocol.md` - the cross-task transfer benchmark (methods;
   CI-pinned reference run, live-agent protocol pending).
 - `docs/roadmap.md` - phase order beyond the current milestone.
+- `docs/rejected-ideas.md` - ideas deliberately refused, with reasons and
+  reopen conditions.
 - [Long-horizon reasoning harness proposal](docs/proposals/long-horizon-reasoning-harness.md)
   - a proposed Lean-backed generalisation, with a separate implementation repository
     recommended; design discussion only.

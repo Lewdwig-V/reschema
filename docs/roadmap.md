@@ -368,27 +368,45 @@ including errata where they disagree with the code.
   deterministic crash.
   **Measured (`tools/crash_census.py`, 2026-10-09; pins in
   `tests/test_crash_census.py`):** over all 108 function slots × the gate's
-  own 64-case draw (fuzz + 109-A scouts), true-signature specs fault the
-  original on **0/6912** cases. The all-i32 sketch faults on 2736/6912
-  (48 slots), every one an `Invalid memory read` from a pointer declared i32,
+  own 64-case draw (fuzz + 109-A scouts, so out-of-range scout needles
+  included), true-signature specs fault the original on **0/6912** cases.
+  A mistyped spec (every param i32, ret i32) faults on 2736/6912 (48
+  slots), every one an `Invalid memory read` from a pointer declared i32,
   and 0 of those are nondeterministic on re-run. So on today's corpus every
   skip is a spec artifact; crash-absence divergence is unexercisable until a
-  seed has a genuine reachable fault. One side finding: the sketch
-  `scale_buf` thins rather than starves (36 skipped, 28 compared, all n≤0
-  where the junk pointer is never dereferenced), so skip-starvation alone
-  does not flag a wrong-kind spec.
+  seed has a genuine reachable fault. The mistyped spec is NOT the
+  agent-facing `_abi_template` for void functions (that one gives them a
+  memory channel, codex P2 on #140); it is what an agent can declare by
+  hand, and for non-void pointer functions it coincides with the template.
   **Decided (ARCHITECTURE.md ADR "Original faults stay skipped"):** no
   fault-or-not compare until a genuine-fault seed exists. Reopen trigger:
-  census `ref` rows go nonzero.
-- **Open: skip-ratio floor (spec stage).** Reject a function submission at
-  `stage: spec` when the original faults on more than a threshold share of
-  the draw, with a pointer-kind hint in `detail`. This closes the thinning
-  the census found. Recommended threshold: any fault (`skipped > 0`), since
-  true specs fault on 0/6912. Before shipping: (1) choose the threshold;
-  (2) add the negative test, sketch `scale_buf` plus a stub aimed at its
-  n≤0 survivors, rejected at `stage: spec`; (3) route flips of past
-  accepts with `skipped > 0` through the 3B re-grade (#112). A
-  genuine-fault seed (above) forces a ratio threshold instead of zero.
+  `test_ref_specs_never_fault_originals` (every reference spec × every
+  slot) fails.
+- **Open: skip-ratio floor (spec stage).** The gap is real, not
+  hypothetical: a hand-declared all-i32 `scale_buf` spec thins to its n≤0
+  survivors (eax is 0 on every one), and a `return 0;` stub is ACCEPTED on
+  all 12 `scale_buf` slots with fresh seeds (25–37 compared, 27–39
+  skipped). Fix: reject at `stage: spec` on any original fault
+  (`skipped > 0`), with a pointer-kind hint in `detail`. Zero threshold is
+  safe because the census includes the scout slice and its precondition
+  enforces itself (`test_ref_specs_never_fault_originals` fails on the
+  first genuinely faulting seed, forcing the crash-preservation decision
+  instead of silently rejecting correct specs). Shipping checklist:
+  (1) keep the reject at `stage: spec`, which `DUP_NO_VERDICT_STAGES`
+  (engine.py) already excludes: it judges the declaration, not the source,
+  so it must not be fingerprinted by the duplicate guard or enter
+  `rejected_sources`; a new stage name must be added there. (2) The
+  negative test needs no stub: any mistyped-pointer spec must reject at the
+  spec stage whatever the source; drop the strict-xfail marker on
+  `test_mistyped_spec_stub_rejected`. (3) Past accepts: `skipped` is NOT
+  persisted (only in the accept response); ledger `audit[func]` holds just
+  `{seed, n_fuzz}` and the accepted params live only in the family
+  memory's `verified_fact` entries (`params`, `audit_seed`, `n_fuzz`). The
+  3B re-grade (#112) finds flip candidates by REPLAY: each accept with its
+  audit seed, n_fuzz and memory params, recounting original faults.
+  Deterministic, including pre-#139 agent-seeded accepts (the effective
+  seed was always recorded). (4) Start persisting `skipped` and the params
+  in `audit` so future re-grades read them directly.
 - **Closed: function mode let the agent pin its own fuzz draw.**
   `submit_model(function=…, seed=…)` used to forward the agent's seed to
   `validate_function`, so an agent could fix the 64-case draw and iterate

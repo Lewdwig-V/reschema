@@ -6,7 +6,11 @@ ADR on comparing fault-or-not, measure what those skips are: genuine original
 behavior, or harness/spec artifacts. Per function slot, two specs:
 
 - ref:    the true signature (pointers as buffer/cstring), default ranges
-- sketch: the all-i32 abi sketch an agent starts from (pointers -> register junk)
+- mistyped: every param declared i32, ret i32 (pointers -> register junk).
+  NOT the agent-facing `_abi_template`: that gives void functions a memory
+  channel (codex P2 on #140). This is a spec an agent can declare by hand,
+  i.e. the attack surface; for non-void pointer functions it coincides with
+  the template.
 
 Cases are built exactly as the gate builds them (gen_inputs + 109-A scout
 merge, pinned seed). Faulting cases are re-run once: a fault that does not
@@ -47,7 +51,7 @@ REF = {
 }
 
 
-def _sketch(params: list[Param]) -> list[Param]:
+def _mistyped(params: list[Param]) -> list[Param]:
     return [Param(p.name, I) for p in params]
 
 
@@ -82,7 +86,10 @@ def main() -> int:
     totals: dict[str, Counter] = {}
     for task in load_manifest():
         for func, info in task["functions"].items():
-            for spec, params in (("ref", REF[func]), ("sketch", _sketch(REF[func]))):
+            for spec, params in (
+                ("ref", REF[func]),
+                ("mistyped", _mistyped(REF[func])),
+            ):
                 row = census(task, func, info, params)
                 print(
                     json.dumps(

@@ -26,7 +26,7 @@ jobs:
       - run: uv sync
       # The image is a pure function of Containerfile (no COPY; the worker is
       # mounted at run time), so its hash is the whole cache key. A miss
-      # builds from the mirror.gcr.io base and saves; a hit skips the base
+      # builds (base via the mirror below) and saves; a hit skips the base
       # pull and the gcc/clang apt install.
       - name: toolchain image cache
         id: toolchain
@@ -37,9 +37,14 @@ jobs:
       - name: load cached toolchain image
         if: steps.toolchain.outputs.cache-hit == 'true'
         run: podman load -i "$RUNNER_TEMP/reschema-toolchain.tar"
+      # Docker Hub rate-limits anonymous pulls from shared runner IPs: try
+      # mirror.gcr.io first, falling back to docker.io (the mirror may evict).
       - name: build toolchain image
         if: steps.toolchain.outputs.cache-hit != 'true'
         run: |
+          sudo mkdir -p /etc/containers/registries.conf.d
+          printf '[[registry]]\nprefix = "docker.io"\nlocation = "docker.io"\n\n[[registry.mirror]]\nlocation = "mirror.gcr.io"\n' \
+            | sudo tee /etc/containers/registries.conf.d/50-dockerhub-mirror.conf
           podman build -t localhost/reschema-toolchain:1 -f Containerfile .
           podman save -o "$RUNNER_TEMP/reschema-toolchain.tar" localhost/reschema-toolchain:1
       - run: podman image exists localhost/reschema-toolchain:1

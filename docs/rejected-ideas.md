@@ -98,8 +98,10 @@ the agent.
 progress, extra cases, resource estimates or new seeds exposed). Showing
 judge strength turns it into a target.
 
-**Where it belongs instead:** human-facing `status` fields and benchmark
-reports.
+**Where it belongs instead:** harness-side records (ledger/audit on disk)
+and benchmark/admin reports (`tools/dogfood` reports, CI artifacts). Not
+the `status` tool: it is one of the five agent-facing MCP tools, so
+anything in its response is visible to the agent.
 
 **Reopen only if:** never for hidden progress; a per-slot strength number
 may be shown only once it is a fixed published property of the corpus

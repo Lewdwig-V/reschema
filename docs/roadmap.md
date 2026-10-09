@@ -384,7 +384,8 @@ conditions, in [rejected-ideas.md](rejected-ideas.md).
   rate per slot. Turns 3B's known-attack battery into a measurement and
   gives #109 a falsifiable exit criterion ("magic-branch mutant kill rate
   moves from X to Y"). No published baseline exists for differential RE
-  judges at these budgets. Human-facing only (rejected-ideas §4).
+  judges at these budgets. Reported in CI/benchmark artifacts only, never
+  in an MCP response (rejected-ideas §4).
 
 ### P1 — harden inputs and feedback without touching acceptance
 
@@ -412,7 +413,9 @@ conditions, in [rejected-ideas.md](rejected-ideas.md).
 - **Regression telemetry across resubmissions.** Record in the ledger when a
   resubmission fails a recorded case an earlier submission passed (the
   failure AutoDecompiler needed explicit machinery to suppress). Starts as
-  a human-facing `status` field; agent exposure waits for 2C evidence.
+  harness-side telemetry in the ledger, surfaced only in benchmark/admin
+  reports — not in `status`, which is agent-visible. Any agent exposure
+  waits for 2C evidence.
 
 ### P2 — prepare the tool surface for real binaries (five tools unchanged)
 

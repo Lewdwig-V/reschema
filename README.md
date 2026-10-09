@@ -201,9 +201,13 @@ Agentic RE tooling, such as the MCP servers for IDA, Ghidra and Binary Ninja,
 gives agents context, but none of it checks the agent's conclusions. Neural
 decompilation work mostly judges output by recompilation or by fixed, shipped
 test suites, and 2026 results show both can be passed while behavior
-diverges. ReSchema's distinguishing feature is an **in-loop judge**: every
-submission is replayed against fresh hidden inputs, with emulated ground
-truth, and agent code runs only in containers. The nearest published neighbors
+diverges. ReSchema's distinguishing feature is an **in-loop judge** with
+emulated ground truth. Every program-mode submission is replayed against
+fresh hidden inputs. Function mode fuzzes against the original as well, but
+it currently accepts an agent-supplied seed, which is a known gap (see
+`docs/roadmap.md`). Agent C is compiled only in containers. Level B runs it
+natively inside the container, and level A runs it under qiling against a
+scratch rootfs (see "Trust model" above). The nearest published neighbors
 are Decompile-Diverge (arXiv 2609.05370), which fuzzes from the original
 binary to find divergences that test suites miss, and "Recompilation Is Not
 Enough" (arXiv 2609.07201), which uses an exact-output gate on fixed tests. See

@@ -58,6 +58,13 @@ def corpus(built_corpus):
         wipe_task(TaskStore(t))
 
 
+@pytest.fixture(autouse=True)
+def _pinned_seed(monkeypatch):
+    # Determinism for CI: the fuzz seed is not agent-pinnable over MCP, so the
+    # scripted agent's draws are pinned through the server's test-only hook.
+    monkeypatch.setattr("reschema.mcp.server.TEST_PINNED_SEED", 1)
+
+
 # ponytail: no N_FUZZ patching here — dogfood intentionally runs the production
 # engine-default campaign (submit_model always omits n_fuzz). Cost is the price
 # of being the suite's only production-shaped end-to-end coverage.
@@ -85,7 +92,6 @@ def test_dogfood_rejection_repair_cycle():
         function="sum_range",
         params=PARAMS,
         c_source=WRONG,
-        seed=1,
     )
     assert not r1["accepted"] and r1["divergence"]["field"] == "ret"
     assert r1["divergence"]["input"] != {
@@ -98,7 +104,6 @@ def test_dogfood_rejection_repair_cycle():
         function="sum_range",
         params=PARAMS,
         c_source=RIGHT,
-        seed=1,
     )
     assert r2["accepted"]
     st = call("status", task_id=T_O2)
@@ -123,7 +128,6 @@ def test_dogfood_overfit_rejection_is_actionable():
         function="sum_range",
         params=PARAMS,
         c_source=OVERFIT,
-        seed=1,
     )
     assert not r1["accepted"]
     div = r1["divergence"]
@@ -139,7 +143,6 @@ def test_dogfood_overfit_rejection_is_actionable():
         function="sum_range",
         params=PARAMS,
         c_source=RIGHT,
-        seed=1,
     )
     assert r2["accepted"]
 
@@ -158,7 +161,6 @@ def test_dogfood_all_functions_of_binary_compose():
             function=func,
             params=params,
             c_source=model,
-            seed=1,
         )
         assert r["accepted"], (func, r)
     st = call("status", task_id=T_O1)

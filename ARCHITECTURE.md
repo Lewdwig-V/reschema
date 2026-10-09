@@ -166,7 +166,9 @@ Control flow across the tour sections below, as it actually happens.
    compare `{} == {}` and a no-op would pass. Floor rejects nest inside the
    divergence slot: `{accepted: false, divergence: {stage, detail}}`.
 3. `validate/function.validate_function` draws the fuzz seed (fresh entropy
-   unless tests pin it) and builds `n_fuzz` cases (`N_FUZZ=64`, floored at
+   per call; `submit_model` exposes no seed, so the agent cannot pin
+   its own draw — tests pin it via `mcp/server.TEST_PINNED_SEED`, internal
+   callers via `seed=`) and builds `n_fuzz` cases (`N_FUZZ=64`, floored at
    the MCP boundary — the agent cannot tune its own judge down; capped at
    4×). Poison-filled out buffers included.
 4. Ground truth per case: `driver/calling.batch_call_original` runs the round's

@@ -29,6 +29,13 @@ from ..validate.function import N_FUZZ
 
 server = MCPServer("reschema")
 
+# Entropy policy at the agent boundary: function-mode fuzz draws are fresh per
+# call and the agent cannot pin them — a pinned draw is a fixed, memorizable
+# test set the first-divergence feedback can be iterated against. Tests pin
+# determinism by monkeypatching this module global (the N_FUZZ pattern); it is
+# never part of the tool schema. Engine/internal callers pass seed= directly.
+TEST_PINNED_SEED: int | None = None
+
 
 def _err(e: KeyError) -> dict:
     """Unknown task/function is a structured answer, not a thrown fault."""
@@ -166,7 +173,6 @@ def submit_model(
     c_source: str,
     function: str | None = None,
     params: list[dict] | None = None,
-    seed: int | None = None,
     n_fuzz: int | None = None,
     notes: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -191,9 +197,10 @@ def submit_model(
     verbatim-ish resubmission loops don't.
     Function mode: your source is compiled and differential-fuzzed against the
     ORIGINAL function on per-call {ret, mem} over N_FUZZ random cases drawn
-    with fresh entropy every submission (seed= pins the draw for determinism;
-    n_fuzz raises the budget but is FLOORED at N_FUZZ=64 at this boundary —
-    you may not tune your own judge down). A model that segfaults or hangs a
+    with fresh entropy every submission (the fuzz seed is harness-drawn — you
+    cannot pin it; the effective seed is reported on the verdict and recorded
+    in the ledger audit; n_fuzz raises the budget but is FLOORED at N_FUZZ=64
+    at this boundary — you may not tune your own judge down). A model that segfaults or hangs a
     case is rejected as a crash. Wrong memory direction or a no-op against a
     void spec with no memory channel is rejected too. The spec must admit at
     least 2 distinct inputs (empty params or all-fixed ranges are refused at
@@ -214,11 +221,11 @@ def submit_model(
         if function:
             # Budget floor lives at the agent boundary only: internal callers
             # (engine/tests) keep n_fuzz as given. Read N_FUZZ at call time.
-            kw = {"seed": seed} | (
-                {}
-                if n_fuzz is None
-                else {"n_fuzz": max(N_FUZZ, min(n_fuzz, 4 * N_FUZZ))}
+            kw: dict[str, Any] = (
+                {} if TEST_PINNED_SEED is None else {"seed": TEST_PINNED_SEED}
             )
+            if n_fuzz is not None:
+                kw["n_fuzz"] = max(N_FUZZ, min(n_fuzz, 4 * N_FUZZ))
             return submit_function(
                 st, function, params or [], c_source, notes=notes, **kw
             )

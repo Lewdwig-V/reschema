@@ -43,8 +43,8 @@ corrections made since, the code and the roadmap win:
    gap.
 2. **Seed pinning.** The report and notes state that production never pins
    seeds. In function mode, `submit_model` forwards an agent-supplied
-   `seed=` to the fuzz draw. This was found in review of PR #137 and is a
-   P0 roadmap gap.
+   `seed=` to the fuzz draw. This was found in review of PR #137 and has
+   since been closed: the tool schema no longer exposes `seed`.
 3. **`status` is not a human-only surface.** The report and
    `notes/evaluation-and-verification.md` suggest putting judge-strength and
    regression telemetry "in `status` for humans". `status` is one of the

@@ -45,6 +45,9 @@ def _small_fuzz_budget(monkeypatch):
     # The tool floors n_fuzz at server.N_FUZZ (real: 64); pin it to the flow test's
     # own budget so the suite doesn't pay 8x the qiling bill for the floor.
     monkeypatch.setattr("reschema.mcp.server.N_FUZZ", 8)
+    # The agent cannot pin the fuzz seed (no `seed` in the tool schema); tests pin
+    # determinism through the server's test-only hook instead.
+    monkeypatch.setattr("reschema.mcp.server.TEST_PINNED_SEED", 1)
 
 
 def test_tool_listing():
@@ -144,7 +147,6 @@ def test_function_experiment_and_submit_flow():
         function="sum_range",
         params=PARAMS,
         c_source=WRONG,
-        seed=1,
         n_fuzz=8,
     )
     assert not r1["accepted"]
@@ -154,7 +156,6 @@ def test_function_experiment_and_submit_flow():
         function="sum_range",
         params=PARAMS,
         c_source=RIGHT,
-        seed=1,
         n_fuzz=8,
     )
     assert r2["accepted"]
@@ -188,7 +189,6 @@ def test_submit_model_floors_n_fuzz_at_boundary(monkeypatch):
         function="sum_range",
         params=PARAMS,
         c_source=WRONG,
-        seed=1,
         n_fuzz=1,
     )
     assert seen["n_fuzz"] == 8  # max(N_FUZZ=8, min(1, 4*8))
@@ -203,7 +203,6 @@ def test_submit_model_none_n_fuzz_stays_engine_default(monkeypatch):
         function="sum_range",
         params=PARAMS,
         c_source=WRONG,
-        seed=1,
     )
     assert "n_fuzz" not in seen  # None → engine default, not a floored value
 

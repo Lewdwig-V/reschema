@@ -297,13 +297,13 @@ def test_mcp_treatment_keeps_schema_and_fuzz_floor(store, monkeypatch):
     monkeypatch.setenv(ENV, VERSION)
     judge = Mock(return_value=FnVerdict(False, DIVERGENCE))
     monkeypatch.setattr(eng, "validate_function", judge)
+    monkeypatch.setattr("reschema.mcp.server.TEST_PINNED_SEED", 17)
     out = mcp_call(
         "submit_model",
         task_id="task",
         function="f",
         params=PARAMS,
         c_source=SOURCE,
-        seed=17,
         n_fuzz=1,
     )
     assert out["continuation_feedback"]["version"] == VERSION

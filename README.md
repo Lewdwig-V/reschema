@@ -203,9 +203,8 @@ decompilation work mostly judges output by recompilation or by fixed, shipped
 test suites, and 2026 results show both can be passed while behavior
 diverges. ReSchema's distinguishing feature is an **in-loop judge** with
 emulated ground truth. Every program-mode submission is replayed against
-fresh hidden inputs. Function mode fuzzes against the original as well, but
-it currently accepts an agent-supplied seed, which is a known gap (see
-`docs/roadmap.md`). Agent C is compiled only in containers. Level B runs it
+fresh hidden inputs, and every function-mode submission is fuzzed against the
+original on a fresh draw that the agent cannot pin. Agent C is compiled only in containers. Level B runs it
 natively inside the container, and level A runs it under qiling against a
 scratch rootfs (see "Trust model" above). The nearest published neighbors
 are Decompile-Diverge (arXiv 2609.05370), which fuzzes from the original

@@ -6,15 +6,12 @@ plan (that was the 1.x API) — InMemoryTransport + ClientSession is the in-proc
 
 import json
 
-import anyio
 import pytest
 from conftest import mcp_call as call
-from conftest import wipe_task
-from mcp.client._memory import InMemoryTransport
-from mcp.client.session import ClientSession
+from conftest import mcp_list_tools, wipe_task
 
 from reschema.engine import TaskStore
-from reschema.mcp.server import _next_label, server
+from reschema.mcp.server import _next_label
 
 PARAMS = [
     {"name": "lo", "kind": "i32", "range": [-50, 0]},
@@ -51,12 +48,7 @@ def _small_fuzz_budget(monkeypatch):
 
 
 def test_tool_listing():
-    async def go():
-        async with InMemoryTransport(server) as (r, w), ClientSession(r, w) as s:
-            await s.initialize()
-            return {t.name for t in (await s.list_tools()).tools}
-
-    names = anyio.run(go)
+    names = {t.name for t in mcp_list_tools()}
     assert names == {
         "corpus_build",
         "task_open",
@@ -83,12 +75,7 @@ def test_tool_descriptions_carry_the_contract():
     have to guess: modes, encodings, argv semantics, comparison contract,
     ledger semantics. Terms pinned so a doc rewrite can't silently regress it."""
 
-    async def go():
-        async with InMemoryTransport(server) as (r, w), ClientSession(r, w) as s:
-            await s.initialize()
-            return {t.name: t.description or "" for t in (await s.list_tools()).tools}
-
-    desc = anyio.run(go)
+    desc = {t.name: t.description or "" for t in mcp_list_tools()}
     terms = {
         # program-vs-function split on function=, input mode field
         "task_open": {"function mode", "program mode", "input"},

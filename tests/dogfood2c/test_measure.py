@@ -27,17 +27,15 @@ def _write_rec(d, name, **kw):
     (d / name).write_text(json.dumps({**base, **kw}) + "\n")
 
 
-def _rec(condition, slot_index, accepted, n_exp, n_sub=1, rep=None):
-    r = {
+def _rec(condition, slot_index, accepted, n_exp, n_sub=1, rep=1):
+    return {
         "condition": condition,
         "slot_index": slot_index,
         "accepted": accepted,
         "n_exp": n_exp,
         "n_sub": n_sub,
+        "rep": rep,
     }
-    if rep is not None:
-        r["rep"] = rep
-    return r
 
 
 def test_slot_efficiency_matches_reference_arithmetic():
@@ -49,43 +47,8 @@ def test_slot_efficiency_matches_reference_arithmetic():
 
 
 def test_phi_family_median_and_flat_check():
-    recs = [
-        {
-            "condition": "primed",
-            "slot_index": 1,
-            "accepted": True,
-            "n_exp": 0,
-            "n_sub": 1,
-        },
-        {
-            "condition": "primed",
-            "slot_index": 2,
-            "accepted": True,
-            "n_exp": 0,
-            "n_sub": 1,
-        },
-        {
-            "condition": "unprimed",
-            "slot_index": 0,
-            "accepted": True,
-            "n_exp": 6,
-            "n_sub": 1,
-        },
-        {
-            "condition": "unprimed",
-            "slot_index": 1,
-            "accepted": True,
-            "n_exp": 6,
-            "n_sub": 1,
-        },
-        {
-            "condition": "unprimed",
-            "slot_index": 2,
-            "accepted": True,
-            "n_exp": 6,
-            "n_sub": 1,
-        },
-    ]
+    recs = [_rec("primed", i, True, 0) for i in (1, 2)]
+    recs += [_rec("unprimed", i, True, 6) for i in (0, 1, 2)]
     r = phi_family(recs)
     assert r["unprimed_flat"] is True
     assert r["phi_median"] == pytest.approx(1.0)

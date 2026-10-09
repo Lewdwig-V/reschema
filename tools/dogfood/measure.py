@@ -75,29 +75,23 @@ def phi_family(records: list[dict]) -> dict:
             }
         )
 
-    reps = sorted({r["rep"] for r in records if "rep" in r})
-    phi_median = phi_iqr = None
-    n_phi_reps = None
-    if reps:
-        rep_phis = []
-        for rep in reps:
-            sub = [r for r in records if r.get("rep") == rep]
-            vals = _phis(
-                _e_by_slot(r for r in sub if r["condition"] == "unprimed"),
-                _e_by_slot(r for r in sub if r["condition"] == "primed"),
-            )
-            if vals:
-                rep_phis.append(statistics.mean(vals))
-        n_phi_reps = len(rep_phis)
-        if rep_phis:
-            phi_median = statistics.median(rep_phis)
-            if len(rep_phis) >= 2:
-                quartiles = statistics.quantiles(rep_phis, n=4)
-                phi_iqr = quartiles[2] - quartiles[0]
-    else:
-        pooled = _phis(up_e, pr_e)
-        if pooled:
-            phi_median = statistics.median(pooled)
+    # every record writer stamps `rep` (slot._record): phi is per rep, then
+    # median/IQR across reps
+    rep_phis = []
+    for rep in sorted({r["rep"] for r in records}):
+        sub = [r for r in records if r["rep"] == rep]
+        vals = _phis(
+            _e_by_slot(r for r in sub if r["condition"] == "unprimed"),
+            _e_by_slot(r for r in sub if r["condition"] == "primed"),
+        )
+        if vals:
+            rep_phis.append(statistics.mean(vals))
+    phi_median = statistics.median(rep_phis) if rep_phis else None
+    phi_iqr = None
+    if len(rep_phis) >= 2:
+        quartiles = statistics.quantiles(rep_phis, n=4)
+        phi_iqr = quartiles[2] - quartiles[0]
+    n_phi_reps = len(rep_phis)
 
     flat = bool(up_e) and (max(up_e.values()) - min(up_e.values())) < FLAT_EPS
     return {

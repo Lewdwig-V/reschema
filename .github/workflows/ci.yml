@@ -24,6 +24,24 @@ jobs:
                      /usr/bin/objcopy /usr/bin/objdump
           ! command -v gcc && ! command -v cc && ! command -v clang && ! command -v strip
       - run: uv sync
-      - run: podman build -t localhost/reschema-toolchain:1 -f Containerfile .
+      # The image is a pure function of Containerfile (no COPY; the worker is
+      # mounted at run time), so its hash is the whole cache key. A miss
+      # builds from the mirror.gcr.io base and saves; a hit skips the base
+      # pull and the gcc/clang apt install.
+      - name: toolchain image cache
+        id: toolchain
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/reschema-toolchain.tar
+          key: reschema-toolchain-1-${{ hashFiles('Containerfile') }}
+      - name: load cached toolchain image
+        if: steps.toolchain.outputs.cache-hit == 'true'
+        run: podman load -i "$RUNNER_TEMP/reschema-toolchain.tar"
+      - name: build toolchain image
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        run: |
+          podman build -t localhost/reschema-toolchain:1 -f Containerfile .
+          podman save -o "$RUNNER_TEMP/reschema-toolchain.tar" localhost/reschema-toolchain:1
+      - run: podman image exists localhost/reschema-toolchain:1
       - run: uv run ruff check src tests
       - run: uv run pytest -x -q -n auto

@@ -6,12 +6,18 @@
 # Base image is pinned tag+digest together (rolling trixie stops drifting; the
 # digest is load-bearing image identity).
 # digest pinned: 2026-08-05
+# Pulled via mirror.gcr.io (Google's Docker Hub mirror): same digest, same bytes,
+# but no anonymous pull rate limit (CI runners share IPs; Docker Hub throttled
+# them). The digest, not the registry, is the identity.
 # REFRESH PROCEDURE: (1) podman pull docker.io/library/debian:trixie-slim
 # (2) podman image inspect --format '{{.Digest}}' docker.io/library/debian:trixie-slim
-# (3) update the digest in FROM, the pin date above, and the snapshot
+# (3) check mirror.gcr.io serves it: podman pull mirror.gcr.io/library/debian@<digest>
+#     (the mirror can lag Docker Hub by a few days)
+# (4) update the digest in FROM, the pin date above, and the snapshot
 #     timestamp in the sed below (snapshot date = pin date)
-# (4) rebuild localhost/reschema-toolchain:1 and run the full test suite.
-FROM docker.io/library/debian:trixie-slim@sha256:38a76d01668772e381ad2826d876627c89e7133e2f8a0f5d567306798b0f2a16
+# (5) rebuild localhost/reschema-toolchain:1 and run the full test suite
+#     (CI's image cache keys on this file's hash, so any edit here rebuilds it).
+FROM mirror.gcr.io/library/debian:trixie-slim@sha256:38a76d01668772e381ad2826d876627c89e7133e2f8a0f5d567306798b0f2a16
 # Pin apt sources to the snapshot matching the digest pin date, else gcc/clang/libc
 # resolve against live rolling trixie and the digest pin guarantees nothing.
 # trixie-security is pinned too: identical toolchain beats flowing security updates.

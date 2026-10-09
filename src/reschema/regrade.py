@@ -99,10 +99,13 @@ class Unreplayable(Exception):
 # the judge calls run outside that net, so an engine bug still raises.
 
 
-def _prep_function(store: TaskStore, led: dict, func: str) -> tuple[dict, dict]:
+def _prep_function(store: TaskStore, led: dict, func: str, row: dict) -> dict:
+    # `row` is filled as identity becomes known, so an unreplayable row still
+    # names the accepted revision (source_hash, seed) it could not test.
     src = next(x[func] for x in led["accepted"] if isinstance(x, dict) and func in x)
+    row["source_hash"] = _src_hash(src)
     audit = led.get("audit", {}).get(func, {})
-    row = {"source_hash": _src_hash(src), "seed": audit.get("seed")}
+    row["seed"] = audit.get("seed")
     if audit.get("seed") is None:
         raise Unreplayable("no audit seed")
     params = _fn_params(store, func, src, audit)
@@ -121,7 +124,7 @@ def _prep_function(store: TaskStore, led: dict, func: str) -> tuple[dict, dict]:
         "n_fuzz": int(audit.get("n_fuzz", N_FUZZ)),
         "size": fmeta["size"],
     }
-    return row, job
+    return job
 
 
 def _judge_function(row: dict, job: dict) -> dict:
@@ -135,11 +138,13 @@ def _judge_function(row: dict, job: dict) -> dict:
     return {**row, "new_verdict": "reject", "divergence": v.divergence}
 
 
-def _prep_program(store: TaskStore, led: dict, fresh: bool) -> tuple[dict, dict]:
+def _prep_program(store: TaskStore, led: dict, fresh: bool, row: dict) -> dict:
     src = led.get("program_source")
     if src is None:  # accepts before #118 kept no body
         raise Unreplayable("no program_source")
+    row.update(source_hash=_src_hash(src), fresh=fresh)
     audit = led.get("audit", {}).get("program", {})
+    row["seed"] = None if fresh else audit.get("hidden_seed")
     if audit.get("hidden_seed") is None and not fresh:
         # a fresh draw cannot reproduce the original gate: not a judge flip
         raise Unreplayable("no audit hidden_seed")
@@ -158,7 +163,7 @@ def _prep_program(store: TaskStore, led: dict, fresh: bool) -> tuple[dict, dict]
         "hidden_seed": None if fresh else audit["hidden_seed"],
         "rec": [by_key[k] for k in want],
     }
-    return {"source_hash": _src_hash(src), "fresh": fresh}, job
+    return job
 
 
 def _judge_program(store: TaskStore, row: dict, job: dict) -> dict:
@@ -200,17 +205,22 @@ def regrade(
                 {**base, "new_verdict": "unreplayable", "reason": "unknown task"}
             )
             continue
+        row: dict = {}
         try:
             if unit == "program":
-                row, job = _prep_program(store, led, fresh)
+                job = _prep_program(store, led, fresh, row)
             else:
-                row, job = _prep_function(store, led, unit)
+                job = _prep_function(store, led, unit, row)
         except Unreplayable as e:
-            rows.append({**base, "new_verdict": "unreplayable", "reason": str(e)})
+            rows.append(
+                {**base, **row, "new_verdict": "unreplayable", "reason": str(e)}
+            )
             continue
         except Exception as e:  # noqa: BLE001 - stored data only; judges run below
             reason = f"bad stored data: {type(e).__name__}: {e}"
-            rows.append({**base, "new_verdict": "unreplayable", "reason": reason})
+            rows.append(
+                {**base, **row, "new_verdict": "unreplayable", "reason": reason}
+            )
             continue
         if unit == "program":
             rows.append({**base, **_judge_program(store, row, job)})

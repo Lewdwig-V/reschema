@@ -125,6 +125,12 @@ def test_unreplayable_accepts_are_reported(calc):
         ("clamp_i32", "unreplayable", "no params"),
         ("gone_fn", "unreplayable", "unknown function"),
     ]
+    # unreplayable rows still name the accepted revision they could not test
+    assert [(r["source_hash"], r["seed"]) for r in rows] == [
+        (_src_hash(RIGHT), None),
+        (_src_hash("/* x */"), 99),
+        (_src_hash(STUB), 1),
+    ]
     assert len(regrade(k=1, task_ids={SUM})) == 1
 
 
@@ -171,6 +177,7 @@ def test_program_accept_reproduces_and_planted_flip_surfaces(built_corpus):
     (row,) = regrade(task_ids={ROT}, fresh=True)
     assert row["new_verdict"] == "unreplayable", row
     assert row["reason"].startswith("bad stored data: JSONDecodeError"), row
+    assert row["source_hash"] == _src_hash(GOOD_ROT13) and row["fresh"] is True, row
     e01.write_text(good)
 
     st._path("trace_e00.json").unlink()  # a snapshot case vanished

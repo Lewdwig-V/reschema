@@ -23,6 +23,8 @@ def store(tmp_path, monkeypatch):
     monkeypatch.delenv("RESCHEMA_FEEDBACK_DEADLINE", raising=False)
     monkeypatch.delenv("RESCHEMA_FEEDBACK_PROBE_CEILING", raising=False)
     monkeypatch.setattr(eng, "TASKS", tmp_path / "tasks")
+    binary = tmp_path / "prog"  # stub original: accepts digest its bytes
+    binary.write_bytes(b"\x7fELF stub")
     monkeypatch.setattr(
         eng,
         "load_manifest",
@@ -30,7 +32,7 @@ def store(tmp_path, monkeypatch):
             {
                 "task_id": tid,
                 "seed": "calc",
-                "binary": "unused",
+                "binary": str(binary),
                 "functions": {"f": {"addr": 1, "size": 1}, "g": {"addr": 2, "size": 1}},
             }
             for tid in ("task", "sibling")

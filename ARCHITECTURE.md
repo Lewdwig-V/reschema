@@ -150,7 +150,8 @@ Control flow across the tour sections below, as it actually happens.
    Too few distinct usable inputs → `hidden-starvation` reject.
 5. **Accept.** The ledger gets the idempotent `"program"` marker,
    `audit.program` (`hidden_seed` plus `recorded`, the accept-time
-   recorded cases as `[argv, stdin_hex, content digest]`), and a journal entry; `memory.append_fact`
+   recorded cases as `[argv, stdin_hex, content digest]`, and `binary`, the
+   corpus binary's content digest), and a journal entry; `memory.append_fact`
    writes the accepted source as a `verified_fact` (`fn: "__main__"`) other
    slots of the family will see at their `task_open`.
 6. **Reject.** Counters + journal update; any agent `notes` land as
@@ -216,7 +217,7 @@ the container (containment for untrusted code). They never share a substrate.
    `{input, field, expected, actual, seed}`.
 7. Accept: newest source wins in the ledger (`{func: c_source}`, moved to the
    end on re-accept so list order is accept recency), audit keeps
-   `{seed, n_fuzz, compared, skipped, params}`, and a `verified_fact`
+   `{seed, n_fuzz, compared, skipped, params, binary}`, and a `verified_fact`
    (params, source, topology digest) is appended to the family cache.
 
 ### Composition (`engine.compose`, deliberately not an MCP tool)
@@ -363,7 +364,7 @@ exercising yet.
   submission memory, no entropy-policy violation, and wrong-branch stubs on
   sparse cmp sites provably die (tests/test_scout.py). Accepts carry
   `compared/skipped/seed` and write
-  `audit[func] = {seed, n_fuzz, compared, skipped, params}`.
+  `audit[func] = {seed, n_fuzz, compared, skipped, params, binary}`.
 - **compose** links awaited sources per-TU through the worker's
   `compile-link` mode; duplicate externally-visible symbols map to a
   structured "declare helpers static" reject. Not exposed as an MCP tool.
@@ -613,12 +614,15 @@ verdict on the old judge.
   new evidence, not a judge change.
 - No audit seed (a fresh program draw is replayed only under `--fresh`),
   no recorded snapshot (pre-#144) or a snapshot case that vanished or was
-  edited (digest mismatch), no params, params the current schema rejects, an unreadable ledger, no
+  edited (digest mismatch), a corpus binary that changed since the accept
+  (audit `binary` digest; legacy accepts without one replay with
+  `binary_verified: false`), no params, params the current schema rejects, an unreadable ledger, no
   `program_source` (pre-#118), or a slot or function the manifest lacks is
   emitted as `new_verdict: "unreplayable"` with a reason (any stored-data
   load or decode failure too: each accept is prepared, then judged, and
   only the prepare phase degrades to a row; judge exceptions still raise),
-  never dropped. So are infra failures and unjudged program draws
+  never dropped (a malformed `accepted` or an unstat-able ledger file is one
+  `bad ledger` row). So are infra failures and unjudged program draws
   (`PROGRAM_NO_VERDICT_STAGES`): an environment outage must never read as
   an accept→reject judge flip.
 

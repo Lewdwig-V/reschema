@@ -42,6 +42,7 @@ from .engine import (
     TASKS,
     TaskStore,
     _fn_meta,
+    binary_digest,
     case_digest,
     case_key,
     program_gate,
@@ -58,14 +59,27 @@ def _src_hash(src: str) -> str:
 def accepts() -> Iterator[tuple[str, dict | None, str]]:
     """(task_id, ledger, unit) newest first; unit is a function name or
     "program". An unreadable ledger yields (task_id, None, "ledger") once."""
-    ledgers = sorted(
-        TASKS.glob("*/ledger.json"), key=lambda p: p.stat().st_mtime, reverse=True
-    )
-    for p in ledgers:
+
+    def mtime(p: Path) -> float:
+        try:
+            return p.stat().st_mtime
+        except OSError:  # vanished/broken: sorts last, then fails the read below
+            return float("-inf")
+
+    for p in sorted(TASKS.glob("*/ledger.json"), key=mtime, reverse=True):
         task_id = p.parent.name.replace("__", "::")
         try:
             led = json.loads(p.read_text())
-            entries = list(reversed(led.get("accepted", [])))
+            entries = led.get("accepted", [])
+            # never drop silently: a wrong-typed collection or an unknown
+            # entry shape is a bad ledger, not "no accepts"
+            if not isinstance(entries, list) or not all(
+                x == "program"
+                or (isinstance(x, dict) and all(isinstance(k, str) for k in x))
+                for x in entries
+            ):
+                raise ValueError("malformed accepted")
+            entries = list(reversed(entries))
         except (OSError, ValueError, TypeError, AttributeError):
             yield task_id, None, "ledger"
             continue
@@ -107,6 +121,16 @@ def _store(task_id: str) -> TaskStore:
         raise Unreplayable("unknown task") from None
 
 
+def _check_binary(store: TaskStore, audit: dict, row: dict) -> None:
+    # The replay must judge the SAME original: a corpus rebuild that changed
+    # the binary makes a flip the program's change, not the judge's. Legacy
+    # accepts (no digest) still replay, flagged binary_verified=False.
+    stored = audit.get("binary")
+    row["binary_verified"] = stored is not None
+    if stored is not None and stored != binary_digest(store.meta["binary"]):
+        raise Unreplayable("binary changed")
+
+
 def _prep_function(task_id: str, led: dict, func: str, row: dict) -> dict:
     # `row` is filled as identity becomes known, so an unreplayable row still
     # names the accepted revision (source_hash, seed) it could not test.
@@ -117,6 +141,7 @@ def _prep_function(task_id: str, led: dict, func: str, row: dict) -> dict:
     if audit.get("seed") is None:
         raise Unreplayable("no audit seed")
     store = _store(task_id)
+    _check_binary(store, audit, row)
     params = _fn_params(store, func, src, audit)
     if params is None:
         raise Unreplayable("no params")
@@ -166,6 +191,7 @@ def _prep_program(task_id: str, led: dict, fresh: bool, row: dict) -> dict:
     if snap is None:
         raise Unreplayable("no recorded snapshot")
     store = _store(task_id)
+    _check_binary(store, audit, row)
     by_key = {json.dumps(case_key(t)): t for t in store.recorded()}
     rec = []
     for *key, digest in snap:

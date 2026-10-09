@@ -379,6 +379,12 @@ def case_digest(t: dict) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
+def binary_digest(path: str | Path) -> str:
+    """Content identity of the corpus binary a verdict was judged against: a
+    corpus rebuild that changes it makes an old accept non-comparable (#112)."""
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
+
+
 def program_gate(
     store: TaskStore,
     c_source: str,
@@ -507,6 +513,7 @@ def submit_program(
     led.setdefault("audit", {})["program"] = {
         "hidden_seed": hidden_seed,
         "recorded": sorted([*case_key(t), case_digest(t)] for t in store.recorded()),
+        "binary": binary_digest(store.meta["binary"]),
     }
     _journal(led, {"mode": "program", "outcome": "accept"})
     _record_notes(store, "__main__", notes, promoted=True)
@@ -893,6 +900,7 @@ def submit_function(
         "compared": v.compared,
         "skipped": v.skipped,
         "params": [p.to_json() for p in ps],
+        "binary": binary_digest(store.meta["binary"]),
     }
     _journal(led, {"mode": "function", "outcome": "accept", "function": func})
     store.save_ledger(led)

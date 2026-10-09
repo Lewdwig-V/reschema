@@ -59,6 +59,7 @@ def test_known_function_accept_reproduces(calc):
     assert r["accepted"], r
     (row,) = regrade(task_ids={SUM})
     assert row["unit"] == "sum_range" and row["new_verdict"] == "accept", row
+    assert row["binary_verified"] is True, row
     assert (row["compared"], row["skipped"], row["seed"]) == (r["compared"], 0, 1)
 
 
@@ -73,6 +74,7 @@ def test_pre_floor_accept_surfaces_as_flip(calc):
     (row,) = regrade(task_ids={SUM})
     assert (row["old_verdict"], row["new_verdict"]) == ("accept", "reject"), row
     assert row["divergence"]["stage"] == "spec", row
+    assert row["binary_verified"] is False, row  # legacy audit: no digest
 
 
 def test_pre_143_audit_falls_back_to_memory_params(calc):
@@ -344,3 +346,47 @@ def test_removed_task_row_keeps_identity(built_corpus):
         d.rmdir()
     assert (row["new_verdict"], row["reason"]) == ("unreplayable", "unknown task")
     assert (row["source_hash"], row["seed"]) == (_src_hash(RIGHT), 5), row
+
+
+def test_rebuilt_binary_is_unreplayable(calc):
+    # Same seed/params/source against a CHANGED original is not a judge
+    # comparison: a corpus rebuild must not read as an accept->reject flip.
+    _plant(
+        calc,
+        {
+            "accepted": [{"sum_range": RIGHT}],
+            "audit": {
+                "sum_range": {
+                    "seed": 1,
+                    "n_fuzz": 8,
+                    "params": PARAMS,
+                    "binary": "0" * 16,
+                }
+            },
+        },
+    )
+    (row,) = regrade(task_ids={SUM})
+    assert (row["new_verdict"], row["reason"]) == ("unreplayable", "binary changed")
+    assert row["source_hash"] == _src_hash(RIGHT), row
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        # wrong-typed collection: reversed() accepts a dict, keys are ignored
+        lambda p: p.write_text(json.dumps({"accepted": {"sum_range": "x"}})),
+        # unknown entry shape
+        lambda p: p.write_text(json.dumps({"accepted": [42]})),
+        # stat fails (broken symlink): must not abort the whole job
+        lambda p: p.symlink_to(p.parent / "missing.json"),
+    ],
+)
+def test_malformed_ledgers_are_bad_ledger_rows(calc, write):
+    p = calc._path("ledger.json")
+    p.unlink(missing_ok=True)
+    write(p)
+    try:
+        (row,) = regrade(task_ids={SUM})
+    finally:
+        p.unlink()
+    assert (row["new_verdict"], row["reason"]) == ("unreplayable", "bad ledger")

@@ -366,6 +366,53 @@ including errata where they disagree with the code.
   (#112) with the "judge regressed" default, and ships with the negative
   test AGENTS.md requires: a model that suppresses the original's
   deterministic crash.
+  **Measured (`tools/crash_census.py`, 2026-10-09; pins in
+  `tests/test_crash_census.py`):** over all 108 function slots × the gate's
+  own 64-case draw (fuzz + 109-A scouts, so out-of-range scout needles
+  included), true-signature specs fault the original on **0/6912** cases.
+  A mistyped spec (every param i32, ret i32) faults on 2736/6912 (48
+  slots), every one an `Invalid memory read` from a pointer declared i32,
+  and 0 of those are nondeterministic on re-run. So on today's corpus every
+  skip is a spec artifact; crash-absence divergence is unexercisable until a
+  seed has a genuine reachable fault. The mistyped spec is NOT the
+  agent-facing `_abi_template` for void functions (that one gives them a
+  memory channel, codex P2 on #140); it is what an agent can declare by
+  hand, and for non-void pointer functions it coincides with the template.
+  **Decided (ARCHITECTURE.md ADR "Original faults stay skipped"):** no
+  fault-or-not compare until a genuine-fault seed exists. Reopen trigger:
+  `test_ref_specs_never_fault_originals` (every reference spec × every
+  slot) fails. That test is a SAMPLED tripwire (one pinned draw, default
+  ranges), not an exhaustive guard (codex P2 on #140).
+- **Open: skip-ratio floor (spec stage).** The gap is real, not
+  hypothetical: a hand-declared all-i32 `scale_buf` spec thins to its n≤0
+  survivors (eax is 0 on every one), and a `return 0;` stub is ACCEPTED on
+  all 12 `scale_buf` slots with fresh seeds (25–37 compared, 27–39
+  skipped). Fix: reject at `stage: spec` when the original faults, with a
+  pointer-kind hint in `detail`. **Not "any fault":** correct-typed
+  `sum_range` with an agent-declared full-i32 range times out on 39/64
+  cases (pinned: `test_true_spec_faults_on_declared_range`), so counting
+  every fault rejects a correct spec. The census does include the scout
+  slice, but its zero is one pinned default-range draw, not a proof.
+  Open design call: count only memory faults (`Invalid memory *`, the
+  pointer-typing signature) at zero tolerance and leave timeouts skipped;
+  or a ratio threshold over all faults. Either way a correct spec can
+  still hit a rare fault outside the sampled draw, so the reject `detail`
+  must name the faulting case. Shipping checklist:
+  (1) keep the reject at `stage: spec`, which `DUP_NO_VERDICT_STAGES`
+  (engine.py) already excludes: it judges the declaration, not the source,
+  so it must not be fingerprinted by the duplicate guard or enter
+  `rejected_sources`; a new stage name must be added there. (2) The
+  negative test needs no stub: any mistyped-pointer spec must reject at the
+  spec stage whatever the source; drop the strict-xfail marker on
+  `test_mistyped_spec_stub_rejected`. (3) Past accepts: `skipped` is NOT
+  persisted (only in the accept response); ledger `audit[func]` holds just
+  `{seed, n_fuzz}` and the accepted params live only in the family
+  memory's `verified_fact` entries (`params`, `audit_seed`, `n_fuzz`). The
+  3B re-grade (#112) finds flip candidates by REPLAY: each accept with its
+  audit seed, n_fuzz and memory params, recounting original faults.
+  Deterministic, including pre-#139 agent-seeded accepts (the effective
+  seed was always recorded). (4) Start persisting `skipped` and the params
+  in `audit` so future re-grades read them directly.
 - **Closed: function mode let the agent pin its own fuzz draw.**
   `submit_model(function=…, seed=…)` used to forward the agent's seed to
   `validate_function`, so an agent could fix the 64-case draw and iterate

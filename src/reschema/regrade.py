@@ -42,6 +42,7 @@ from .engine import (
     TASKS,
     TaskStore,
     _fn_meta,
+    case_digest,
     case_key,
     program_gate,
 )
@@ -99,7 +100,14 @@ class Unreplayable(Exception):
 # the judge calls run outside that net, so an engine bug still raises.
 
 
-def _prep_function(store: TaskStore, led: dict, func: str, row: dict) -> dict:
+def _store(task_id: str) -> TaskStore:
+    try:
+        return TaskStore(task_id)
+    except KeyError:  # ledger for a slot the current manifest lacks
+        raise Unreplayable("unknown task") from None
+
+
+def _prep_function(task_id: str, led: dict, func: str, row: dict) -> dict:
     # `row` is filled as identity becomes known, so an unreplayable row still
     # names the accepted revision (source_hash, seed) it could not test.
     src = next(x[func] for x in led["accepted"] if isinstance(x, dict) and func in x)
@@ -108,6 +116,7 @@ def _prep_function(store: TaskStore, led: dict, func: str, row: dict) -> dict:
     row["seed"] = audit.get("seed")
     if audit.get("seed") is None:
         raise Unreplayable("no audit seed")
+    store = _store(task_id)
     params = _fn_params(store, func, src, audit)
     if params is None:
         raise Unreplayable("no params")
@@ -138,7 +147,7 @@ def _judge_function(row: dict, job: dict) -> dict:
     return {**row, "new_verdict": "reject", "divergence": v.divergence}
 
 
-def _prep_program(store: TaskStore, led: dict, fresh: bool, row: dict) -> dict:
+def _prep_program(task_id: str, led: dict, fresh: bool, row: dict) -> dict:
     src = led.get("program_source")
     if src is None:  # accepts before #118 kept no body
         raise Unreplayable("no program_source")
@@ -151,24 +160,31 @@ def _prep_program(store: TaskStore, led: dict, fresh: bool, row: dict) -> dict:
     # Replay the accept-time recorded set: experiments after the accept add
     # traces (and shift the hidden dedupe), which is new evidence, not a judge
     # change. No snapshot (pre-#144) or a vanished case => not reproducible.
+    # Each snapshot entry is [argv, stdin_hex, content digest]: a case that
+    # vanished OR was edited since the accept is changed evidence.
     snap = audit.get("recorded")
     if snap is None:
         raise Unreplayable("no recorded snapshot")
+    store = _store(task_id)
     by_key = {json.dumps(case_key(t)): t for t in store.recorded()}
-    want = [json.dumps(k) for k in snap]
-    if any(k not in by_key for k in want):
-        raise Unreplayable("recorded cases changed")
+    rec = []
+    for *key, digest in snap:
+        t = by_key.get(json.dumps(key))
+        if t is None or case_digest(t) != digest:
+            raise Unreplayable("recorded cases changed")
+        rec.append(t)
     job = {
+        "store": store,
         "c_source": src,
         "hidden_seed": None if fresh else audit["hidden_seed"],
-        "rec": [by_key[k] for k in want],
+        "rec": rec,
     }
     return job
 
 
-def _judge_program(store: TaskStore, row: dict, job: dict) -> dict:
+def _judge_program(row: dict, job: dict) -> dict:
     with tempfile.TemporaryDirectory(prefix="reschema-regrade-") as d:
-        fail, seed = program_gate(store, model=Path(d) / "model", **job)
+        fail, seed = program_gate(model=Path(d) / "model", **job)
     row = {**row, "seed": seed}
     if fail is None:
         return {**row, "new_verdict": "accept"}
@@ -198,19 +214,12 @@ def regrade(
                 }
             )
             continue
-        try:
-            store = TaskStore(task_id)
-        except KeyError:  # ledger for a slot the current manifest lacks
-            rows.append(
-                {**base, "new_verdict": "unreplayable", "reason": "unknown task"}
-            )
-            continue
         row: dict = {}
         try:
             if unit == "program":
-                job = _prep_program(store, led, fresh, row)
+                job = _prep_program(task_id, led, fresh, row)
             else:
-                job = _prep_function(store, led, unit, row)
+                job = _prep_function(task_id, led, unit, row)
         except Unreplayable as e:
             rows.append(
                 {**base, **row, "new_verdict": "unreplayable", "reason": str(e)}
@@ -223,7 +232,7 @@ def regrade(
             )
             continue
         if unit == "program":
-            rows.append({**base, **_judge_program(store, row, job)})
+            rows.append({**base, **_judge_program(row, job)})
         else:
             rows.append({**base, **_judge_function(row, job)})
     return rows

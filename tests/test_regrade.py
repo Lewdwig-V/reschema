@@ -178,6 +178,13 @@ def test_program_accept_reproduces_and_planted_flip_surfaces(built_corpus):
     assert row["new_verdict"] == "unreplayable", row
     assert row["reason"].startswith("bad stored data: JSONDecodeError"), row
     assert row["source_hash"] == _src_hash(GOOD_ROT13) and row["fresh"] is True, row
+    # edited in place: same input identity, different expected output
+    e01.write_text(json.dumps({**json.loads(good), "stdout": b"X\n".hex()}))
+    (row,) = regrade(task_ids={ROT}, fresh=True)
+    assert (row["new_verdict"], row["reason"]) == (
+        "unreplayable",
+        "recorded cases changed",
+    )
     e01.write_text(good)
 
     st._path("trace_e00.json").unlink()  # a snapshot case vanished
@@ -310,3 +317,27 @@ def test_judge_errors_still_raise(calc, monkeypatch):
     monkeypatch.setattr(rg, "validate_function", boom)
     with pytest.raises(RuntimeError, match="engine bug"):
         regrade(task_ids={SUM})
+
+
+def test_removed_task_row_keeps_identity(built_corpus):
+    # A readable ledger for a slot the manifest no longer has: unreplayable,
+    # and the row still names the accepted revision.
+    from reschema.engine import TASKS
+
+    d = TASKS / "gone__gcc-O2-sym"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "ledger.json").write_text(
+        json.dumps(
+            {
+                "accepted": [{"f": RIGHT}],
+                "audit": {"f": {"seed": 5, "n_fuzz": 8, "params": PARAMS}},
+            }
+        )
+    )
+    try:
+        (row,) = regrade(task_ids={"gone::gcc-O2-sym"})
+    finally:
+        (d / "ledger.json").unlink()
+        d.rmdir()
+    assert (row["new_verdict"], row["reason"]) == ("unreplayable", "unknown task")
+    assert (row["source_hash"], row["seed"]) == (_src_hash(RIGHT), 5), row

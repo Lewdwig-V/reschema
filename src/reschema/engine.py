@@ -7,6 +7,7 @@ single-process (or out-of-band serialized) access is assumed.
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 import math
 import os
@@ -371,6 +372,13 @@ def case_key(t: dict) -> list:
     return [list(t["argv"][1:]), t["stdin_hex"]]
 
 
+def case_digest(t: dict) -> str:
+    """Content digest of a recorded trace (expected outputs included), so a
+    re-grade can tell an untouched snapshot case from an edited one."""
+    blob = json.dumps(t, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
 def program_gate(
     store: TaskStore,
     c_source: str,
@@ -498,7 +506,7 @@ def submit_program(
     # traces, and a re-grade (#112) must replay THIS set to isolate the judge.
     led.setdefault("audit", {})["program"] = {
         "hidden_seed": hidden_seed,
-        "recorded": sorted(case_key(t) for t in store.recorded()),
+        "recorded": sorted([*case_key(t), case_digest(t)] for t in store.recorded()),
     }
     _journal(led, {"mode": "program", "outcome": "accept"})
     _record_notes(store, "__main__", notes, promoted=True)

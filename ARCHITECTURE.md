@@ -150,7 +150,7 @@ Control flow across the tour sections below, as it actually happens.
    Too few distinct usable inputs → `hidden-starvation` reject.
 5. **Accept.** The ledger gets the idempotent `"program"` marker,
    `audit.program` (`hidden_seed` plus `recorded`, the accept-time
-   recorded-case identities), and a journal entry; `memory.append_fact`
+   recorded cases as `[argv, stdin_hex, content digest]`), and a journal entry; `memory.append_fact`
    writes the accepted source as a `verified_fact` (`fn: "__main__"`) other
    slots of the family will see at their `task_open`.
 6. **Reject.** Counters + journal update; any agent `notes` land as
@@ -612,7 +612,8 @@ verdict on the old judge.
   (`audit.program.recorded`), not today's: experiments after the accept are
   new evidence, not a judge change.
 - No audit seed (a fresh program draw is replayed only under `--fresh`),
-  no recorded snapshot (pre-#144) or a vanished snapshot case, no params, params the current schema rejects, an unreadable ledger, no
+  no recorded snapshot (pre-#144) or a snapshot case that vanished or was
+  edited (digest mismatch), no params, params the current schema rejects, an unreadable ledger, no
   `program_source` (pre-#118), or a slot or function the manifest lacks is
   emitted as `new_verdict: "unreplayable"` with a reason (any stored-data
   load or decode failure too: each accept is prepared, then judged, and

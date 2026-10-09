@@ -366,6 +366,17 @@ including errata where they disagree with the code.
   (#112) with the "judge regressed" default, and ships with the negative
   test AGENTS.md requires: a model that suppresses the original's
   deterministic crash.
+  **Measured (`tools/crash_census.py`, 2026-10-09; pins in
+  `tests/test_crash_census.py`):** over all 108 function slots × the gate's
+  own 64-case draw (fuzz + 109-A scouts), true-signature specs fault the
+  original on **0/6912** cases. The all-i32 sketch faults on 2736/6912
+  (48 slots), every one an `Invalid memory read` from a pointer declared i32,
+  and 0 of those are nondeterministic on re-run. So on today's corpus every
+  skip is a spec artifact; crash-absence divergence is unexercisable until a
+  seed has a genuine reachable fault. One side finding: the sketch
+  `scale_buf` thins rather than starves (36 skipped, 28 compared, all n≤0
+  where the junk pointer is never dereferenced), so skip-starvation alone
+  does not flag a wrong-kind spec.
 - **Closed: function mode let the agent pin its own fuzz draw.**
   `submit_model(function=…, seed=…)` used to forward the agent's seed to
   `validate_function`, so an agent could fix the 64-case draw and iterate

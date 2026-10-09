@@ -12,7 +12,8 @@ timestamps), entries within a task newest first. `k` caps the count.
 - the program accept re-runs `engine.program_gate` on `program_source` with
   the audit `hidden_seed` (default) or fresh entropy (`fresh=True`).
 
-Anything that cannot be replayed (no source, no params, unknown task) is
+Anything that cannot be replayed faithfully (no source, no audit seed, no
+params, unknown task or function) is
 emitted as `new_verdict: "unreplayable"` with a reason — never dropped.
 
 stdout: one JSON line per accept. stderr: totals.
@@ -78,6 +79,8 @@ def _regrade_function(store: TaskStore, led: dict, func: str) -> dict:
     params = _fn_params(store, func, src, audit)
     if params is None:
         return {**row, "new_verdict": "unreplayable", "reason": "no params"}
+    if func not in store.meta["functions"]:  # removed/renamed since the accept
+        return {**row, "new_verdict": "unreplayable", "reason": "unknown function"}
     fmeta = _fn_meta(store, func)
     with tempfile.TemporaryDirectory(prefix="reschema-regrade-") as d:
         v = validate_function(
@@ -102,8 +105,14 @@ def _regrade_program(store: TaskStore, led: dict, fresh: bool) -> dict:
     if src is None:  # accepts before #118 kept no body
         return {"new_verdict": "unreplayable", "reason": "no program_source"}
     audit_seed = led.get("audit", {}).get("program", {}).get("hidden_seed")
+    if audit_seed is None and not fresh:
+        # a fresh draw cannot reproduce the original gate: not a judge flip
+        return {
+            "source_hash": _src_hash(src),
+            "new_verdict": "unreplayable",
+            "reason": "no audit hidden_seed",
+        }
     with tempfile.TemporaryDirectory(prefix="reschema-regrade-") as d:
-        fresh = fresh or audit_seed is None
         fail, seed = program_gate(
             store, src, Path(d) / "model", None if fresh else audit_seed
         )

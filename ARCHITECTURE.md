@@ -606,7 +606,8 @@ verdict on the old judge.
 - The program accept re-runs `engine.program_gate` (the pure judge
   `submit_program` wraps) on `program_source` with the audit `hidden_seed`,
   or fresh entropy under `--fresh`.
-- No audit seed, no params, no `program_source` (pre-#118) or a slot the
+- No audit seed (a fresh program draw is replayed only under `--fresh`),
+  no params, no `program_source` (pre-#118), or a slot or function the
   manifest lacks is emitted as `new_verdict: "unreplayable"` with a reason,
   never dropped.
 

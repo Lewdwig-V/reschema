@@ -103,15 +103,24 @@ def test_unreplayable_accepts_are_reported(calc):
         calc,
         {
             # params nowhere (no audit params, no matching memory fact)
-            "accepted": [{"clamp_i32": "/* x */"}, {"sum_range": RIGHT}],
-            "audit": {"clamp_i32": {"seed": 99, "n_fuzz": 8}},
+            "accepted": [
+                {"gone_fn": STUB},
+                {"clamp_i32": "/* x */"},
+                {"sum_range": RIGHT},
+            ],
+            "audit": {
+                "clamp_i32": {"seed": 99, "n_fuzz": 8},
+                # removed/renamed since the accept: reported, batch continues
+                "gone_fn": {"seed": 1, "n_fuzz": 8, "params": MISTYPED},
+            },
         },
     )
     rows = regrade(task_ids={SUM})
-    # newest first: sum_range (no audit seed), then clamp_i32 (no params)
+    # newest first: sum_range (no audit seed), clamp_i32 (no params), gone_fn
     assert [(r["unit"], r["new_verdict"], r["reason"]) for r in rows] == [
         ("sum_range", "unreplayable", "no audit seed"),
         ("clamp_i32", "unreplayable", "no params"),
+        ("gone_fn", "unreplayable", "unknown function"),
     ]
     assert len(regrade(k=1, task_ids={SUM})) == 1
 
@@ -132,6 +141,16 @@ def test_program_accept_reproduces_and_planted_flip_surfaces(built_corpus):
     (row,) = regrade(task_ids={ROT}, fresh=True)
     assert row["new_verdict"] == "reject" and row["fresh"] is True, row
     assert row["divergence"]["stage"] == "recorded", row
+
+    del led["audit"]["program"]  # no seed: a fresh draw is not a replay
+    st.save_ledger(led)
+    (row,) = regrade(task_ids={ROT})
+    assert (row["new_verdict"], row["reason"]) == (
+        "unreplayable",
+        "no audit hidden_seed",
+    )
+    (row,) = regrade(task_ids={ROT}, fresh=True)  # explicitly requested: runs
+    assert row["new_verdict"] == "accept" and row["fresh"] is True, row
 
     del led["program_source"]  # pre-#118 accepts kept no body
     st.save_ledger(led)

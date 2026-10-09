@@ -213,3 +213,34 @@ def test_infra_failures_are_not_flips(calc, monkeypatch):
             ("program", "unreplayable"),
             ("sum_range", "unreplayable"),
         }, rows
+
+
+def test_bad_params_and_corrupt_ledger_are_unreplayable(calc, built_corpus):
+    # Cross-version data the current schema cannot read is reported, and the
+    # batch keeps going (no traceback aborts later accepts or the totals).
+    _plant(
+        calc,
+        {
+            "accepted": [{"sum_range": RIGHT}],
+            "audit": {
+                "sum_range": {
+                    "seed": 1,
+                    "n_fuzz": 8,
+                    "params": [{"name": "lo", "kind": "renamed_kind"}],
+                }
+            },
+        },
+    )
+    other = TaskStore("calc::gcc-O1-sym")
+    wipe_task(other)
+    other._path("ledger.json").write_text("{not json")
+    rows = {r["task_id"]: r for r in regrade(task_ids={SUM, "calc::gcc-O1-sym"})}
+    assert rows[SUM]["new_verdict"] == "unreplayable", rows
+    assert rows[SUM]["reason"].startswith("bad params"), rows
+    bad = rows["calc::gcc-O1-sym"]
+    assert (bad["old_verdict"], bad["new_verdict"], bad["reason"]) == (
+        "unknown",
+        "unreplayable",
+        "bad ledger",
+    )
+    wipe_task(other)

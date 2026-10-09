@@ -609,8 +609,9 @@ verdict on the old judge.
   `submit_program` wraps) on `program_source` with the audit `hidden_seed`,
   or fresh entropy under `--fresh`.
 - No audit seed (a fresh program draw is replayed only under `--fresh`),
-  no params, no `program_source` (pre-#118), or a slot or function the
-  manifest lacks is emitted as `new_verdict: "unreplayable"` with a reason,
+  no params, params the current schema rejects, an unreadable ledger, no
+  `program_source` (pre-#118), or a slot or function the manifest lacks is
+  emitted as `new_verdict: "unreplayable"` with a reason,
   never dropped. So are infra failures and unjudged program draws
   (`PROGRAM_NO_VERDICT_STAGES`): an environment outage must never read as
   an accept→reject judge flip.

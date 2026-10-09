@@ -44,15 +44,21 @@ def _src_hash(src: str) -> str:
     return hashlib.sha256(src.encode()).hexdigest()[:16]
 
 
-def accepts() -> Iterator[tuple[str, dict, str]]:
-    """(task_id, ledger, unit) newest first; unit is a function name or "program"."""
+def accepts() -> Iterator[tuple[str, dict | None, str]]:
+    """(task_id, ledger, unit) newest first; unit is a function name or
+    "program". An unreadable ledger yields (task_id, None, "ledger") once."""
     ledgers = sorted(
         TASKS.glob("*/ledger.json"), key=lambda p: p.stat().st_mtime, reverse=True
     )
     for p in ledgers:
-        led = json.loads(p.read_text())
         task_id = p.parent.name.replace("__", "::")
-        for x in reversed(led.get("accepted", [])):
+        try:
+            led = json.loads(p.read_text())
+            entries = list(reversed(led.get("accepted", [])))
+        except (OSError, ValueError, TypeError, AttributeError):
+            yield task_id, None, "ledger"
+            continue
+        for x in entries:
             if x == "program":
                 yield task_id, led, "program"
             elif isinstance(x, dict):
@@ -85,13 +91,17 @@ def _regrade_function(store: TaskStore, led: dict, func: str) -> dict:
         return {**row, "new_verdict": "unreplayable", "reason": "no params"}
     if func not in store.meta["functions"]:  # removed/renamed since the accept
         return {**row, "new_verdict": "unreplayable", "reason": "unknown function"}
+    try:  # an older ledger may hold params the current schema rejects
+        ps = [Param.from_json(p) for p in params]
+    except (KeyError, ValueError, TypeError) as e:
+        return {**row, "new_verdict": "unreplayable", "reason": f"bad params: {e}"}
     fmeta = _fn_meta(store, func)
     with tempfile.TemporaryDirectory(prefix="reschema-regrade-") as d:
         v = validate_function(
             store.meta["binary"],
             fmeta["addr"],
             func,
-            [Param.from_json(p) for p in params],
+            ps,
             src,
             Path(d) / f"{func}.so",
             seed=audit["seed"],
@@ -141,6 +151,16 @@ def regrade(
         if k is not None and len(rows) >= k:
             break
         base = {"task_id": task_id, "unit": unit, "old_verdict": "accept"}
+        if led is None:
+            rows.append(
+                {
+                    **base,
+                    "old_verdict": "unknown",
+                    "new_verdict": "unreplayable",
+                    "reason": "bad ledger",
+                }
+            )
+            continue
         try:
             store = TaskStore(task_id)
         except KeyError:  # ledger for a slot the current manifest lacks

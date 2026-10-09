@@ -14,10 +14,11 @@ an environment outage must never read as a judge regression.
   `audit[func]["params"]` (written since #143) or, for older entries, the
   family memory's `verified_fact` with the same source and audit seed.
 - the program accept re-runs `engine.program_gate` on `program_source` with
-  the audit `hidden_seed` (default) or fresh entropy (`fresh=True`).
+  the audit `hidden_seed` (default) or fresh entropy (`fresh=True`), against
+  the accept-time recorded-case snapshot (`audit["program"]["recorded"]`).
 
 Anything that cannot be replayed faithfully (no source, no audit seed, no
-params, unknown task or function) is
+params, no recorded snapshot or a changed one, unknown task or function) is
 emitted as `new_verdict: "unreplayable"` with a reason — never dropped.
 
 stdout: one JSON line per accept. stderr: totals.
@@ -34,7 +35,14 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from .driver.spec import Param
-from .engine import PROGRAM_NO_VERDICT_STAGES, TASKS, TaskStore, _fn_meta, program_gate
+from .engine import (
+    PROGRAM_NO_VERDICT_STAGES,
+    TASKS,
+    TaskStore,
+    _fn_meta,
+    case_key,
+    program_gate,
+)
 from .exec.canonical import CANONICALIZER_VERSION
 from .memory import read_family
 from .validate.function import N_FUZZ, validate_function
@@ -93,7 +101,7 @@ def _regrade_function(store: TaskStore, led: dict, func: str) -> dict:
         return {**row, "new_verdict": "unreplayable", "reason": "unknown function"}
     try:  # an older ledger may hold params the current schema rejects
         ps = [Param.from_json(p) for p in params]
-    except (KeyError, ValueError, TypeError) as e:
+    except Exception as e:  # noqa: BLE001 - pure decoding of stale data; any shape error is a row
         return {**row, "new_verdict": "unreplayable", "reason": f"bad params: {e}"}
     fmeta = _fn_meta(store, func)
     with tempfile.TemporaryDirectory(prefix="reschema-regrade-") as d:
@@ -120,17 +128,28 @@ def _regrade_program(store: TaskStore, led: dict, fresh: bool) -> dict:
     src = led.get("program_source")
     if src is None:  # accepts before #118 kept no body
         return {"new_verdict": "unreplayable", "reason": "no program_source"}
-    audit_seed = led.get("audit", {}).get("program", {}).get("hidden_seed")
-    if audit_seed is None and not fresh:
+    audit = led.get("audit", {}).get("program", {})
+    unreplayable = {"source_hash": _src_hash(src), "new_verdict": "unreplayable"}
+    if audit.get("hidden_seed") is None and not fresh:
         # a fresh draw cannot reproduce the original gate: not a judge flip
-        return {
-            "source_hash": _src_hash(src),
-            "new_verdict": "unreplayable",
-            "reason": "no audit hidden_seed",
-        }
+        return {**unreplayable, "reason": "no audit hidden_seed"}
+    # Replay the accept-time recorded set: experiments after the accept add
+    # traces (and shift the hidden dedupe), which is new evidence, not a judge
+    # change. No snapshot (pre-#144) or a vanished case => not reproducible.
+    snap = audit.get("recorded")
+    if snap is None:
+        return {**unreplayable, "reason": "no recorded snapshot"}
+    by_key = {json.dumps(case_key(t)): t for t in store.recorded()}
+    want = [json.dumps(k) for k in snap]
+    if any(k not in by_key for k in want):
+        return {**unreplayable, "reason": "recorded cases changed"}
     with tempfile.TemporaryDirectory(prefix="reschema-regrade-") as d:
         fail, seed = program_gate(
-            store, src, Path(d) / "model", None if fresh else audit_seed
+            store,
+            src,
+            Path(d) / "model",
+            None if fresh else audit["hidden_seed"],
+            rec=[by_key[k] for k in want],
         )
     row = {"source_hash": _src_hash(src), "seed": seed, "fresh": fresh}
     if fail is None:

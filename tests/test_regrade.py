@@ -2,6 +2,8 @@
 planted accept the current judge rejects surfaces as a diff entry, never a
 silent pass; anything unreplayable is reported, never dropped."""
 
+import json
+
 import pytest
 from conftest import wipe_task
 
@@ -137,13 +139,22 @@ def test_program_accept_reproduces_and_planted_flip_surfaces(built_corpus):
     assert row["new_verdict"] == "accept", row
     assert row["seed"] == r["hidden_seed"] and row["fresh"] is False, row
 
+    # An experiment AFTER the accept is new evidence, not a judge change: even
+    # a trace the model would fail must not be replayed (accept-time snapshot).
+    t = st.record_case("late", ["late"], b"")
+    late = st._path("trace_late.json")
+    late.write_text(json.dumps({**t, "stdout": b"WRONG\n".hex()}))
+    (row,) = regrade(task_ids={ROT})
+    assert row["new_verdict"] == "accept", row
+    late.unlink()
+
     led = st.ledger()
     st.save_ledger({**led, "program_source": ECHO})  # an accept the judge rejects
     (row,) = regrade(task_ids={ROT}, fresh=True)
     assert row["new_verdict"] == "reject" and row["fresh"] is True, row
     assert row["divergence"]["stage"] == "recorded", row
 
-    del led["audit"]["program"]  # no seed: a fresh draw is not a replay
+    del led["audit"]["program"]["hidden_seed"]  # a fresh draw is not a replay
     st.save_ledger(led)
     (row,) = regrade(task_ids={ROT})
     assert (row["new_verdict"], row["reason"]) == (
@@ -152,6 +163,20 @@ def test_program_accept_reproduces_and_planted_flip_surfaces(built_corpus):
     )
     (row,) = regrade(task_ids={ROT}, fresh=True)  # explicitly requested: runs
     assert row["new_verdict"] == "accept" and row["fresh"] is True, row
+
+    st._path("trace_e00.json").unlink()  # a snapshot case vanished
+    (row,) = regrade(task_ids={ROT}, fresh=True)
+    assert (row["new_verdict"], row["reason"]) == (
+        "unreplayable",
+        "recorded cases changed",
+    )
+    del led["audit"]["program"]["recorded"]  # pre-#144 accepts: no snapshot
+    st.save_ledger(led)
+    (row,) = regrade(task_ids={ROT}, fresh=True)
+    assert (row["new_verdict"], row["reason"]) == (
+        "unreplayable",
+        "no recorded snapshot",
+    )
 
     del led["program_source"]  # pre-#118 accepts kept no body
     st.save_ledger(led)
@@ -226,7 +251,11 @@ def test_bad_params_and_corrupt_ledger_are_unreplayable(calc, built_corpus):
                 "sum_range": {
                     "seed": 1,
                     "n_fuzz": 8,
-                    "params": [{"name": "lo", "kind": "renamed_kind"}],
+                    # a short range (IndexError) decoded before a renamed kind
+                    "params": [
+                        {"name": "lo", "kind": "i32", "range": [0]},
+                        {"name": "hi", "kind": "renamed_kind"},
+                    ],
                 }
             },
         },

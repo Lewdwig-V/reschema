@@ -149,7 +149,8 @@ Control flow across the tour sections below, as it actually happens.
    ground-truth *double-recorded*. Same replay comparison, `stage: "hidden"`.
    Too few distinct usable inputs → `hidden-starvation` reject.
 5. **Accept.** The ledger gets the idempotent `"program"` marker,
-   `audit.program.hidden_seed`, and a journal entry; `memory.append_fact`
+   `audit.program` (`hidden_seed` plus `recorded`, the accept-time
+   recorded-case identities), and a journal entry; `memory.append_fact`
    writes the accepted source as a `verified_fact` (`fn: "__main__"`) other
    slots of the family will see at their `task_open`.
 6. **Reject.** Counters + journal update; any agent `notes` land as
@@ -607,9 +608,11 @@ verdict on the old judge.
   `verified_fact` with the same source and audit seed.
 - The program accept re-runs `engine.program_gate` (the pure judge
   `submit_program` wraps) on `program_source` with the audit `hidden_seed`,
-  or fresh entropy under `--fresh`.
+  or fresh entropy under `--fresh`, replaying the accept-time recorded set
+  (`audit.program.recorded`), not today's: experiments after the accept are
+  new evidence, not a judge change.
 - No audit seed (a fresh program draw is replayed only under `--fresh`),
-  no params, params the current schema rejects, an unreadable ledger, no
+  no recorded snapshot (pre-#144) or a vanished snapshot case, no params, params the current schema rejects, an unreadable ledger, no
   `program_source` (pre-#118), or a slot or function the manifest lacks is
   emitted as `new_verdict: "unreplayable"` with a reason,
   never dropped. So are infra failures and unjudged program draws

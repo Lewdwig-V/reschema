@@ -365,15 +365,27 @@ def status_snapshot(store: TaskStore) -> dict:
     }
 
 
+def case_key(t: dict) -> list:
+    """A recorded case's input identity (argv minus argv[0], stdin) — the same
+    identity the hidden-draw dedupe uses."""
+    return [list(t["argv"][1:]), t["stdin_hex"]]
+
+
 def program_gate(
-    store: TaskStore, c_source: str, model: Path, hidden_seed: str | None = None
+    store: TaskStore,
+    c_source: str,
+    model: Path,
+    hidden_seed: str | None = None,
+    rec: list[dict] | None = None,
 ) -> tuple[dict | None, str | None]:
     """The program-mode judge, pure: compile, replay recorded cases, then the
     hidden suite drawn from `hidden_seed` (fresh entropy when None, drawn only
     once the recorded stage passes). Returns (None = pass | reject kwargs,
     effective hidden seed). Writes no ledger/memory state, so the #112
-    re-grade can re-judge accepts with the audit seed or fresh entropy."""
-    rec = store.recorded()
+    re-grade can re-judge accepts with the audit seed or fresh entropy; `rec`
+    (default: the store's current traces) lets it replay the accept-time set."""
+    if rec is None:
+        rec = store.recorded()
     ok, err = compile_model(c_source, model)
     if not ok:
         # infra detail keeps reason "compile" for contract stability; the
@@ -482,7 +494,12 @@ def submit_program(
     # never compile-artifact side effects (codex P2 on #118 — model.c is
     # rewritten by every later compile). Newest accept wins, like fn dicts.
     led["program_source"] = c_source
-    led.setdefault("audit", {})["program"] = {"hidden_seed": hidden_seed}
+    # ...plus the recorded-case set it was judged on: later experiments add
+    # traces, and a re-grade (#112) must replay THIS set to isolate the judge.
+    led.setdefault("audit", {})["program"] = {
+        "hidden_seed": hidden_seed,
+        "recorded": sorted(case_key(t) for t in store.recorded()),
+    }
     _journal(led, {"mode": "program", "outcome": "accept"})
     _record_notes(store, "__main__", notes, promoted=True)
     store.save_ledger(led)

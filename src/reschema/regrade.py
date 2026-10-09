@@ -185,7 +185,8 @@ def _prep_program(task_id: str, led: dict, fresh: bool, row: dict) -> dict:
 def _judge_program(row: dict, job: dict) -> dict:
     with tempfile.TemporaryDirectory(prefix="reschema-regrade-") as d:
         fail, seed = program_gate(model=Path(d) / "model", **job)
-    row = {**row, "seed": seed}
+    # an early (compile/recorded) outcome draws no seed: keep the audit one
+    row = {**row, "seed": seed if seed is not None else row.get("seed")}
     if fail is None:
         return {**row, "new_verdict": "accept"}
     stage = fail.get("stage", fail["reason"])

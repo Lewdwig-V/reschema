@@ -156,6 +156,9 @@ def test_program_accept_reproduces_and_planted_flip_surfaces(built_corpus):
 
     led = st.ledger()
     st.save_ledger({**led, "program_source": ECHO})  # an accept the judge rejects
+    (row,) = regrade(task_ids={ROT})  # recorded-stage reject draws no seed...
+    assert row["divergence"]["stage"] == "recorded", row
+    assert row["seed"] == r["hidden_seed"], row  # ...the audit seed is kept
     (row,) = regrade(task_ids={ROT}, fresh=True)
     assert row["new_verdict"] == "reject" and row["fresh"] is True, row
     assert row["divergence"]["stage"] == "recorded", row

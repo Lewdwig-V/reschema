@@ -270,7 +270,8 @@ Every agent-facing verdict is a typed dict. There are three shapes:
   on the path: program-gate mechanical rejects (`compile`,
   `hidden-starvation`, `duplicate`) return top-level `{accepted: false, reason, detail}`;
   function-gate floor verdicts from the validator (arity, void-without-
-  memory-channel, no-input-variation spec, skip-starvation, infra) nest it as
+  memory-channel, no-input-variation spec, memory-fault skip floor,
+  skip-starvation, infra) nest it as
   `{accepted: false, divergence: {stage, detail}}` (skip-starvation also
   carries the fuzz `seed`); a malformed spec JSON fails before validation as top-level
   `{accepted: false, reason: "spec", detail}`. Clients should read the reason
@@ -792,14 +793,17 @@ against the (non-public) original plans is kept as history, subordinate.
   with the
   suppressed-crash negative test and routes accept→reject flips through
   the 3B re-grade (#112).
-  **Open gap, proven:** skip-starvation catches only *total* skipping. A
-  hand-declared all-i32 `scale_buf` spec thins to its n≤0 cases (junk
-  pointer never dereferenced), and a `return 0;` stub is ACCEPTED on all 12
-  `scale_buf` slots with fresh seeds. The fix is a spec-stage skip floor
-  (roadmap, "skip-ratio floor"); the attack is pinned as a strict xfail
-  (`test_mistyped_spec_stub_rejected`). Faults are not purely a typing
-  signal: correct-typed `sum_range` over a declared full-i32 range times
-  out on 39/64 cases, so the floor must not count every fault.
+  **Gap closed by a spec-stage skip floor:** skip-starvation caught only
+  *total* skipping. A hand-declared all-i32 `scale_buf` spec thinned to its
+  n≤0 cases (junk pointer never dereferenced), and a `return 0;` stub was
+  ACCEPTED on all 12 `scale_buf` slots with fresh seeds. Now any MEMORY
+  fault (`Invalid memory read/write/fetch`) of the original on an
+  agent-declared case is a `stage: spec` reject naming the faulting case,
+  before the model is compiled (`tests/test_crash_census.py::
+  test_mistyped_spec_stub_rejected`). Timeouts stay skipped: correct-typed
+  `sum_range` over a declared full-i32 range times out on 39/64 cases and
+  must still be accepted (`test_timeout_only_faults_pass_skip_floor`).
+  Harness scout cases (109-A) do not count, as for the #100 floor.
 - **Scope guardrails observed** — x86-64 static ELFs only, ≤6 register
   integer args (no stack args, no structs/floats), no multi-arch, packing, or
   symbolic equivalence; no branch coverage (explicitly cut).

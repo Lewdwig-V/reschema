@@ -5,7 +5,9 @@ skip ret (eax is register garbage, mem is their channel). The fuzz draw is
 fresh-entropy by default (mirrors submit_program: nothing precomputable); tests pin
 `seed` for determinism. Never pass vacuously: no surviving cases (skip-starvation),
 and no input VARIATION — <2 distinct surviving inputs over the round (empty params,
-all-fixed-point ranges) is a spec-stage reject, not a verdict (#100).
+all-fixed-point ranges) is a spec-stage reject, not a verdict (#100). Nor thinly:
+any MEMORY fault of the original on a declared case is a spec-stage reject (a
+pointer typed as a scalar); timeouts stay skipped (skip floor, roadmap).
 
 Containment: agent source compiles and executes ONLY inside the level-B podman
 worker (see ARCHITECTURE.md) — never in this process.
@@ -50,6 +52,16 @@ def _crash_text(crash: dict) -> str:
     if "timeout" in crash:
         return "timeout"
     return str(crash)
+
+
+def _is_mem_fault(want: dict) -> bool:
+    # calling._run_case fault convention: exit_code -1 + trailing fault event
+    # whose args[0] is "<ExcType>: <msg>"; unicorn memory faults read
+    # "Invalid memory read/write/fetch (UC_ERR_...)". Timeouts carry no args.
+    if want["exit_code"] != -1:
+        return False
+    ev = want["events"][-1]
+    return ev["sc"] == "crash" and "Invalid memory" in ev["args"][0]
 
 
 def validate_function(
@@ -110,7 +122,8 @@ def validate_function(
     cases = merge_scout_cases(cases, scout_inputs(params, immediates), n_fuzz)
     kept: list[tuple[dict, dict]] = []
     skipped = 0
-    for case, want in zip(cases, batch_call_original(binary, addr, params, cases)):
+    wants = batch_call_original(binary, addr, params, cases)
+    for case, want in zip(cases, wants):
         if want["exit_code"] == -1:
             skipped += 1
             continue
@@ -122,6 +135,35 @@ def validate_function(
             {
                 "stage": "skip-starvation",
                 "detail": f"original faulted on all {n_fuzz} fuzz cases",
+                "seed": effective_seed,
+            },
+            skipped=skipped,
+        )
+    mem_faults = [
+        case
+        for case, want in zip(cases, wants)
+        if id(case) in declared_ids and _is_mem_fault(want)
+    ]
+    if mem_faults:
+        # Skip floor (roadmap "skip-ratio floor"): a pointer declared as a
+        # scalar faults the original on junk addresses and thins the round to
+        # the cases that never dereference it (all-i32 scale_buf: n<=0 only,
+        # where a `return 0;` stub passed). Only memory faults count, at zero
+        # tolerance: correct-typed specs over wide declared ranges legitimately
+        # time out (test_true_spec_faults_on_declared_range), and harness
+        # scouts (109-A) are not the agent's declaration.
+        return FnVerdict(
+            False,
+            {
+                "stage": "spec",
+                "detail": (
+                    f"original faulted on {len(mem_faults)} of "
+                    f"{sum(id(c) in declared_ids for c in cases)} "
+                    f"declared fuzz case(s) with a memory fault — e.g. "
+                    f"{_preview(mem_faults[0])}. A parameter the function "
+                    "dereferences is likely declared as a scalar: declare it "
+                    "buffer_i32 or cstring"
+                ),
                 "seed": effective_seed,
             },
             skipped=skipped,

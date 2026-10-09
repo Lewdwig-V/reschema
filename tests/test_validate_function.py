@@ -550,3 +550,19 @@ __attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){
     )
     assert v.ok, v.divergence  # correct model + side effect: execution ran
     assert not (tmp_path / "stowaway.txt").exists()  # but landed nowhere visible
+
+
+def test_mem_fault_classifier_counts_only_memory_faults():
+    """Skip floor input: unicorn memory faults count; timeouts and clean runs
+    never do (correct wide-range specs time out — must stay skipped)."""
+    from reschema.validate.function import _is_mem_fault
+
+    def fault(sc, args):
+        return {"exit_code": -1, "events": [{"phase": "fault", "sc": sc, "args": args}]}
+
+    for kind in ("read", "write", "fetch"):
+        msg = f"UcError: Invalid memory {kind} (UC_ERR_{kind.upper()}_UNMAPPED)"
+        assert _is_mem_fault(fault("crash", [msg]))
+    assert not _is_mem_fault(fault("timeout", []))
+    assert not _is_mem_fault(fault("crash", ["UcError: Invalid instruction"]))
+    assert not _is_mem_fault({"exit_code": 0, "events": [], "ret": 0, "mem": {}})

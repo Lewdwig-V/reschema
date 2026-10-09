@@ -838,8 +838,16 @@ def submit_function(
     else:
         led["accepted"].append({func: c_source})
     # Audit trail (parallel to "accepted" so compose's {func: source} shape is
-    # untouched): the EFFECTIVE fuzz seed (fresh entropy included) + final budget.
-    led.setdefault("audit", {})[func] = {"seed": v.seed, "n_fuzz": n_fuzz}
+    # untouched): the EFFECTIVE fuzz seed (fresh entropy included) + final budget,
+    # plus the skip count and accepted params so a re-grade (#112) can recount
+    # original faults under a newer floor without replaying the memory store.
+    led.setdefault("audit", {})[func] = {
+        "seed": v.seed,
+        "n_fuzz": n_fuzz,
+        "compared": v.compared,
+        "skipped": v.skipped,
+        "params": [p.to_json() for p in ps],
+    }
     _journal(led, {"mode": "function", "outcome": "accept", "function": func})
     store.save_ledger(led)
     from .memory import append_fact

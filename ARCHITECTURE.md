@@ -785,17 +785,21 @@ against the (non-public) original plans is kept as history, subordinate.
   deterministic. A fault-or-not compare would therefore preserve no genuine
   original behavior on today's corpus. It would only turn spec artifacts
   into behavior rejects, which is the wrong stage for them. Reopen when a
-  seed has a genuine reachable fault under its true spec: the per-slot
-  `tests/test_crash_census.py::test_ref_specs_never_fault_originals` then
-  fails and forces this decision. That change ships with the
+  seed has a genuine reachable fault under its true spec.
+  `tests/test_crash_census.py::test_ref_specs_never_fault_originals` is a
+  SAMPLED tripwire for that (one pinned draw, default ranges), not proof:
+  a fault outside the draw passes it (codex P2 on #140). That change ships
+  with the
   suppressed-crash negative test and routes accept→reject flips through
   the 3B re-grade (#112).
   **Open gap, proven:** skip-starvation catches only *total* skipping. A
   hand-declared all-i32 `scale_buf` spec thins to its n≤0 cases (junk
   pointer never dereferenced), and a `return 0;` stub is ACCEPTED on all 12
-  `scale_buf` slots with fresh seeds. The fix is a spec-stage skip-ratio
-  floor (roadmap, "skip-ratio floor"); the attack is pinned as a strict
-  xfail (`test_mistyped_spec_stub_rejected`).
+  `scale_buf` slots with fresh seeds. The fix is a spec-stage skip floor
+  (roadmap, "skip-ratio floor"); the attack is pinned as a strict xfail
+  (`test_mistyped_spec_stub_rejected`). Faults are not purely a typing
+  signal: correct-typed `sum_range` over a declared full-i32 range times
+  out on 39/64 cases, so the floor must not count every fault.
 - **Scope guardrails observed** — x86-64 static ELFs only, ≤6 register
   integer args (no stack args, no structs/floats), no multi-arch, packing, or
   symbolic equivalence; no branch coverage (explicitly cut).

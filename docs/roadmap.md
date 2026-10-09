@@ -381,17 +381,23 @@ including errata where they disagree with the code.
   **Decided (ARCHITECTURE.md ADR "Original faults stay skipped"):** no
   fault-or-not compare until a genuine-fault seed exists. Reopen trigger:
   `test_ref_specs_never_fault_originals` (every reference spec × every
-  slot) fails.
+  slot) fails. That test is a SAMPLED tripwire (one pinned draw, default
+  ranges), not an exhaustive guard (codex P2 on #140).
 - **Open: skip-ratio floor (spec stage).** The gap is real, not
   hypothetical: a hand-declared all-i32 `scale_buf` spec thins to its n≤0
   survivors (eax is 0 on every one), and a `return 0;` stub is ACCEPTED on
   all 12 `scale_buf` slots with fresh seeds (25–37 compared, 27–39
-  skipped). Fix: reject at `stage: spec` on any original fault
-  (`skipped > 0`), with a pointer-kind hint in `detail`. Zero threshold is
-  safe because the census includes the scout slice and its precondition
-  enforces itself (`test_ref_specs_never_fault_originals` fails on the
-  first genuinely faulting seed, forcing the crash-preservation decision
-  instead of silently rejecting correct specs). Shipping checklist:
+  skipped). Fix: reject at `stage: spec` when the original faults, with a
+  pointer-kind hint in `detail`. **Not "any fault":** correct-typed
+  `sum_range` with an agent-declared full-i32 range times out on 39/64
+  cases (pinned: `test_true_spec_faults_on_declared_range`), so counting
+  every fault rejects a correct spec. The census does include the scout
+  slice, but its zero is one pinned default-range draw, not a proof.
+  Open design call: count only memory faults (`Invalid memory *`, the
+  pointer-typing signature) at zero tolerance and leave timeouts skipped;
+  or a ratio threshold over all faults. Either way a correct spec can
+  still hit a rare fault outside the sampled draw, so the reject `detail`
+  must name the faulting case. Shipping checklist:
   (1) keep the reject at `stage: spec`, which `DUP_NO_VERDICT_STAGES`
   (engine.py) already excludes: it judges the declaration, not the source,
   so it must not be fingerprinted by the duplicate guard or enter

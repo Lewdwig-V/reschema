@@ -1,9 +1,13 @@
-"""Crash-gap census pins: correct specs never fault the corpus originals;
-every skip is a pointer-as-i32 spec artifact, deterministic on re-run."""
+"""Crash-gap census pins: on the pinned default-range draw, correct specs
+never fault the corpus originals and every skip is a deterministic
+pointer-as-i32 artifact; correct types over a wide declared range DO fault
+(timeout), so faults are not purely a typing signal."""
 
 import pytest
 
 from reschema.corpus.generate import FUNCS
+from reschema.driver.calling import batch_call_original
+from reschema.driver.spec import Param
 from reschema.validate.function import validate_function
 from tools.crash_census import REF, _mistyped, census
 
@@ -33,13 +37,26 @@ def test_ref_covers_every_corpus_function():
 
 @pytest.mark.parametrize("func", sorted(REF))
 def test_ref_specs_never_fault_originals(built_corpus, func):
-    # Precondition of a zero-threshold skip floor: the day a seed genuinely
-    # faults under its true spec, this fails and forces the crash-preservation
-    # decision (ARCHITECTURE.md ADR "Original faults stay skipped").
+    # SAMPLED tripwire, not proof (codex P2 on #140): one pinned draw at
+    # default ranges. A seed that faults on this draw fails it and reopens the
+    # ADR "Original faults stay skipped"; a fault outside the draw does not.
     for t in built_corpus:
         if func in t["functions"]:
             row = census(t, func, t["functions"][func], REF[func])
             assert row["skipped"] == 0, (t["task_id"], func, row)
+
+
+def test_true_spec_faults_on_declared_range(built_corpus):
+    # Deterministic known-fault case the sampled census misses: correct types,
+    # agent-declared full-i32 range -> ~4e9 iterations -> timeout. Any skip
+    # floor must NOT count this class (39/64 of a full-range draw time out).
+    t = _slot(built_corpus, "sum_range")
+    params = [Param("lo", "i32"), Param("hi", "i32")]
+    case = {"lo": -(2**31), "hi": 2**31 - 1}
+    (out,) = batch_call_original(
+        t["binary"], t["functions"]["sum_range"]["addr"], params, [case]
+    )
+    assert out["exit_code"] == -1 and out["events"][-1]["sc"] == "timeout", out
 
 
 def test_mistyped_pointer_artifacts_skip_deterministically(built_corpus):

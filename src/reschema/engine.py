@@ -392,12 +392,13 @@ def program_gate(
     hidden_seed: str | None = None,
     rec: list[dict] | None = None,
 ) -> tuple[dict | None, str | None]:
-    """The program-mode judge, pure: compile, replay recorded cases, then the
-    hidden suite drawn from `hidden_seed` (fresh entropy when None, drawn only
-    once the recorded stage passes). Returns (None = pass | reject kwargs,
-    effective hidden seed). Writes no ledger/memory state, so the #112
-    re-grade can re-judge accepts with the audit seed or fresh entropy; `rec`
-    (default: the store's current traces) lets it replay the accept-time set."""
+    """The program-mode judge: compile `c_source` to `model`, replay recorded
+    cases, then the hidden suite drawn from `hidden_seed` (fresh entropy when
+    None, drawn only once the recorded stage passes). Returns (None = pass |
+    reject kwargs, effective hidden seed). Writes no ledger/memory state, so
+    the #112 re-grade can re-judge accepts with the audit seed or fresh
+    entropy; `rec` (default: the store's current traces) lets it replay the
+    accept-time set."""
     if rec is None:
         rec = store.recorded()
     ok, err = compile_model(c_source, model)
@@ -508,12 +509,15 @@ def submit_program(
     # never compile-artifact side effects (codex P2 on #118 — model.c is
     # rewritten by every later compile). Newest accept wins, like fn dicts.
     led["program_source"] = c_source
-    # ...plus the recorded-case set it was judged on: later experiments add
-    # traces, and a re-grade (#112) must replay THIS set to isolate the judge.
+    # ...plus what a re-grade (#112) must pin to isolate a JUDGE change: the
+    # recorded set it was judged on (later experiments add traces), the corpus
+    # binary (a rebuild changes the original), and the canonicalizer the
+    # stored traces were recorded under (a rules bump changes their format).
     led.setdefault("audit", {})["program"] = {
         "hidden_seed": hidden_seed,
         "recorded": sorted([*case_key(t), case_digest(t)] for t in store.recorded()),
         "binary": binary_digest(store.meta["binary"]),
+        "canonicalizer": CANONICALIZER_VERSION,
     }
     _journal(led, {"mode": "program", "outcome": "accept"})
     _record_notes(store, "__main__", notes, promoted=True)
@@ -854,6 +858,9 @@ def submit_function(
         size=fmeta["size"],  # the scout scrape reads the manifest-true window
     )
     led["submissions"] += 1
+    # digest BEFORE any accept side effect (notes promote below): a failure
+    # here must not leave promoted notes for an accept never saved
+    bin_digest = binary_digest(store.meta["binary"]) if v.ok else None
     _record_notes(store, func, notes, promoted=v.ok)
     if not v.ok:
         led["rejections"] += 1
@@ -900,7 +907,7 @@ def submit_function(
         "compared": v.compared,
         "skipped": v.skipped,
         "params": [p.to_json() for p in ps],
-        "binary": binary_digest(store.meta["binary"]),
+        "binary": bin_digest,
     }
     _journal(led, {"mode": "function", "outcome": "accept", "function": func})
     store.save_ledger(led)

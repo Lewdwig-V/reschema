@@ -410,8 +410,9 @@ including errata where they disagree with the code.
   dropped). `audit[func]` now also persists `compared`, `skipped` and the
   accepted `params`. Past accepts are re-judged by the #112 re-grade
   (`python -m reschema.regrade`): pre-change entries hold only
-  `{seed, n_fuzz}`, so it replays them with the family memory's
-  `verified_fact` params (`params`, `audit_seed`, `n_fuzz`).
+  `{seed, n_fuzz}`, so it replays them with that seed and budget plus the
+  `params` of the family memory's `verified_fact` matching the same task,
+  source and `audit_seed`.
   Deterministic, including pre-#139 agent-seeded accepts (the effective
   seed was always recorded).
 - **Closed: function mode let the agent pin its own fuzz draw.**

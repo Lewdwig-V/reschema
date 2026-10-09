@@ -5,23 +5,33 @@ ledger/memory writes; a flip is data, not a verdict on the old judge.
 Accepts are enumerated newest first: tasks by ledger mtime (accepts carry no
 timestamps), entries within a task newest first (a re-accept moves to the
 end of `accepted`; ledgers written before #144 kept a re-accepted function
-at its first position). `k` caps the count. Infra failures and unjudged
-program draws (`PROGRAM_NO_VERDICT_STAGES`) are unreplayable, not flips:
-an environment outage must never read as a judge regression.
+at its first position). `k` caps the count.
 
 - function accepts replay `validate_function` with the audit seed and n_fuzz,
   so any flip is the judge's change, not a new draw. Params come from
   `audit[func]["params"]` (written since #143) or, for older entries, the
-  family memory's `verified_fact` with the same source and audit seed.
+  family memory's `verified_fact` with the same task, source and audit seed.
 - the program accept re-runs `engine.program_gate` on `program_source` with
   the audit `hidden_seed` (default) or fresh entropy (`fresh=True`), against
   the accept-time recorded-case snapshot (`audit["program"]["recorded"]`).
 
-Each accept is prepared (all stored-data reads) then judged. Anything that
-cannot be replayed faithfully (no source, no audit seed, no params, no
-recorded snapshot or a changed one, unknown task or function, or any stored
-data that fails to load or decode) is
-emitted as `new_verdict: "unreplayable"` with a reason — never dropped.
+A flip must isolate a JUDGE change, so everything else the verdict depended
+on is pinned, and an accept whose pins cannot be honored is emitted as
+`new_verdict: "unreplayable"` with a reason — never dropped, never a flip:
+
+  no program_source | no audit seed | no audit hidden_seed | no params |
+  no recorded snapshot | recorded cases changed | binary changed |
+  canonicalizer changed | unknown task | unknown function | bad ledger |
+  bad stored data: <error> | infra | hidden-starvation
+
+The last two come from the judge (an environment outage or an unjudged
+draw). Legacy accepts without a binary digest still replay, flagged
+`binary_verified: false`.
+
+Failure boundaries: each accept is PREPARED (every read of stored data) and
+then JUDGED. A prepare failure is a row; judge exceptions raise (engine bug).
+Environment faults — a missing tasks dir, an unreadable or stale manifest, a
+missing corpus binary — fail the whole job loudly, never per-row noise.
 
 stdout: one JSON line per accept. stderr: totals.
 """
@@ -41,24 +51,40 @@ from .engine import (
     PROGRAM_NO_VERDICT_STAGES,
     TASKS,
     TaskStore,
-    _fn_meta,
     binary_digest,
     case_digest,
     case_key,
+    load_manifest,
     program_gate,
 )
 from .exec.canonical import CANONICALIZER_VERSION
 from .memory import read_family
-from .validate.function import N_FUZZ, validate_function
+from .validate.function import validate_function
+
+
+class Unreplayable(Exception):
+    """A stored accept that cannot be replayed faithfully (reason = str(e))."""
 
 
 def _src_hash(src: str) -> str:
     return hashlib.sha256(src.encode()).hexdigest()[:16]
 
 
+def _is_fn_entry(x: object) -> bool:
+    # compose's shape: exactly one {func: source} pair per entry
+    return (
+        isinstance(x, dict)
+        and len(x) == 1
+        and all(isinstance(k, str) and isinstance(v, str) for k, v in x.items())
+    )
+
+
 def accepts() -> Iterator[tuple[str, dict | None, str]]:
     """(task_id, ledger, unit) newest first; unit is a function name or
-    "program". An unreadable ledger yields (task_id, None, "ledger") once."""
+    "program". An unreadable or malformed ledger yields (task_id, None,
+    "ledger") once — never a silent drop."""
+    if not TASKS.is_dir():  # wrong RESCHEMA_HOME must not read as "0 accepts"
+        raise FileNotFoundError(f"no tasks dir at {TASKS}")
 
     def mtime(p: Path) -> float:
         try:
@@ -71,24 +97,15 @@ def accepts() -> Iterator[tuple[str, dict | None, str]]:
         try:
             led = json.loads(p.read_text())
             entries = led.get("accepted", [])
-            # never drop silently: a wrong-typed collection or an unknown
-            # entry shape is a bad ledger, not "no accepts"
             if not isinstance(entries, list) or not all(
-                x == "program"
-                or (isinstance(x, dict) and all(isinstance(k, str) for k in x))
-                for x in entries
+                x == "program" or _is_fn_entry(x) for x in entries
             ):
                 raise ValueError("malformed accepted")
-            entries = list(reversed(entries))
         except (OSError, ValueError, TypeError, AttributeError):
             yield task_id, None, "ledger"
             continue
-        for x in entries:
-            if x == "program":
-                yield task_id, led, "program"
-            elif isinstance(x, dict):
-                for func in x:
-                    yield task_id, led, func
+        for x in reversed(entries):
+            yield task_id, led, "program" if x == "program" else next(iter(x))
 
 
 def _fn_params(store: TaskStore, func: str, src: str, audit: dict) -> list | None:
@@ -105,60 +122,56 @@ def _fn_params(store: TaskStore, func: str, src: str, audit: dict) -> list | Non
     return facts[-1]["params"] if facts else None
 
 
-class Unreplayable(Exception):
-    """A stored accept that cannot be replayed faithfully (reason = str(e))."""
-
-
-# Each accept is PREPARED (every read of stored data: ledger fields, audit,
-# params, memory, traces) and then JUDGED. Any prepare failure is a row;
-# the judge calls run outside that net, so an engine bug still raises.
-
-
-def _store(task_id: str) -> TaskStore:
-    try:
-        return TaskStore(task_id)
-    except KeyError:  # ledger for a slot the current manifest lacks
-        raise Unreplayable("unknown task") from None
-
-
-def _check_binary(store: TaskStore, audit: dict, row: dict) -> None:
+def _check_binary(audit: dict, current: str, row: dict) -> None:
     # The replay must judge the SAME original: a corpus rebuild that changed
-    # the binary makes a flip the program's change, not the judge's. Legacy
-    # accepts (no digest) still replay, flagged binary_verified=False.
+    # the binary makes a flip the program's change, not the judge's.
     stored = audit.get("binary")
     row["binary_verified"] = stored is not None
-    if stored is not None and stored != binary_digest(store.meta["binary"]):
+    if stored is not None and stored != current:
         raise Unreplayable("binary changed")
 
 
-def _prep_function(task_id: str, led: dict, func: str, row: dict) -> dict:
+def _int(x: object, what: str) -> int:
+    # stored values reach the judge, which runs OUTSIDE the prepare net:
+    # type-check here so a malformed ledger is a row, not a batch abort
+    if isinstance(x, bool) or not isinstance(x, int):
+        raise TypeError(f"{what} {x!r} is not an int")
+    return x
+
+
+def _prep_function(
+    led: dict, func: str, meta: dict | None, current_bin: str | None, row: dict
+) -> dict:
     # `row` is filled as identity becomes known, so an unreplayable row still
     # names the accepted revision (source_hash, seed) it could not test.
-    src = next(x[func] for x in led["accepted"] if isinstance(x, dict) and func in x)
+    src = next(x[func] for x in led["accepted"] if _is_fn_entry(x) and func in x)
     row["source_hash"] = _src_hash(src)
     audit = led.get("audit", {}).get(func, {})
-    row["seed"] = audit.get("seed")
-    if audit.get("seed") is None:
+    row["seed"] = seed = audit.get("seed")
+    if seed is None:
         raise Unreplayable("no audit seed")
-    store = _store(task_id)
-    _check_binary(store, audit, row)
+    if isinstance(seed, bool) or not isinstance(seed, (int, str)):
+        raise TypeError(f"audit seed {seed!r} is not an int or str")
+    if meta is None:  # ledger for a slot the current manifest lacks
+        raise Unreplayable("unknown task")
+    _check_binary(audit, current_bin, row)
+    store = TaskStore(meta["task_id"])
     params = _fn_params(store, func, src, audit)
     if params is None:
         raise Unreplayable("no params")
-    if func not in store.meta["functions"]:  # removed/renamed since the accept
+    fmeta = meta["functions"].get(func)
+    if fmeta is None:  # removed/renamed since the accept
         raise Unreplayable("unknown function")
-    fmeta = _fn_meta(store, func)
-    job = {
-        "binary": store.meta["binary"],
+    return {
+        "binary": meta["binary"],
         "addr": fmeta["addr"],
         "func": func,
         "params": [Param.from_json(p) for p in params],
         "c_source": src,
-        "seed": audit["seed"],
-        "n_fuzz": int(audit.get("n_fuzz", N_FUZZ)),
+        "seed": seed,
+        "n_fuzz": _int(audit["n_fuzz"], "audit n_fuzz"),
         "size": fmeta["size"],
     }
-    return job
 
 
 def _judge_function(row: dict, job: dict) -> dict:
@@ -172,40 +185,52 @@ def _judge_function(row: dict, job: dict) -> dict:
     return {**row, "new_verdict": "reject", "divergence": v.divergence}
 
 
-def _prep_program(task_id: str, led: dict, fresh: bool, row: dict) -> dict:
+def _prep_program(
+    led: dict, fresh: bool, meta: dict | None, current_bin: str | None, row: dict
+) -> dict:
     src = led.get("program_source")
     if src is None:  # accepts before #118 kept no body
         raise Unreplayable("no program_source")
     row.update(source_hash=_src_hash(src), fresh=fresh)
     audit = led.get("audit", {}).get("program", {})
-    row["seed"] = None if fresh else audit.get("hidden_seed")
-    if audit.get("hidden_seed") is None and not fresh:
+    seed = audit.get("hidden_seed")
+    row["seed"] = None if fresh else seed
+    if seed is None and not fresh:
         # a fresh draw cannot reproduce the original gate: not a judge flip
         raise Unreplayable("no audit hidden_seed")
+    if seed is not None and not isinstance(seed, str):
+        raise TypeError(f"audit hidden_seed {seed!r} is not a str")
     # Replay the accept-time recorded set: experiments after the accept add
     # traces (and shift the hidden dedupe), which is new evidence, not a judge
-    # change. No snapshot (pre-#144) or a vanished case => not reproducible.
-    # Each snapshot entry is [argv, stdin_hex, content digest]: a case that
+    # change. Entries are [argv[1:], stdin_hex, content digest]: a case that
     # vanished OR was edited since the accept is changed evidence.
     snap = audit.get("recorded")
-    if snap is None:
+    if snap is None:  # pre-#144 accepts
         raise Unreplayable("no recorded snapshot")
-    store = _store(task_id)
-    _check_binary(store, audit, row)
-    by_key = {json.dumps(case_key(t)): t for t in store.recorded()}
+    if meta is None:
+        raise Unreplayable("unknown task")
+    _check_binary(audit, current_bin, row)
+    # stored traces are canonicalized at record time: under other rules
+    # their expected output is stale format, not a judge change
+    if audit.get("canonicalizer") != CANONICALIZER_VERSION:
+        raise Unreplayable("canonicalizer changed")
+    store = TaskStore(meta["task_id"])
+    by_key = {}
+    for t in store.recorded():
+        argv, stdin = case_key(t)
+        by_key[(tuple(argv), stdin)] = t
     rec = []
-    for *key, digest in snap:
-        t = by_key.get(json.dumps(key))
+    for argv, stdin, digest in snap:
+        t = by_key.get((tuple(argv), stdin))
         if t is None or case_digest(t) != digest:
             raise Unreplayable("recorded cases changed")
         rec.append(t)
-    job = {
+    return {
         "store": store,
         "c_source": src,
-        "hidden_seed": None if fresh else audit["hidden_seed"],
+        "hidden_seed": None if fresh else seed,
         "rec": rec,
     }
-    return job
 
 
 def _judge_program(row: dict, job: dict) -> dict:
@@ -224,6 +249,10 @@ def _judge_program(row: dict, job: dict) -> dict:
 def regrade(
     k: int | None = None, fresh: bool = False, task_ids: set[str] | None = None
 ) -> list[dict]:
+    # Environment, read OUTSIDE the per-accept net: a stale/corrupt manifest
+    # or a missing corpus binary fails the job once, loudly.
+    manifest = {t["task_id"]: t for t in load_manifest()}
+    bin_digests: dict[str, str] = {}
     rows = []
     for task_id, led, unit in accepts():
         if task_ids is not None and task_id not in task_ids:
@@ -241,19 +270,24 @@ def regrade(
                 }
             )
             continue
+        meta = manifest.get(task_id)
+        current_bin = None
+        if meta is not None:
+            if task_id not in bin_digests:
+                bin_digests[task_id] = binary_digest(meta["binary"])
+            current_bin = bin_digests[task_id]
         row: dict = {}
         try:
             if unit == "program":
-                job = _prep_program(task_id, led, fresh, row)
+                job = _prep_program(led, fresh, meta, current_bin, row)
             else:
-                job = _prep_function(task_id, led, unit, row)
-        except Unreplayable as e:
-            rows.append(
-                {**base, **row, "new_verdict": "unreplayable", "reason": str(e)}
-            )
-            continue
+                job = _prep_function(led, unit, meta, current_bin, row)
         except Exception as e:  # noqa: BLE001 - stored data only; judges run below
-            reason = f"bad stored data: {type(e).__name__}: {e}"
+            reason = (
+                str(e)
+                if isinstance(e, Unreplayable)
+                else f"bad stored data: {type(e).__name__}: {e}"
+            )
             rows.append(
                 {**base, **row, "new_verdict": "unreplayable", "reason": reason}
             )

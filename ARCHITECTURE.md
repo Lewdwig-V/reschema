@@ -149,9 +149,10 @@ Control flow across the tour sections below, as it actually happens.
    ground-truth *double-recorded*. Same replay comparison, `stage: "hidden"`.
    Too few distinct usable inputs → `hidden-starvation` reject.
 5. **Accept.** The ledger gets the idempotent `"program"` marker,
-   `audit.program` (`hidden_seed` plus `recorded`, the accept-time
-   recorded cases as `[argv, stdin_hex, content digest]`, and `binary`, the
-   corpus binary's content digest), and a journal entry; `memory.append_fact`
+   `audit.program` (`hidden_seed`; `recorded`, the accept-time recorded
+   cases as sorted `[argv[1:], stdin_hex, content digest]`; `binary`, the
+   corpus binary's content digest; `canonicalizer`, the rules version the
+   traces were recorded under), and a journal entry; `memory.append_fact`
    writes the accepted source as a `verified_fact` (`fn: "__main__"`) other
    slots of the family will see at their `task_open`.
 6. **Reject.** Counters + journal update; any agent `notes` land as
@@ -594,11 +595,12 @@ transfer in a live agent; a live-agent measurement is still pending (see
 
 `uv run python -m reschema.regrade [--k K] [--fresh] [--task ID ...]`
 re-judges ledger accepts under the CURRENT verifier and prints one
-verdict-diff JSON line per accept (`task_id, unit, old_verdict,
-new_verdict, source_hash, seed, divergence?`, stamped with the
-canonicalizer version); totals go to stderr. Measurement only: it writes
-no ledger or memory state, and a flip is data for 3B adjudication, not a
-verdict on the old judge.
+verdict-diff JSON line per accept, stamped with the canonicalizer version:
+`task_id, unit, old_verdict, new_verdict, source_hash, seed,
+binary_verified` plus `compared/skipped` (function), `fresh` (program),
+`divergence` (reject) or `reason` (unreplayable). Totals go to stderr.
+Measurement only: it writes no ledger or memory state, and a flip is data
+for 3B adjudication, not a verdict on the old judge.
 
 - Order: accepts carry no timestamps, so "last K" is tasks by ledger mtime,
   then entries newest first within a task. A function re-accept moves to
@@ -606,30 +608,36 @@ verdict on the old judge.
 - Function accepts replay `validate_function` with the audit seed and
   `n_fuzz`, so a flip isolates the judge change from the draw. Params come
   from `audit[func]["params"]` or, for pre-#143 entries, the
-  `verified_fact` with the same source and audit seed.
-- The program accept re-runs `engine.program_gate` (the pure judge
+  `verified_fact` with the same task, source and audit seed.
+- The program accept re-runs `engine.program_gate` (the judge
   `submit_program` wraps) on `program_source` with the audit `hidden_seed`,
   or fresh entropy under `--fresh`, replaying the accept-time recorded set
   (`audit.program.recorded`), not today's: experiments after the accept are
   new evidence, not a judge change.
-- No audit seed (a fresh program draw is replayed only under `--fresh`),
-  no recorded snapshot (pre-#144) or a snapshot case that vanished or was
-  edited (digest mismatch), a corpus binary that changed since the accept
-  (audit `binary` digest; legacy accepts without one replay with
-  `binary_verified: false`), no params, params the current schema rejects, an unreadable ledger, no
-  `program_source` (pre-#118), or a slot or function the manifest lacks is
-  emitted as `new_verdict: "unreplayable"` with a reason (any stored-data
-  load or decode failure too: each accept is prepared, then judged, and
-  only the prepare phase degrades to a row; judge exceptions still raise),
-  never dropped (a malformed `accepted` or an unstat-able ledger file is one
-  `bad ledger` row). So are infra failures and unjudged program draws
-  (`PROGRAM_NO_VERDICT_STAGES`): an environment outage must never read as
-  an accept→reject judge flip.
+- Everything else the verdict depended on is pinned, so a flip can only be
+  the judge's. An accept whose pins cannot be honored is emitted as
+  `new_verdict: "unreplayable"` with a reason, never dropped and never a
+  flip: `no program_source` (pre-#118), `no audit seed` / `no audit
+  hidden_seed` (a fresh program draw only under `--fresh`), `no params`,
+  `no recorded snapshot` (pre-#144), `recorded cases changed` (a snapshot
+  case vanished or its content digest differs), `binary changed` (the
+  corpus binary's digest differs; legacy accepts without one replay with
+  `binary_verified: false`), `canonicalizer changed` (stored traces are in
+  another rules version's format), `unknown task` / `unknown function`,
+  `bad ledger` (unreadable, or a malformed `accepted`), `bad stored data:
+  <error>` (any other stored-data load/decode/type failure), and from the
+  judge `infra` / `hidden-starvation` (an outage or an unjudged draw).
+- Failure boundaries: each accept is prepared (every stored-data read and
+  type check) then judged. Only the prepare phase degrades to a row; judge
+  exceptions raise (engine bug). Environment faults (a missing tasks dir,
+  a stale or corrupt manifest, a missing corpus binary) fail the whole job
+  once, loudly, rather than as per-accept noise.
 
-Negative tests (`tests/test_regrade.py`): a real accept reproduces; the
-pre-#143 mistyped `scale_buf` stub accept surfaces as a `spec` flip, also
-via the memory-params fallback; a planted wrong program surfaces as a
-`recorded` flip.
+Negative tests (`tests/test_regrade.py`): a real function accept and a real
+program accept reproduce; the pre-#143 mistyped `scale_buf` stub accept
+surfaces as a `spec` flip, also via the memory-params fallback; a planted
+wrong program surfaces as a `recorded` flip; every unreplayable reason and
+environment fault has its own case.
 
 ### tools/dogfood/ — 2C live-agent transfer driver
 

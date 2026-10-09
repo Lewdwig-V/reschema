@@ -345,6 +345,9 @@ full papers before citing externally. Ranked by judge value — what makes the
 judge harder to fool first, context and tooling next, Phase 4 hygiene last.
 The ideas the survey refused are recorded, with reasons and reopen
 conditions, in [rejected-ideas.md](rejected-ideas.md).
+The report and the four research notes behind it are kept in
+[research/2026-10-agentic-re-harnesses/](research/2026-10-agentic-re-harnesses/README.md),
+including errata where they disagree with the code.
 
 ### P0 — know how strong the judge is
 
@@ -457,6 +460,67 @@ conditions, in [rejected-ideas.md](rejected-ideas.md).
   shared-state concurrency. Every reward stamped with `METRIC_EPOCH`. An
   optional P(accept) calibration score, kept separate from E.
 
+### Further candidates (unranked)
+
+Smaller items from the survey notes that the ranked list above did not
+carry. Each is cheap or narrow, none touches acceptance, and each names the
+note it came from.
+
+- **MCP tool annotations.** Mark `experiment` and `status` as read-only and
+  idempotent, and `submit_model` and `corpus_build` as state-changing, in
+  the tool definitions (re-mcp practice). Helps clients and dogfood
+  transcripts at no judge cost. *(tools note §6)*
+- **Bounded tool output for real binaries.** Cursor pagination with hard
+  caps on `task_open` disassembly slices and on the `status` ledger, and a
+  batch form of `experiment` with per-item errors, before real binaries make
+  slices large ("context rot", ReVa). Batch probes must still count as
+  probes in E, one per item. *(tools note §1, §6)*
+- **Gold-sanity check for generated tasks (3A).** Every generated
+  function-mode spec or hidden input is validated against the harness-owned
+  reference build before it becomes a task. Program-mode generation already
+  has this through double-recording. Extend it so a vacuous spec (the #100
+  class) is refused at generation time, not at submission (arXiv
+  2606.16062). *(adjacent note §7)*
+- **Independent-evaluator posture (3B / 2C governance).** Like TRACTOR
+  (MIT Lincoln Laboratory publishes test batteries and scripts, and
+  performers do not grade themselves), publish the hidden-gate code and
+  per-slot judge-strength numbers so outsiders can re-grade results. Entropy
+  stays fresh, so publishing the gate does not publish the draws.
+  *(adjacent note §7)*
+- **The two-pass directive re-verifies the second pass.** The 2B repair
+  directive should say explicitly that the idiomatic ("skin") pass is
+  re-submitted to the same level-B judge. The literature's main failure is
+  fields, types and guards invented during readability passes (SK2Decompile,
+  D-LiFT, Decompile-Diverge). *(neural note §6)*
+- **Phase 4 preference-pair rule and memorization floor.** A preference
+  pair's "chosen" side must pass the hidden gate at harvest time, under
+  fresh entropy. Track unprimed-agent success per seed alongside primed
+  runs, so gains from the cache or curriculum are not mistaken for skill
+  (arXiv 2609.17236). Shaping terms, if any, reward only harness-drawn
+  inputs, never agent-visible ones. *(neural note §6)*
+- **2C reporting discipline.** Report primed vs unprimed φ with confidence
+  intervals, and record failure to reject as a null result rather than
+  weak support. DreamBench-SWE found no difference between memory
+  pipelines. This supports 3D's refusal to aggregate across epochs.
+  *(adjacent note §7)*
+- **Phase 3 curriculum axes.** The literature's difficulty cliffs (about 30
+  points from O0 to O3, and a 55–68% drop once struct types appear) suggest
+  the axes optimization level → inlining → struct-*by-pointer* params →
+  stripping. These stay inside v1's integer and pointer params
+  (rejected-ideas §9). Weigh them against SRE-Bench's finding that scale and
+  anti-analysis dominate; see the obfuscation-tier item above.
+  *(neural note §6)*
+- **Tool-description changes are regression-tested.** Any change to an MCP
+  tool description or payload shape runs through the 2C driver as an
+  agent-level eval, not only the contract test. The #103 false-completion
+  fix was effectively such an experiment (Anthropic tool-writing guidance,
+  SWE-agent interface ablations). *(adjacent note §7)*
+- **Open check before external citation.** Read Decompile-Diverge (arXiv
+  2609.05370) §method and compare its "bounded observable post-state
+  digest" with level B's `{ret, mem}` comparison. Do this before calling
+  them equivalent, or before claiming ReSchema is stricter.
+  *(neural note §6, report)*
+
 ## Speculative — post-1.0
 
 Not scheduled, not specced; recorded so the idea has a home when the
@@ -473,3 +537,8 @@ real-binary milestone arrives.
   the host; provider identity and version are committed with the facet so a
   provider change is visible in the ledger; absent or failing providers
   degrade the facet to an explicit `unavailable`, not a silent omission.
+- **External comparison corpus.** "Recompilation Is Not Enough" (arXiv
+  2609.07201) reports 87.5% on 104 Coreutils binaries with an exact-output
+  gate, using fixed tests and no hidden fresh inputs. Once real-binary scope
+  opens, Coreutils is a candidate external benchmark, run under ReSchema's
+  hidden gate for a like-for-like comparison. *(adjacent note §7)*

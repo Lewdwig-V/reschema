@@ -17,8 +17,10 @@ an environment outage must never read as a judge regression.
   the audit `hidden_seed` (default) or fresh entropy (`fresh=True`), against
   the accept-time recorded-case snapshot (`audit["program"]["recorded"]`).
 
-Anything that cannot be replayed faithfully (no source, no audit seed, no
-params, no recorded snapshot or a changed one, unknown task or function) is
+Each accept is prepared (all stored-data reads) then judged. Anything that
+cannot be replayed faithfully (no source, no audit seed, no params, no
+recorded snapshot or a changed one, unknown task or function, or any stored
+data that fails to load or decode) is
 emitted as `new_verdict: "unreplayable"` with a reason — never dropped.
 
 stdout: one JSON line per accept. stderr: totals.
@@ -88,35 +90,44 @@ def _fn_params(store: TaskStore, func: str, src: str, audit: dict) -> list | Non
     return facts[-1]["params"] if facts else None
 
 
-def _regrade_function(store: TaskStore, led: dict, func: str) -> dict:
+class Unreplayable(Exception):
+    """A stored accept that cannot be replayed faithfully (reason = str(e))."""
+
+
+# Each accept is PREPARED (every read of stored data: ledger fields, audit,
+# params, memory, traces) and then JUDGED. Any prepare failure is a row;
+# the judge calls run outside that net, so an engine bug still raises.
+
+
+def _prep_function(store: TaskStore, led: dict, func: str) -> tuple[dict, dict]:
     src = next(x[func] for x in led["accepted"] if isinstance(x, dict) and func in x)
     audit = led.get("audit", {}).get(func, {})
     row = {"source_hash": _src_hash(src), "seed": audit.get("seed")}
     if audit.get("seed") is None:
-        return {**row, "new_verdict": "unreplayable", "reason": "no audit seed"}
+        raise Unreplayable("no audit seed")
     params = _fn_params(store, func, src, audit)
     if params is None:
-        return {**row, "new_verdict": "unreplayable", "reason": "no params"}
+        raise Unreplayable("no params")
     if func not in store.meta["functions"]:  # removed/renamed since the accept
-        return {**row, "new_verdict": "unreplayable", "reason": "unknown function"}
-    try:  # an older ledger may hold params the current schema rejects
-        ps = [Param.from_json(p) for p in params]
-    except Exception as e:  # noqa: BLE001 - pure decoding of stale data; any shape error is a row
-        return {**row, "new_verdict": "unreplayable", "reason": f"bad params: {e}"}
+        raise Unreplayable("unknown function")
     fmeta = _fn_meta(store, func)
+    job = {
+        "binary": store.meta["binary"],
+        "addr": fmeta["addr"],
+        "func": func,
+        "params": [Param.from_json(p) for p in params],
+        "c_source": src,
+        "seed": audit["seed"],
+        "n_fuzz": int(audit.get("n_fuzz", N_FUZZ)),
+        "size": fmeta["size"],
+    }
+    return row, job
+
+
+def _judge_function(row: dict, job: dict) -> dict:
     with tempfile.TemporaryDirectory(prefix="reschema-regrade-") as d:
-        v = validate_function(
-            store.meta["binary"],
-            fmeta["addr"],
-            func,
-            ps,
-            src,
-            Path(d) / f"{func}.so",
-            seed=audit["seed"],
-            n_fuzz=audit.get("n_fuzz", N_FUZZ),
-            size=fmeta["size"],
-        )
-    row.update(compared=v.compared, skipped=v.skipped)
+        v = validate_function(so_path=Path(d) / f"{job['func']}.so", **job)
+    row = {**row, "compared": v.compared, "skipped": v.skipped}
     if v.ok:
         return {**row, "new_verdict": "accept"}
     if v.divergence.get("stage") == "infra":  # environment, not the judge
@@ -124,34 +135,36 @@ def _regrade_function(store: TaskStore, led: dict, func: str) -> dict:
     return {**row, "new_verdict": "reject", "divergence": v.divergence}
 
 
-def _regrade_program(store: TaskStore, led: dict, fresh: bool) -> dict:
+def _prep_program(store: TaskStore, led: dict, fresh: bool) -> tuple[dict, dict]:
     src = led.get("program_source")
     if src is None:  # accepts before #118 kept no body
-        return {"new_verdict": "unreplayable", "reason": "no program_source"}
+        raise Unreplayable("no program_source")
     audit = led.get("audit", {}).get("program", {})
-    unreplayable = {"source_hash": _src_hash(src), "new_verdict": "unreplayable"}
     if audit.get("hidden_seed") is None and not fresh:
         # a fresh draw cannot reproduce the original gate: not a judge flip
-        return {**unreplayable, "reason": "no audit hidden_seed"}
+        raise Unreplayable("no audit hidden_seed")
     # Replay the accept-time recorded set: experiments after the accept add
     # traces (and shift the hidden dedupe), which is new evidence, not a judge
     # change. No snapshot (pre-#144) or a vanished case => not reproducible.
     snap = audit.get("recorded")
     if snap is None:
-        return {**unreplayable, "reason": "no recorded snapshot"}
+        raise Unreplayable("no recorded snapshot")
     by_key = {json.dumps(case_key(t)): t for t in store.recorded()}
     want = [json.dumps(k) for k in snap]
     if any(k not in by_key for k in want):
-        return {**unreplayable, "reason": "recorded cases changed"}
+        raise Unreplayable("recorded cases changed")
+    job = {
+        "c_source": src,
+        "hidden_seed": None if fresh else audit["hidden_seed"],
+        "rec": [by_key[k] for k in want],
+    }
+    return {"source_hash": _src_hash(src), "fresh": fresh}, job
+
+
+def _judge_program(store: TaskStore, row: dict, job: dict) -> dict:
     with tempfile.TemporaryDirectory(prefix="reschema-regrade-") as d:
-        fail, seed = program_gate(
-            store,
-            src,
-            Path(d) / "model",
-            None if fresh else audit["hidden_seed"],
-            rec=[by_key[k] for k in want],
-        )
-    row = {"source_hash": _src_hash(src), "seed": seed, "fresh": fresh}
+        fail, seed = program_gate(store, model=Path(d) / "model", **job)
+    row = {**row, "seed": seed}
     if fail is None:
         return {**row, "new_verdict": "accept"}
     stage = fail.get("stage", fail["reason"])
@@ -187,10 +200,22 @@ def regrade(
                 {**base, "new_verdict": "unreplayable", "reason": "unknown task"}
             )
             continue
+        try:
+            if unit == "program":
+                row, job = _prep_program(store, led, fresh)
+            else:
+                row, job = _prep_function(store, led, unit)
+        except Unreplayable as e:
+            rows.append({**base, "new_verdict": "unreplayable", "reason": str(e)})
+            continue
+        except Exception as e:  # noqa: BLE001 - stored data only; judges run below
+            reason = f"bad stored data: {type(e).__name__}: {e}"
+            rows.append({**base, "new_verdict": "unreplayable", "reason": reason})
+            continue
         if unit == "program":
-            rows.append({**base, **_regrade_program(store, led, fresh)})
+            rows.append({**base, **_judge_program(store, row, job)})
         else:
-            rows.append({**base, **_regrade_function(store, led, unit)})
+            rows.append({**base, **_judge_function(row, job)})
     return rows
 
 

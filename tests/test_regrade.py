@@ -164,6 +164,15 @@ def test_program_accept_reproduces_and_planted_flip_surfaces(built_corpus):
     (row,) = regrade(task_ids={ROT}, fresh=True)  # explicitly requested: runs
     assert row["new_verdict"] == "accept" and row["fresh"] is True, row
 
+    # an interrupted (non-atomic) trace write: a row, not a batch abort
+    e01 = st._path("trace_e01.json")
+    good = e01.read_text()
+    e01.write_text(good[: len(good) // 2])
+    (row,) = regrade(task_ids={ROT}, fresh=True)
+    assert row["new_verdict"] == "unreplayable", row
+    assert row["reason"].startswith("bad stored data: JSONDecodeError"), row
+    e01.write_text(good)
+
     st._path("trace_e00.json").unlink()  # a snapshot case vanished
     (row,) = regrade(task_ids={ROT}, fresh=True)
     assert (row["new_verdict"], row["reason"]) == (
@@ -265,7 +274,7 @@ def test_bad_params_and_corrupt_ledger_are_unreplayable(calc, built_corpus):
     other._path("ledger.json").write_text("{not json")
     rows = {r["task_id"]: r for r in regrade(task_ids={SUM, "calc::gcc-O1-sym"})}
     assert rows[SUM]["new_verdict"] == "unreplayable", rows
-    assert rows[SUM]["reason"].startswith("bad params"), rows
+    assert rows[SUM]["reason"].startswith("bad stored data: IndexError"), rows
     bad = rows["calc::gcc-O1-sym"]
     assert (bad["old_verdict"], bad["new_verdict"], bad["reason"]) == (
         "unknown",
@@ -273,3 +282,24 @@ def test_bad_params_and_corrupt_ledger_are_unreplayable(calc, built_corpus):
         "bad ledger",
     )
     wipe_task(other)
+
+
+def test_judge_errors_still_raise(calc, monkeypatch):
+    # Only stored-data loading degrades to a row: an exception inside the
+    # judge is an engine bug and must surface, never read as "unreplayable".
+    import reschema.regrade as rg
+
+    _plant(
+        calc,
+        {
+            "accepted": [{"sum_range": RIGHT}],
+            "audit": {"sum_range": {"seed": 1, "n_fuzz": 8, "params": PARAMS}},
+        },
+    )
+
+    def boom(*a, **k):
+        raise RuntimeError("engine bug")
+
+    monkeypatch.setattr(rg, "validate_function", boom)
+    with pytest.raises(RuntimeError, match="engine bug"):
+        regrade(task_ids={SUM})

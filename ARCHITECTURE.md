@@ -614,7 +614,9 @@ verdict on the old judge.
 - No audit seed (a fresh program draw is replayed only under `--fresh`),
   no recorded snapshot (pre-#144) or a vanished snapshot case, no params, params the current schema rejects, an unreadable ledger, no
   `program_source` (pre-#118), or a slot or function the manifest lacks is
-  emitted as `new_verdict: "unreplayable"` with a reason,
+  emitted as `new_verdict: "unreplayable"` with a reason (any stored-data
+  load or decode failure too: each accept is prepared, then judged, and
+  only the prepare phase degrades to a row; judge exceptions still raise),
   never dropped. So are infra failures and unjudged program draws
   (`PROGRAM_NO_VERDICT_STAGES`): an environment outage must never read as
   an accept→reject judge flip.

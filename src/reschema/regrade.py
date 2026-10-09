@@ -3,7 +3,11 @@ verifier and emit a verdict diff. Measurement only — no adjudication, no
 ledger/memory writes; a flip is data, not a verdict on the old judge.
 
 Accepts are enumerated newest first: tasks by ledger mtime (accepts carry no
-timestamps), entries within a task newest first. `k` caps the count.
+timestamps), entries within a task newest first (a re-accept moves to the
+end of `accepted`; ledgers written before #144 kept a re-accepted function
+at its first position). `k` caps the count. Infra failures and unjudged
+program draws (`PROGRAM_NO_VERDICT_STAGES`) are unreplayable, not flips:
+an environment outage must never read as a judge regression.
 
 - function accepts replay `validate_function` with the audit seed and n_fuzz,
   so any flip is the judge's change, not a new draw. Params come from
@@ -30,7 +34,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from .driver.spec import Param
-from .engine import TASKS, TaskStore, _fn_meta, program_gate
+from .engine import PROGRAM_NO_VERDICT_STAGES, TASKS, TaskStore, _fn_meta, program_gate
 from .exec.canonical import CANONICALIZER_VERSION
 from .memory import read_family
 from .validate.function import N_FUZZ, validate_function
@@ -97,6 +101,8 @@ def _regrade_function(store: TaskStore, led: dict, func: str) -> dict:
     row.update(compared=v.compared, skipped=v.skipped)
     if v.ok:
         return {**row, "new_verdict": "accept"}
+    if v.divergence.get("stage") == "infra":  # environment, not the judge
+        return {**row, "new_verdict": "unreplayable", "reason": "infra"}
     return {**row, "new_verdict": "reject", "divergence": v.divergence}
 
 
@@ -119,6 +125,9 @@ def _regrade_program(store: TaskStore, led: dict, fresh: bool) -> dict:
     row = {"source_hash": _src_hash(src), "seed": seed, "fresh": fresh}
     if fail is None:
         return {**row, "new_verdict": "accept"}
+    stage = fail.get("stage", fail["reason"])
+    if stage in PROGRAM_NO_VERDICT_STAGES:  # the source was never judged
+        return {**row, "new_verdict": "unreplayable", "reason": stage}
     return {**row, "new_verdict": "reject", "divergence": fail}
 
 

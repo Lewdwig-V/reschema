@@ -851,14 +851,13 @@ def submit_function(
         return _rejection_response(
             store, led, {"accepted": False, "divergence": v.divergence}
         )
-    # Newest accepted source wins: a re-accept also passed validation, so replace.
-    existing = next(
-        (f for f in led["accepted"] if isinstance(f, dict) and func in f), None
-    )
-    if existing is not None:
-        existing[func] = c_source
-    else:
-        led["accepted"].append({func: c_source})
+    # Newest accepted source wins: a re-accept also passed validation, so it
+    # replaces the old entry AND moves to the end (list order = accept recency,
+    # like the program marker; the #112 re-grade's last-K reads it).
+    led["accepted"] = [
+        f for f in led["accepted"] if not (isinstance(f, dict) and func in f)
+    ]
+    led["accepted"].append({func: c_source})
     # Audit trail (parallel to "accepted" so compose's {func: source} shape is
     # untouched): the EFFECTIVE fuzz seed (fresh entropy included) + final budget,
     # plus the skip count and accepted params so a re-grade (#112) can recount

@@ -213,7 +213,8 @@ the container (containment for untrusted code). They never share a substrate.
 6. Per case, `{ret, mem}` is compared (`ret` skipped for void specs — eax is
    register residue; mem is their channel). First mismatch rejects with
    `{input, field, expected, actual, seed}`.
-7. Accept: newest source wins in the ledger (`{func: c_source}`), audit keeps
+7. Accept: newest source wins in the ledger (`{func: c_source}`, moved to the
+   end on re-accept so list order is accept recency), audit keeps
    `{seed, n_fuzz, compared, skipped, params}`, and a `verified_fact`
    (params, source, topology digest) is appended to the family cache.
 
@@ -598,7 +599,8 @@ no ledger or memory state, and a flip is data for 3B adjudication, not a
 verdict on the old judge.
 
 - Order: accepts carry no timestamps, so "last K" is tasks by ledger mtime,
-  then entries newest first within a task.
+  then entries newest first within a task. A function re-accept moves to
+  the end of `accepted` (since #144; older ledgers kept it in place).
 - Function accepts replay `validate_function` with the audit seed and
   `n_fuzz`, so a flip isolates the judge change from the draw. Params come
   from `audit[func]["params"]` or, for pre-#143 entries, the
@@ -609,7 +611,9 @@ verdict on the old judge.
 - No audit seed (a fresh program draw is replayed only under `--fresh`),
   no params, no `program_source` (pre-#118), or a slot or function the
   manifest lacks is emitted as `new_verdict: "unreplayable"` with a reason,
-  never dropped.
+  never dropped. So are infra failures and unjudged program draws
+  (`PROGRAM_NO_VERDICT_STAGES`): an environment outage must never read as
+  an accept→reject judge flip.
 
 Negative tests (`tests/test_regrade.py`): a real accept reproduces; the
 pre-#143 mistyped `scale_buf` stub accept surfaces as a `spec` flip, also

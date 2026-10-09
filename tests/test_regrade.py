@@ -7,7 +7,8 @@ from conftest import wipe_task
 
 from reschema.engine import TaskStore, submit_function, submit_program
 from reschema.memory import append_fact
-from reschema.regrade import regrade
+from reschema.regrade import _src_hash, regrade
+from reschema.validate.function import FnVerdict
 
 SUM = "calc::gcc-O2-sym"
 ROT = "rot13::gcc-O2-sym"
@@ -156,3 +157,59 @@ def test_program_accept_reproduces_and_planted_flip_surfaces(built_corpus):
     st.save_ledger(led)
     (row,) = regrade(task_ids={ROT})
     assert (row["new_verdict"], row["reason"]) == ("unreplayable", "no program_source")
+
+
+CLAMP = """#include <stdint.h>
+__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}"""
+CLAMP_PARAMS = [
+    {"name": "v", "kind": "i32", "range": [-100, 100]},
+    {"name": "lo", "kind": "i32", "range": [-50, 0]},
+    {"name": "hi", "kind": "i32", "range": [1, 50]},
+]
+
+
+def test_reaccept_is_newest_for_last_k(calc):
+    # f1, f2, then a revised f1: --k 1 must re-grade the revised f1 source.
+    revised = RIGHT + "\n/* revised */\n"
+    for func, params, src in [
+        ("sum_range", PARAMS, RIGHT),
+        ("clamp_i32", CLAMP_PARAMS, CLAMP),
+        ("sum_range", PARAMS, revised),
+    ]:
+        assert submit_function(calc, func, params, src, seed=1, n_fuzz=8)["accepted"]
+    (row,) = regrade(k=1, task_ids={SUM})
+    assert row["unit"] == "sum_range" and row["new_verdict"] == "accept", row
+    assert row["source_hash"] == _src_hash(revised), row
+
+
+def test_infra_failures_are_not_flips(calc, monkeypatch):
+    # An environment outage (missing image, worker death) must never read as
+    # a judge regression: unreplayable, not accept->reject.
+    import reschema.regrade as rg
+
+    _plant(
+        calc,
+        {
+            "accepted": [{"sum_range": RIGHT}, "program"],
+            "program_source": "int main(void){return 0;}",
+            "audit": {
+                "sum_range": {"seed": 1, "n_fuzz": 8, "params": PARAMS},
+                "program": {"hidden_seed": "hidden:x:y"},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        rg,
+        "validate_function",
+        lambda *a, **k: FnVerdict(False, {"stage": "infra", "detail": "no image"}),
+    )
+    for fail in (
+        {"reason": "compile", "stage": "infra", "detail": "compile infra: x"},
+        {"reason": "hidden-starvation", "detail": "3/8"},
+    ):
+        monkeypatch.setattr(rg, "program_gate", lambda *a, f=fail, **k: (f, "s"))
+        rows = regrade(task_ids={SUM})
+        assert {(r["unit"], r["new_verdict"]) for r in rows} == {
+            ("program", "unreplayable"),
+            ("sum_range", "unreplayable"),
+        }, rows

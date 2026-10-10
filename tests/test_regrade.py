@@ -10,6 +10,7 @@ from conftest import wipe_task
 
 import reschema.engine as eng
 import reschema.regrade as rg
+from reschema.driver import podrun
 from reschema.engine import (
     TASKS,
     TaskStore,
@@ -92,9 +93,11 @@ def test_known_function_accept_reproduces(calc):
     assert r["accepted"], r
     audit = calc.ledger()["audit"]["sum_range"]
     assert audit["binary"] == binary_digest(calc.meta["binary"]), audit
+    assert audit["toolchain"] == podrun.image_id(), audit
     (row,) = regrade(task_ids={SUM})
     assert row["unit"] == "sum_range" and row["new_verdict"] == "accept", row
     assert row["binary_verified"] is True, row
+    assert row["toolchain_verified"] is True, row
     assert (row["compared"], row["skipped"], row["seed"]) == (r["compared"], 0, 1)
 
 
@@ -110,6 +113,7 @@ def test_pre_floor_accept_surfaces_as_flip(calc):
     assert (row["old_verdict"], row["new_verdict"]) == ("accept", "reject"), row
     assert row["divergence"]["stage"] == "spec", row
     assert row["binary_verified"] is False, row  # legacy audit: no digest
+    assert row["toolchain_verified"] is False, row  # ...and no image ID
 
 
 def test_pre_143_audit_falls_back_to_memory_params(calc):
@@ -179,7 +183,14 @@ def test_program_accept_reproduces_and_planted_flip_surfaces(built_corpus):
     r = submit_program(st, GOOD_ROT13)
     assert r["accepted"], r
     audit = st.ledger()["audit"]["program"]
-    assert set(audit) == {"hidden_seed", "recorded", "binary", "canonicalizer"}
+    assert set(audit) == {
+        "hidden_seed",
+        "recorded",
+        "binary",
+        "canonicalizer",
+        "toolchain",
+    }
+    assert audit["toolchain"] == podrun.image_id(), audit
     assert audit["recorded"] == sorted(audit["recorded"]), audit
     assert [len(e) for e in audit["recorded"]] == [3, 3, 3], audit
 
@@ -192,6 +203,7 @@ def test_program_accept_reproduces_and_planted_flip_surfaces(built_corpus):
     assert row["new_verdict"] == "accept", row
     assert row["seed"] == r["hidden_seed"] and row["fresh"] is False, row
     assert row["binary_verified"] is True, row
+    assert row["toolchain_verified"] is True, row
     late.unlink()
 
     led = st.ledger()
@@ -255,6 +267,7 @@ def test_program_accept_reproduces_and_planted_flip_surfaces(built_corpus):
     "over, reason",
     [
         ({"binary": "0" * 16}, "binary changed"),
+        ({"toolchain": "0" * 64}, "toolchain changed"),
         ({"canonicalizer": "0.0"}, "canonicalizer changed"),
     ],
 )
@@ -274,25 +287,27 @@ def test_program_pins_changed_are_unreplayable(calc, over, reason):
     assert row["source_hash"] == _src_hash(GOOD_ROT13), row
 
 
-def test_rebuilt_binary_is_unreplayable(calc):
-    # Same seed/params/source against a CHANGED original is not a judge
-    # comparison: a corpus rebuild must not read as an accept->reject flip.
+@pytest.mark.parametrize(
+    "over, reason",
+    [
+        ({"binary": "0" * 16}, "binary changed"),
+        # #146: the image tag is mutable; a rebuilt gcc/clang may compile the
+        # accepted source differently (even to a compile-stage reject)
+        ({"toolchain": "0" * 64}, "toolchain changed"),
+    ],
+)
+def test_function_pins_changed_are_unreplayable(calc, over, reason):
+    # Same seed/params/source against a CHANGED original or toolchain is not
+    # a judge comparison: a rebuild must not read as an accept->reject flip.
     _plant(
         calc,
         {
             "accepted": [{"sum_range": RIGHT}],
-            "audit": {
-                "sum_range": {
-                    "seed": 1,
-                    "n_fuzz": 8,
-                    "params": PARAMS,
-                    "binary": "0" * 16,
-                }
-            },
+            "audit": {"sum_range": {"seed": 1, "n_fuzz": 8, "params": PARAMS, **over}},
         },
     )
     (row,) = regrade(task_ids={SUM})
-    assert (row["new_verdict"], row["reason"]) == ("unreplayable", "binary changed")
+    assert (row["new_verdict"], row["reason"]) == ("unreplayable", reason)
     assert row["source_hash"] == _src_hash(RIGHT), row
 
 
@@ -317,6 +332,28 @@ def test_reaccept_is_newest_for_last_k(calc, monkeypatch):
     (row,) = regrade(k=1, task_ids={SUM})
     assert row["unit"] == "sum_range" and row["new_verdict"] == "accept", row
     assert row["source_hash"] == _src_hash(revised), row
+
+
+def test_corrupt_memory_is_named_not_no_params(calc, monkeypatch, tmp_path):
+    # #147: a pre-#143 accept whose matching verified_fact line is corrupt
+    # must name the unreadable store, not claim the params never existed.
+    _plant(
+        calc,
+        {
+            "accepted": [{"scale_buf": STUB}],
+            "audit": {"scale_buf": {"seed": 4242, "n_fuzz": 64}},
+        },
+    )
+    monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
+    append_fact("calc", {"tier": "verified_fact", "fn": "other", "task_id": SUM})
+    fam = tmp_path / "calc.jsonl"
+    fam.write_text(fam.read_text() + '{"tier": "verified_fact", "fn": "scale_bu\n')
+    (row,) = regrade(task_ids={SUM})
+    assert (row["new_verdict"], row["reason"]) == (
+        "unreplayable",
+        "bad stored data: corrupt memory (1 lines)",
+    ), row
+    assert row["source_hash"] == _src_hash(STUB), row
 
 
 def test_infra_failures_are_not_flips(calc, monkeypatch):
@@ -455,6 +492,9 @@ def test_removed_task_row_keeps_identity(gone_dir):
 @pytest.mark.parametrize(
     "write",
     [
+        # #148: no `accepted` key at all is corruption, not "0 accepts"
+        lambda p: p.write_text("{}"),
+        lambda p: p.write_text(json.dumps({"submissions": 3, "audit": {}})),
         # wrong-typed collection: reversed() accepts a dict, keys are ignored
         lambda p: p.write_text(json.dumps({"accepted": {"sum_range": "x"}})),
         # unknown entry shapes: a scalar, an empty dict (vacuous all()), a
@@ -482,6 +522,10 @@ def _stale_manifest():
     raise RuntimeError("corpus recorded under canonicalizer 2.0")
 
 
+def _no_image():
+    raise RuntimeError("toolchain image missing")
+
+
 @pytest.mark.parametrize(
     "fault, exc",
     [
@@ -492,6 +536,11 @@ def _stale_manifest():
         ),
         # wrong RESCHEMA_HOME: must not read as {"total": 0}
         (lambda mp, tmp: mp.setattr(rg, "TASKS", tmp / "nope"), FileNotFoundError),
+        # toolchain image gone: one loud failure, not N "toolchain changed"
+        (
+            lambda mp, tmp: mp.setattr(rg.podrun, "image_id", _no_image),
+            RuntimeError,
+        ),
         # corpus binary gone: an environment fault, not stored data
         (
             lambda mp, tmp: mp.setattr(

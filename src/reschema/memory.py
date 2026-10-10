@@ -29,20 +29,32 @@ def _path(root: Path | None, seed: str) -> Path:
 def read_family(
     seed: str, root: Path | None = None, fn: str | None = None
 ) -> list[dict]:
+    return scan_family(seed, root, fn)[0]
+
+
+def scan_family(
+    seed: str, root: Path | None = None, fn: str | None = None
+) -> tuple[list[dict], int]:
+    """read_family plus the count of unreadable lines in the WHOLE file (a
+    corrupt line names no fn, so it cannot be filtered). Agent-facing hints
+    ignore the count; the #112 re-grade reports it rather than reading a
+    corrupt store as "no params" (#147)."""
     p = _path(root, seed)
     if not p.exists():
-        return []
-    out = []
+        return [], 0
+    out, bad = [], 0
     for line in p.read_text().splitlines():
         try:
             e = json.loads(line)
         except json.JSONDecodeError:
-            continue  # a hint source degrades to "no memory", never crashes
+            bad += 1  # a hint source degrades to "no memory", never crashes
+            continue
         if not isinstance(e, dict):
-            continue  # valid JSON but not an entry (null/[]/scalar) — skip quietly
+            bad += 1  # valid JSON but not an entry (null/[]/scalar)
+            continue
         if fn is None or e.get("fn") == fn:
             out.append(e)
-    return out
+    return out, bad
 
 
 def append_fact(seed: str, entry: dict, root: Path | None = None) -> None:

@@ -499,6 +499,7 @@ def submit_program(
     fail, hidden_seed = program_gate(store, c_source, model)
     if fail is not None:
         return reject(**fail)
+    toolchain = podrun.image_id()  # before any accept side effect, like digests
     # Accept marker is idempotent (re-accept re-records one), audit keeps the
     # effective hidden seed so the passing suite is traceable like function mode.
     led["accepted"] = [
@@ -511,13 +512,15 @@ def submit_program(
     led["program_source"] = c_source
     # ...plus what a re-grade (#112) must pin to isolate a JUDGE change: the
     # recorded set it was judged on (later experiments add traces), the corpus
-    # binary (a rebuild changes the original), and the canonicalizer the
-    # stored traces were recorded under (a rules bump changes their format).
+    # binary (a rebuild changes the original), the canonicalizer the stored
+    # traces were recorded under (a rules bump changes their format), and the
+    # toolchain image that compiled the source (#146: the tag is mutable).
     led.setdefault("audit", {})["program"] = {
         "hidden_seed": hidden_seed,
         "recorded": sorted([*case_key(t), case_digest(t)] for t in store.recorded()),
         "binary": binary_digest(store.meta["binary"]),
         "canonicalizer": CANONICALIZER_VERSION,
+        "toolchain": toolchain,
     }
     _journal(led, {"mode": "program", "outcome": "accept"})
     _record_notes(store, "__main__", notes, promoted=True)
@@ -861,6 +864,7 @@ def submit_function(
     # digest BEFORE any accept side effect (notes promote below): a failure
     # here must not leave promoted notes for an accept never saved
     bin_digest = binary_digest(store.meta["binary"]) if v.ok else None
+    toolchain = podrun.image_id() if v.ok else None
     _record_notes(store, func, notes, promoted=v.ok)
     if not v.ok:
         led["rejections"] += 1
@@ -908,6 +912,7 @@ def submit_function(
         "skipped": v.skipped,
         "params": [p.to_json() for p in ps],
         "binary": bin_digest,
+        "toolchain": toolchain,
     }
     _journal(led, {"mode": "function", "outcome": "accept", "function": func})
     store.save_ledger(led)

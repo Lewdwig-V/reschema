@@ -55,6 +55,30 @@ def ensure_image() -> None:
         raise RuntimeError(f"level-B worker image missing; build it: {BUILD_CMD}")
 
 
+def image_id() -> str:
+    """Content identity of the toolchain image behind the mutable IMAGE tag.
+
+    Accepts stamp it in `audit` so the #112 re-grade can tell a toolchain
+    rebuild (different gcc/clang behaviour under the same tag) from a judge
+    change (#146). One `podman image inspect` (~25ms) per call, uncached: a
+    long-lived server must see a rebuild made while it runs."""
+    try:
+        p = subprocess.run(
+            ["podman", "image", "inspect", "--format", "{{.Id}}", IMAGE],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=_podman_env(),
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            "podman not installed; install podman (rootless) for level-B work"
+        ) from e
+    if p.returncode != 0 or not p.stdout.strip():
+        raise RuntimeError(f"toolchain image missing; build it: {BUILD_CMD}")
+    return p.stdout.strip()
+
+
 def run_worker(job: dict, workdir: Path, timeout: int | None = None) -> dict:
     """One validation round inside a throwaway rootless container; returns result JSON.
 

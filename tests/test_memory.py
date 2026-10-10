@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from reschema.memory import append_fact, read_family
+from reschema.memory import append_fact, read_family, scan_family
 
 
 def _fact(**kw):
@@ -209,6 +209,18 @@ def test_malformed_non_object_lines_skipped(tmp_path):
     assert entries == [
         {"tier": "verified_fact", "fn": "sum_range", "task_id": "calc::gcc-O2-sym"}
     ]
+
+
+def test_scan_family_counts_unreadable_lines(tmp_path):
+    # #147: the strict-reader seam. Corrupt and non-object lines are counted
+    # file-wide (a corrupt line names no fn), while read_family stays lenient.
+    good = {"tier": "verified_fact", "fn": "sum_range", "task_id": "t"}
+    (tmp_path / "calc.jsonl").write_text(
+        json.dumps(good) + '\n{"fn": "sum_ra\nnull\n' + json.dumps({"fn": "x"}) + "\n"
+    )
+    assert scan_family("calc", root=tmp_path, fn="sum_range") == ([good], 2)
+    assert read_family("calc", root=tmp_path, fn="sum_range") == [good]
+    assert scan_family("absent", root=tmp_path) == ([], 0)
 
 
 def test_verified_fact_carries_topology_digest(manifest, monkeypatch, tmp_path):

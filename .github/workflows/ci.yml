@@ -7,6 +7,7 @@ on:
   pull_request:
 permissions:
   contents: read
+  packages: read
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -25,28 +26,79 @@ jobs:
           ! command -v gcc && ! command -v cc && ! command -v clang && ! command -v strip
       - run: uv sync
       # The image is a pure function of Containerfile (no COPY; the worker is
-      # mounted at run time), so its hash is the whole cache key. A miss
-      # builds (base via the mirror below) and saves; a hit skips the base
-      # pull and the gcc/clang apt install.
+      # mounted at run time), so its hash is the whole cache key and the GHCR
+      # tag (tools/toolchain_image.sh --tag). Order: actions cache, then the
+      # image main published to GHCR, then a build. A miss saves the tar.
+      - name: toolchain image tag
+        id: tc
+        run: echo "tag=$(tools/toolchain_image.sh --tag)" >> "$GITHUB_OUTPUT"
       - name: toolchain image cache
         id: toolchain
         uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/reschema-toolchain.tar
-          key: reschema-toolchain-1-${{ hashFiles('Containerfile') }}
+          key: reschema-toolchain-1-${{ steps.tc.outputs.tag }}
       - name: load cached toolchain image
         if: steps.toolchain.outputs.cache-hit == 'true'
         run: podman load -i "$RUNNER_TEMP/reschema-toolchain.tar"
+      # Fork PRs may lack package access: a failed pull falls through to build.
+      - name: pull published toolchain image
+        id: pull
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        continue-on-error: true
+        env:
+          REMOTE: ghcr.io/lewdwig-v/reschema-toolchain:${{ steps.tc.outputs.tag }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$TOKEN" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          podman pull "$REMOTE"
+          podman tag "$REMOTE" localhost/reschema-toolchain:1
       # Docker Hub rate-limits anonymous pulls from shared runner IPs: try
       # mirror.gcr.io first, falling back to docker.io (the mirror may evict).
       - name: build toolchain image
-        if: steps.toolchain.outputs.cache-hit != 'true'
+        if: steps.toolchain.outputs.cache-hit != 'true' && steps.pull.outcome != 'success'
         run: |
           sudo mkdir -p /etc/containers/registries.conf.d
           printf '[[registry]]\nprefix = "docker.io"\nlocation = "docker.io"\n\n[[registry.mirror]]\nlocation = "mirror.gcr.io"\n' \
             | sudo tee /etc/containers/registries.conf.d/50-dockerhub-mirror.conf
           podman build -t localhost/reschema-toolchain:1 -f Containerfile .
-          podman save -o "$RUNNER_TEMP/reschema-toolchain.tar" localhost/reschema-toolchain:1
+      - name: save toolchain image for the cache
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        run: podman save -o "$RUNNER_TEMP/reschema-toolchain.tar" localhost/reschema-toolchain:1
       - run: podman image exists localhost/reschema-toolchain:1
       - run: uv run ruff check src tests
       - run: uv run pytest -x -q -n auto
+
+  # Publish the tested image to GHCR, once per Containerfile hash: the tag is
+  # never overwritten, so it names one image ID everywhere it is pulled
+  # (tools/toolchain_image.sh), and a later rebuild can't change it (#146).
+  publish-toolchain:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: toolchain image tag
+        id: tc
+        run: echo "tag=$(tools/toolchain_image.sh --tag)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/reschema-toolchain.tar
+          key: reschema-toolchain-1-${{ steps.tc.outputs.tag }}
+          fail-on-cache-miss: true
+      - name: push unless already published
+        env:
+          REMOTE: ghcr.io/lewdwig-v/reschema-toolchain:${{ steps.tc.outputs.tag }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$TOKEN" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          if skopeo inspect --raw "docker://$REMOTE" >/dev/null 2>&1; then
+            echo "$REMOTE already published"
+          else
+            podman load -i "$RUNNER_TEMP/reschema-toolchain.tar"
+            podman tag localhost/reschema-toolchain:1 "$REMOTE"
+            podman push "$REMOTE"
+          fi

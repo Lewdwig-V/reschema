@@ -85,7 +85,10 @@ def corpus_build(
     Returns the task_id list of what was built."""
     from ..corpus.generate import build
 
-    return [t["task_id"] for t in build(seed_ids=seed_ids, matrix=matrix)]
+    try:
+        return [t["task_id"] for t in build(seed_ids=seed_ids, matrix=matrix)]
+    except KeyError as e:  # no task/function lookup here: corrupt state, not not_found
+        return _internal(e)
 
 
 @server.tool()

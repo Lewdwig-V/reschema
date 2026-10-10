@@ -244,6 +244,17 @@ def test_experiment_bad_param_spec_returns_spec_error():
     assert r2["error"] == "spec"
 
 
+def test_corpus_build_keyerror_is_internal_not_not_found(monkeypatch):
+    # corpus_build has no lookup boundary: a KeyError is corrupt manifest
+    # state (e.g. an entry missing task_id), never a missing resource
+    def corrupt(**_):
+        raise KeyError("task_id")
+
+    monkeypatch.setattr("reschema.corpus.generate.build", corrupt)
+    r = call("corpus_build")
+    assert r == {"error": "internal", "detail": "KeyError: 'task_id'"}
+
+
 def test_status_corrupt_ledger_returns_internal_error():
     st = TaskStore("calc::gcc-O2-sym")
     st._path("ledger.json").write_text("{corrupt")

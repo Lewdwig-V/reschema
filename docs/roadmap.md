@@ -579,6 +579,62 @@ note it came from.
   them equivalent, or before claiming ReSchema is stricter.
   *(neural note §6, report)*
 
+## Backlog — ARC-AGI-3 harness lessons (2026-10)
+
+From a survey of NVIDIA AVO (agentic variation operators), MIT VISTA (a
+visual harness for interactive tasks) and ARC Prize's OpenAI provider
+adapter, all reported on ARC-AGI-3. The report lives in Warranted
+([research/2026-10-10-arc-agi-3-harness-lessons.md](https://github.com/Lewdwig-V/warranted/blob/main/docs/research/2026-10-10-arc-agi-3-harness-lessons.md)),
+because most of its recommendations land there (M9 strategy layer, M10
+adapter evidence, M6). Most sources were read as search extracts and every
+figure is self-reported: AVO and VISTA on the public games, GPT-6 Astra on
+the Semi-Private set. Treat the numbers as directional. All items below wait for the M8 port: the gates, #113/#114 and
+#128/#129 are frozen until it lands, so the judge-facing work runs as
+Warranted campaigns over the ported checkers, not as edits to `engine.py`.
+None relaxes the judge.
+
+- **AVO as the variation operator for judge hardening.** An agent
+  that proposes, repairs and verifies edits under an unchanged evaluator is
+  the shape the P0/P1 judge-strength items already need, with the judge, not
+  the task, as the target:
+  - LLM-written semantic mutants of reference C, alongside the syntactic
+    operators, for the mutation kill rate;
+  - an adversary loop with a fixed budget that evolves wrong-but-accepted
+    models for the hackability audit;
+  - LLM-proposed inputs scored by coverage for the offline hidden-input pool
+    and #122's kill corpus (#109).
+
+  Following NVIDIA's follow-up CAKE, an attack that succeeds repeatedly is
+  promoted into the 3A negative-regression garden as a permanent negative test.
+  Outputs reach CI and benchmark artifacts only, never an agent-visible
+  surface (rejected-ideas §4).
+- **The adapter is part of the metric epoch.** GPT-6 Astra's best
+  Semi-Private ARC-AGI-3 results were 62.7% under the standard harness and
+  99.9% when the provider adapter replayed native reasoning between turns,
+  at different reasoning levels. That pair is not controlled, but OpenAI's
+  own comparison on a fixed model (13.3% to 38.3%) points the same way. The epoch
+  that M8 starts (#114's `METRIC_EPOCH`, carried in the domain version)
+  should name the Warranted adapter and its reasoning-retention setting, so
+  an adapter upgrade cannot move E silently. Warranted M10 records the
+  setting.
+- **#128/#129 as a trajectory problem, after the port.** The continuation
+  controller is ReSchema's action-pathway target, with E (which already
+  prices probes and submissions, like ARC-AGI-3's action-efficiency score) as
+  the path cost it must not reset. Mine 2C transcripts for false completion,
+  looping and abandonment first. Learned scheduling waits for Warranted M6
+  and for more live trajectories than three `gemma4:26b` floors.
+- **2C reporting by component.** VISTA reports its gain as a ladder:
+  interface, then notes, then lossless look-back. The next 2C configuration
+  family should report the same way. Each step is its own prompt/tool
+  configuration under the protocol's A/B/C rule.
+
+Considered, not adopted:
+- AVO-style search inside the measured agent loop, which is pass@k by
+  another name (§6) and would expose fitness signals (§4).
+- VISTA's predict-then-verify instruction in baseline runs, which breaks the
+  neutral-prompt rule. It is admissible only as its own labelled
+  configuration.
+
 ## Speculative — post-1.0
 
 Not scheduled, not specced; recorded so the idea has a home when the

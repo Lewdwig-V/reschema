@@ -132,10 +132,14 @@ by binary digest and case. That is ReSchema code, not a Warranted change.
   256 KiB per stream, which is ample for 4×`N_FUZZ` function cases.
 - **Memory applicability.** `MemorySpec.depends` names task files whose bytes
   define the family. The corpus binaries differ per slot, so they cannot be the
-  dependency. Add a small `family.json` input (seed name, function names,
-  canonicaliser version), so a canonicaliser bump marks old facts stale. This
-  replaces the rule that `CANONICALIZER_VERSION` changes force a corpus
-  re-record, for memory purposes.
+  dependency. Add a small `family.json` input holding the seed name, the
+  SHA-256 of the seed's C source, the family's function metadata (names and
+  declared ABI), and the canonicaliser version. Any change to the corpus source,
+  the ABI metadata or the canonicaliser then marks old facts stale, even when
+  the seed and its functions keep their names. The file carries a digest, never
+  the source itself, so it reveals nothing to the worker. For memory purposes,
+  this replaces the rule that a `CANONICALIZER_VERSION` change forces a corpus
+  re-record.
 - **Efficiency metric.** E is computed from Warranted accounting: probes become
   `probe` operation units, submissions are Warranted submissions. The θ_E vector
   goes into the domain version, which is the natural home for #114's

@@ -50,13 +50,13 @@ def _phis(up_e: dict[int, float], pr_e: dict[int, float]) -> list[float]:
 def phi_family(records: list[dict]) -> dict:
     """Median headroom recovery over later slots vs slot-0 unprimed baseline.
 
-    Records for ONE family; the caller groups. With a "rep" field present, φ
-    is computed per rep (MEAN over the rep's later slots — protocol §2) and
-    phi_median / phi_iqr are the median and IQR ACROSS reps — the protocol's
-    spread measure over paired runs. Without "rep", phi_median pools all
-    later slots and phi_iqr is None. deltas are always populated: they are
-    the fallback evidence when φ is uninterpretable (no base0 / zero
-    headroom). n_phi_reps is the rep count that fed φ (None without "rep").
+    Records for ONE family; the caller groups. Every record carries "rep"
+    (slot._record stamps it): φ is computed per rep (MEAN over the rep's
+    later slots — protocol §2) and phi_median / phi_iqr are the median and
+    IQR ACROSS reps — the protocol's spread measure over paired runs. deltas
+    are always populated: they are the fallback evidence when φ is
+    uninterpretable (no base0 / zero headroom). n_phi_reps is the rep count
+    that fed φ.
     """
     up_e = _e_by_slot(r for r in records if r["condition"] == "unprimed")
     pr_e = _e_by_slot(r for r in records if r["condition"] == "primed")
@@ -75,8 +75,6 @@ def phi_family(records: list[dict]) -> dict:
             }
         )
 
-    # every record writer stamps `rep` (slot._record): phi is per rep, then
-    # median/IQR across reps
     rep_phis = []
     for rep in sorted({r["rep"] for r in records}):
         sub = [r for r in records if r["rep"] == rep]
@@ -147,12 +145,7 @@ def render_report(results_dir: Path, *, family: str, out_dir: Path) -> Path:
     infra = [r for r in recs if r.get("outcome") == "infra-error"]
     aborts = Counter(r["outcome"] for r in aborted)
     stats = phi_family(measured)
-    n_reps = stats["n_phi_reps"]
-    phi_base = (
-        f"{n_reps} rep(s) contributing"
-        if n_reps is not None
-        else f"{len(measured)} measured record(s), no rep field"
-    )
+    phi_base = f"{stats['n_phi_reps']} rep(s) contributing"
     n_pr = sum(1 for r in measured if r.get("condition") == "primed")
     n_un = sum(1 for r in measured if r.get("condition") == "unprimed")
     header = (recs[0].get("run_header") or {}) if recs else {}

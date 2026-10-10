@@ -600,3 +600,47 @@ real-binary milestone arrives.
   gate, using fixed tests and no hidden fresh inputs. Once real-binary scope
   opens, Coreutils is a candidate external benchmark, run under ReSchema's
   hidden gate for a like-for-like comparison. *(adjacent note §7)*
+- **Checked answers to behavior questions (after M8).** REA's pitch is
+  "ask anything in natural language", answered with evidence bundles that no
+  judge checks. The ReSchema version answers only what the binary can
+  confirm, and it is specced against the Warranted rebuild
+  ([M8 proposal](proposals/m8-rebuild-on-warranted.md)), not today's MCP
+  engine: it starts after M8 completes (S8).
+
+  A question is its own Warranted task: a `TaskSpec` per question with a
+  ReSchema checker, `behavior-claims`. The candidate is the answer, a
+  `claims.json` in which each claim carries one of three labels:
+  - `checked`: names concrete inputs (argv and stdin, or function params
+    and case) and the behavior claimed for them (hex is authoritative).
+    Inputs are capped like D3's nominated `cases.json`.
+  - `modelled`: cites an accepted verdict fact from the seed's memory
+    scope and inherits that accept's limits: fuzz budget, hidden draws, no
+    syscall comparison at level B. Facts may hold only a source digest
+    (`FACTS_LIMIT`), so a `modelled` claim may be unable to show its source.
+  - `inferred`: everything else, such as intent, algorithm names, or why
+    code exists. These are never promoted.
+
+  The checker re-records every `checked` claim's inputs on the corpus binary
+  itself, the same way the M8 checkers record ground truth, and compares. Like D3, it never reads
+  the run's `experiment` evidence: experiments stay hints, and the agent's
+  probes are charged in `probe` units as usual. A narrated, never-observed
+  claim is therefore rejected because the re-recording contradicts it, not
+  because a log entry is missing; persisted probes are not needed. The
+  feedback is ReSchema's usual first-divergence payload, capped at
+  `FEEDBACK_LIMIT`. This is reverse-engineering logic, so by the M8 rule it
+  lives in ReSchema and needs no new Warranted interface. `task.md` carries
+  the procedural coaching that #88's MCP prompts would have.
+
+  Prerequisites:
+  - M8 complete (S8);
+  - the `limitations` list on accepts (REA backlog above), carried on
+    Warranted verdicts, so `modelled` claims cannot overclaim;
+  - origin-keyed provenance (P2), because questions and binary-derived text
+    are hostile input;
+  - real-binary scope.
+
+  Out of reach without widening v1 scope: questions about syscalls beyond
+  the level-A write-family shape (network, files read), and any target
+  outside the scope guardrails. The negative test for this item is a
+  narrated, never-probed `checked` claim whose stated behavior the
+  re-recording contradicts; it must come back rejected.

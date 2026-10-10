@@ -109,6 +109,35 @@ def mcp_list_tools():
     return anyio.run(go)
 
 
+def check_context(task_id: str, candidate: dict, jobs=None, seed: int = 0):
+    """A Warranted CheckContext for the program-replay checker on a corpus
+    task, draw_seed pinned (tests pin entropy; production draws fresh).
+    `jobs` defaults to real podman jobs. Lazy imports: see mcp_call."""
+    import json
+    from pathlib import Path
+
+    from warranted import CheckContext, PodmanJobs
+
+    from reschema.engine import TaskStore
+
+    meta = TaskStore(task_id).meta
+
+    class Pinned(CheckContext):
+        def draw_seed(self) -> int:
+            self.seeds.append(seed)
+            return seed
+
+    return Pinned(
+        {k: v if type(v) is bytes else v.encode() for k, v in candidate.items()},
+        {},
+        {
+            "binary": Path(meta["binary"]).read_bytes(),
+            "task.json": json.dumps({"seed": meta["seed"]}).encode(),
+        },
+        PodmanJobs() if jobs is None else jobs,
+    )
+
+
 def wipe_task(store):
     """Clean slate for a shared-runtime-state task dir: traces + ledger gone."""
     for p in store.dir.glob("trace_*.json"):

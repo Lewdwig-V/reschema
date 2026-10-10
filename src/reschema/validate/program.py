@@ -6,7 +6,7 @@ import random
 import shutil
 import string
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -170,10 +170,24 @@ def _io(t: dict) -> dict:
 
 
 def replay_against(model_bin: Path, traces: list[dict]) -> Verdict:
-    for tr in traces:
+    # lazy: replay stops at the first divergence
+    return compare(
+        traces,
+        (
+            canonicalize(
+                record(model_bin, tr["argv"][1:], bytes.fromhex(tr["stdin_hex"]))
+            )
+            for tr in traces
+        ),
+    )
+
+
+def compare(traces: list[dict], got_traces: Iterable[dict]) -> Verdict:
+    """Stored traces vs the model's canonical traces, pairwise in order; the
+    first divergence decides. Also judges traces replayed elsewhere (the M8
+    program-replay checker's in-job replay)."""
+    for tr, got in zip(traces, got_traces, strict=False):
         argv = tr["argv"][1:]  # argv[0] is the original's path; model uses its own
-        stdin = bytes.fromhex(tr["stdin_hex"])
-        got = canonicalize(record(model_bin, argv, stdin))
         if (
             got["stdout"] != tr["stdout"]
             or got["stderr"] != tr["stderr"]

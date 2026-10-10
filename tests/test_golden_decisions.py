@@ -14,14 +14,17 @@ task directory's stored traces.
 Marked `golden`: CI runs it as its own step, outside the default suite's
 wall-clock budget."""
 
+import hashlib
 import json
 import tempfile
 from pathlib import Path
 
 import pytest
-from conftest import wipe_task
+from conftest import check_context, wipe_task
 from elftools.elf.elffile import ELFFile
+from warranted import VerdictStatus
 
+from reschema.checks.program_replay import ProgramReplay
 from reschema.driver.spec import Param
 from reschema.engine import TaskStore, _record_stable, program_gate, submit_function
 from reschema.validate.function import validate_function
@@ -149,4 +152,28 @@ def test_program_gate_decision(built_corpus, case):
                 "reason": None if fail is None else fail["reason"],
                 "stage": None if fail is None else fail.get("stage"),
             }
+    _expect(case, got)
+
+
+@pytest.mark.parametrize("case", FIXTURE["program"], ids=_id)
+def test_program_replay_decision(built_corpus, case):
+    """S4: the same decisions through the Warranted `program-replay` checker
+    (model compiled and replayed inside a job). The fixture's cases are
+    already D3's nominated cases, so no decision needs a D3 exception; hidden
+    draws come from a pinned 64-bit seed, not the old gate's string seed."""
+    seed = int.from_bytes(hashlib.sha256(case["id"].encode()).digest()[:8])
+    ctx = check_context(
+        case["task_id"],
+        {"model.c": case["c_source"], "cases.json": json.dumps(case["cases"])},
+        seed=seed,
+    )
+    v = ProgramReplay().check(ctx)
+    assert (v.status is VerdictStatus.PASSED) == v.feedback["accepted"]
+    got = {
+        "accepted": v.feedback["accepted"],
+        "reason": v.feedback.get("reason"),
+        "stage": v.feedback.get("stage"),
+    }
+    if case["scope"] == "recorded_only" and got["stage"] == "hidden":
+        got = {"accepted": True, "reason": None, "stage": None}  # pins recorded only
     _expect(case, got)

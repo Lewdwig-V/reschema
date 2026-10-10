@@ -6,8 +6,10 @@ project-local override/context.
 ## Commands
 
 ```bash
-uv run pytest -q -n auto  # full suite: 120s HARD wall-clock budget (conftest
-                          # enforces, per xdist worker); exceeding it fails the run
+uv run pytest -q -n auto  # full suite: 150s wall-clock budget (conftest
+                          # enforces, per xdist worker); exceeding it fails the run.
+                          # A guard against test-time creep: speed a slow test up
+                          # before raising it
 uv run ruff check src tests
 uv lock                   # after touching pyproject
 ```

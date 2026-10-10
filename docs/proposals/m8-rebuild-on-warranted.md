@@ -1,6 +1,6 @@
 # Proposal: rebuild ReSchema on Warranted (M8)
 
-**Status:** proposed; needs review of the three decisions below before any code moves.
+**Status:** accepted 2026-10-10: D1–D3 take the recommended option (see *Decisions*).
 **Date:** 2026-10-10.
 **Milestone:** [Warranted M8](https://github.com/Lewdwig-V/warranted/blob/main/docs/roadmap.md#m8--reschema-rebuilt-on-warranted).
 
@@ -186,12 +186,13 @@ Any Warranted interface change found on the way (for example operation-backed
 facts, if D2's alternative wins) lands in Warranted first and ReSchema pins the
 next tag.
 
-## Decisions needed
+## Decisions
 
-1. **D1:** move the model's qiling replay into a job (recommended), or record
-   host-side emulation as an exception?
-2. **D2:** one task per function plus one per program (recommended), or function
-   checks as an operation inside one program task?
-3. **D3:** the recorded stage replays worker-nominated cases re-recorded by the
-   checker (recommended), or keep replaying all experiments, which needs a new
-   Warranted interface to give checkers operation evidence?
+Decided 2026-10-10, all three as recommended:
+
+1. **D1:** the model's qiling replay runs in a job, in a checker image. Corpus
+   ground truth is still recorded on the host.
+2. **D2:** one task per function plus one per program, sharing the seed's memory
+   scope.
+3. **D3:** the recorded stage replays worker-nominated cases, which the checker
+   re-records itself. Experiments are hints.

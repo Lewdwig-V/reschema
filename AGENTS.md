@@ -11,6 +11,8 @@ uv run pytest -q -n auto  # full suite: 150s wall-clock budget (conftest
                           # A guard against test-time creep: speed a slow test up
                           # before raising it
 uv run ruff check src tests
+uv run pytest -q -n auto -m golden  # M8 parity fixture (tests/golden/), excluded
+                          # from the default run; CI gives it its own 300s budget
 uv lock                   # after touching pyproject
 ```
 

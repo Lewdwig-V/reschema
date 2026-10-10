@@ -35,3 +35,7 @@ packages = ["src/reschema"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# golden: the M8 parity fixture (tests/test_golden_decisions.py), run as its
+# own CI step outside the default suite's 120s budget; `-m golden` selects it.
+markers = ["golden: M8 parity fixture, excluded from the default run"]
+addopts = "-m 'not golden'"

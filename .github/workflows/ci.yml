@@ -68,6 +68,10 @@ jobs:
       - run: podman image exists localhost/reschema-toolchain:1
       - run: uv run ruff check src tests
       - run: uv run pytest -x -q -n auto
+      # M8 parity fixture: today's gate decisions, pinned (own time budget)
+      - run: uv run pytest -x -q -n auto -m golden
+        env:
+          RESCHEMA_TEST_BUDGET_S: "300"
 
   # Publish the tested image to GHCR, once per Containerfile hash: the tag is
   # never overwritten, so it names one image ID everywhere it is pulled

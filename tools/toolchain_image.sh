@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Provide localhost/reschema-toolchain:1. Pull the build CI published to GHCR
-# for this exact Containerfile (tag = its sha256 prefix); build locally only
+# for this exact Containerfile and checker-requirements.txt (tag = their
+# sha256 prefix); build locally only
 # when no published image exists. A pulled image keeps CI's image ID, so the
 # toolchain stamped in ledger audits (#146) matches across machines; every
 # local build gets a fresh ID.
@@ -9,7 +10,7 @@
 #   tools/toolchain_image.sh --tag    print the tag only (CI uses it)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-TAG=$(sha256sum Containerfile | cut -c1-16)
+TAG=$(cat Containerfile checker-requirements.txt | sha256sum | cut -c1-16)
 [[ "${1:-}" == --tag ]] && { echo "$TAG"; exit 0; }
 REMOTE=ghcr.io/lewdwig-v/reschema-toolchain:$TAG
 LOCAL=localhost/reschema-toolchain:1

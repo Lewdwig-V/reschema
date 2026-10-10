@@ -25,9 +25,9 @@ jobs:
                      /usr/bin/objcopy /usr/bin/objdump
           ! command -v gcc && ! command -v cc && ! command -v clang && ! command -v strip
       - run: uv sync
-      # The image is a pure function of Containerfile (no COPY; the worker is
-      # mounted at run time), so its hash is the whole cache key and the GHCR
-      # tag (tools/toolchain_image.sh --tag). Order: actions cache, then the
+      # The image is a pure function of Containerfile and its one COPY,
+      # checker-requirements.txt (the worker is mounted at run time), so their
+      # hash is the whole cache key and the GHCR tag (tools/toolchain_image.sh --tag). Order: actions cache, then the
       # image main published to GHCR, then a build. A miss saves the tar.
       - name: toolchain image tag
         id: tc

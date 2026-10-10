@@ -26,7 +26,7 @@ Run pytest **via `uv run` only** — the venv (`.venv`, Python 3.12) carries nat
 deps. Rootless **podman** is the hard dependency: every compile (corpus matrix,
 model checks, `strip`) runs inside the pinned `localhost/reschema-toolchain:1`
 image — get it once with `tools/toolchain_image.sh`, which pulls the build CI
-published to `ghcr.io/lewdwig-v/reschema-toolchain:<Containerfile sha256[:16]>`
+published to `ghcr.io/lewdwig-v/reschema-toolchain:<sha256(Containerfile + checker-requirements.txt)[:16]>`
 and falls back to `podman build -t localhost/reschema-toolchain:1 -f
 Containerfile .`. Sandboxes that block the snapshot.debian.org apt mirror need
 the pull (blobs come from pkg-containers.githubusercontent.com). No host

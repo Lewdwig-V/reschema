@@ -205,7 +205,8 @@ class ProgramReplay:
             lines = [json.loads(x) for x in r.stdout.decode().splitlines()]
         except (ValueError, RecursionError):
             lines = None
-        if r.returncode == 0 and lines and set(lines[0]) == {"compile"}:
+        first = lines[0] if lines else None
+        if r.returncode == 0 and type(first) is dict and set(first) == {"compile"}:
             return _reject("compile", "compile", detail=str(lines[0]["compile"]))
         if (
             r.returncode != 0

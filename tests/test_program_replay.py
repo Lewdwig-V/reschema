@@ -162,6 +162,10 @@ _TRACE = {"stdout": "", "stderr": "", "exit_code": 0, "files_written": {}, "even
             "replay-fault",
         ),
         (Forge(lambda cases: b"\n".join(b"[]" for _ in cases)), "replay-fault"),
+        # Codex #163: a scalar or a list first record crashed the compile check
+        (Forge(lambda cases: b"1"), "replay-fault"),
+        (Forge(lambda cases: b'["compile"]'), "replay-fault"),
+        (Forge(lambda cases: b"\xff\xfe"), "replay-fault"),
         (Forge(lambda cases: b"", rc=137), "replay-fault"),
         (Forge(lambda cases: b"", truncated=True), "replay-output"),
         (Forge(lambda cases: b"", timed_out=True), "replay-timeout"),

@@ -607,13 +607,20 @@ real-binary milestone arrives.
   - `inferred`: everything else, such as intent, algorithm names, or why
     code exists. These are never promoted.
 
-  The answerer would be an MCP prompt over the existing five tools (#88),
-  not a sixth tool: the tool contracts stay the judge's only interface. The
-  harness, not the agent, attaches each label. A claim labelled `checked`
-  with no matching probe in the task's experiment log is a structured
+  An MCP prompt (#88) can coach the agent through the questioning, but it
+  cannot judge anything: prompts only feed messages to the client, so the
+  engine never sees the final answer. The claim list therefore needs an
+  engine-owned submission boundary. The options are to extend an existing
+  tool's contract or to add an explicit sixth tool, and either one needs an
+  ADR. The engine attaches each label at that boundary, not the agent. A
+  claim labelled `checked` with no matching persisted probe is a structured
   reject.
 
   Prerequisites:
+  - persisted function probes. Today `experiment(function=...)` counts one
+    probe in the ledger but stores no trace, so a quoted function probe
+    can't be told apart from a fabricated one. Params, case and `{ret, mem}`
+    output must be persisted first;
   - the `limitations` list on accepts (REA backlog above), so `modelled`
     claims cannot overclaim;
   - origin-keyed provenance (P2), because questions and binary-derived text

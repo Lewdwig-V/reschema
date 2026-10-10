@@ -19,10 +19,11 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from conftest import wipe_task
 from elftools.elf.elffile import ELFFile
 
 from reschema.driver.spec import Param
-from reschema.engine import TaskStore, _record_stable, program_gate
+from reschema.engine import TaskStore, _record_stable, program_gate, submit_function
 from reschema.validate.function import validate_function
 from reschema.validate.program import compile_model, replay_against
 
@@ -68,13 +69,27 @@ def _synthetic_original(spec: dict, d: Path) -> tuple[str, int]:
 
 @pytest.mark.parametrize("case", FIXTURE["function"], ids=_id)
 def test_function_gate_decision(request, case):
-    if case["gate_level"] == "submit_function":
-        # rejected while decoding the spec, before validate_function runs
-        with pytest.raises((KeyError, ValueError)):
-            [Param.from_json(p) for p in case["params"]]
-        _expect(case, {"ok": False, "stage": "spec"})
-        return
     request.getfixturevalue("built_corpus")
+    if case["gate_level"] == "submit_function":
+        # Rejected while decoding the spec, before validate_function runs:
+        # pin the agent-facing response and its accounting, not just the raise.
+        store = TaskStore(case["task_id"])
+        wipe_task(store)
+        try:
+            r = submit_function(
+                store,
+                case["func"],
+                case["params"],
+                case["c_source"],
+                seed=case["seed"],
+                n_fuzz=case["n_fuzz"],
+            )
+            led = store.ledger()
+        finally:
+            wipe_task(store)
+        assert (led["submissions"], led["rejections"]) == (1, 1), led
+        _expect(case, {"ok": r["accepted"], "stage": r.get("reason")})
+        return
     with tempfile.TemporaryDirectory(prefix="reschema-golden-") as d:
         if case.get("binary_override"):
             binary, addr = _synthetic_original(case["binary_override"], Path(d))

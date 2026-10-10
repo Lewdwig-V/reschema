@@ -116,6 +116,11 @@ def test_forged_crash_text_is_capped(sum_inputs):
         [{"name": "lo", "kind": "i32", "ret": "float"}],
         [{"kind": "i32"}],
         [{"name": "lo", "kind": "f64"}],
+        # Codex #162: values the i32 marshal cannot pack, and a name collision
+        # that overwrites a scalar draw with a list, both crashed the host.
+        [{"name": "b", "kind": "buffer_i32", "range": [2**31, 2**31 + 1]}],
+        [{"name": "lo", "kind": "i32", "range": [-(2**31) - 1, 0]}],
+        [{"name": "x", "kind": "i32"}, {"name": "x", "kind": "buffer_i32"}],
     ],
 )
 def test_malformed_spec_is_a_spec_reject(sum_inputs, params):

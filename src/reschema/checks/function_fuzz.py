@@ -45,10 +45,14 @@ def _params(raw: bytes) -> list[Param]:
         raise ValueError("params.json must be a list of param objects")
     params = [Param.from_json(d) for d in specs]
     scalars = {p.name for p in params if p.kind == "i32"}
+    if len({p.name for p in params}) != len(params):
+        raise ValueError("param names must be unique")
     for p in params:
         lo, hi = p.range
-        if type(p.name) is not str or not (type(lo) is type(hi) is int and lo <= hi):
-            raise ValueError(f"param {p.name!r}: name str, range [lo, hi] ints")
+        if type(p.name) is not str or not (
+            type(lo) is type(hi) is int and -(2**31) <= lo <= hi < 2**31
+        ):
+            raise ValueError(f"param {p.name!r}: name str, range [lo, hi] i32s")
         if p.ret not in ("i32", "void"):
             raise ValueError(f"param {p.name!r}: ret must be i32 or void")
         if p.length_param is not None and p.length_param not in scalars:

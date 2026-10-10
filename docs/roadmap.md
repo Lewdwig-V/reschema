@@ -594,3 +594,34 @@ real-binary milestone arrives.
   gate, using fixed tests and no hidden fresh inputs. Once real-binary scope
   opens, Coreutils is a candidate external benchmark, run under ReSchema's
   hidden gate for a like-for-like comparison. *(adjacent note §7)*
+- **Checked answers to behavior questions.** REA's pitch is "ask anything
+  in natural language", answered with evidence bundles that no judge
+  checks. The ReSchema version answers only what the binary can confirm.
+  Each answer is a list of claims, and each claim carries one of three
+  labels:
+  - `checked`: an `experiment` against the original, quoting its probe and
+    observed output (hex is authoritative). The probe counts toward N_exp.
+  - `modelled`: read off an accepted `verified_fact`. It inherits that
+    accept's limits: fuzz budget, hidden draws, no syscall comparison at
+    level B.
+  - `inferred`: everything else, such as intent, algorithm names, or why
+    code exists. These are never promoted.
+
+  The answerer would be an MCP prompt over the existing five tools (#88),
+  not a sixth tool: the tool contracts stay the judge's only interface. The
+  harness, not the agent, attaches each label. A claim labelled `checked`
+  with no matching probe in the task's experiment log is a structured
+  reject.
+
+  Prerequisites:
+  - the `limitations` list on accepts (REA backlog above), so `modelled`
+    claims cannot overclaim;
+  - origin-keyed provenance (P2), because questions and binary-derived text
+    are hostile input;
+  - real-binary scope.
+
+  Out of reach without widening v1 scope: questions about syscalls beyond
+  the level-A write-family shape (network, files read), and any target
+  outside the scope guardrails. The negative test for this item is an agent
+  answer that labels a narrated, never-probed claim `checked`; it must come
+  back rejected.

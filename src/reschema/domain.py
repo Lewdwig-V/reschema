@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 
+from reschema.checks.function_fuzz import FunctionFuzz
 from reschema.checks.program_replay import ProgramReplay
 from reschema.driver import podrun
 
@@ -19,7 +20,12 @@ _PACKAGE = Path(__file__).resolve().parent
 class ReSchemaDomain:
     name = "reschema"
     version = "0.1"
-    checkers: Mapping = MappingProxyType({"program-replay": ProgramReplay()})
+    checkers: Mapping = MappingProxyType(
+        {
+            "function-fuzz": FunctionFuzz(),
+            "program-replay": ProgramReplay(),
+        }
+    )
     # Warranted pins class files only; checkers reach the recorder, canonicaliser,
     # grammars and corpus through imports, which it does not follow. Pin the
     # whole package: over-pinning costs a spurious identity change, under-pinning

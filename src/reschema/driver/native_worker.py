@@ -18,7 +18,10 @@ import sys
 import tempfile
 import time
 
-from reschema.driver.spec import Param
+try:
+    from reschema.driver.spec import Param
+except ModuleNotFoundError:  # a Warranted job: spec.py travels beside this file
+    from spec import Param
 
 CASE_TIMEOUT_S = 5
 STATIC = ["-O1", "-static", "-fno-pie", "-no-pie", "-g0"]  # compose's link flags

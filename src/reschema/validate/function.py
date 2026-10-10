@@ -20,6 +20,7 @@ import json
 import random
 import secrets
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,6 +70,17 @@ def _is_mem_fault(want: dict) -> bool:
     return want["exit_code"] == -1 and want["events"][-1].get("mem_fault") is True
 
 
+def _podman_worker(job: dict) -> dict:
+    # ISSUE-61: compile AND fork-per-case ctypes execution run against a scratch
+    # dir holding only the model source — the task dir (traces/ledger/accepts)
+    # is never inside the container's writable mount.
+    with tempfile.TemporaryDirectory(prefix="reschema-validate-") as scratch:
+        try:
+            return podrun.run_worker(job, Path(scratch))
+        except RuntimeError as e:  # missing podman/image: mandatory containment
+            return {"stage": "infra", "detail": str(e)}
+
+
 def validate_function(
     binary: str,
     addr: int,
@@ -78,6 +90,9 @@ def validate_function(
     seed: int | None = None,
     n_fuzz: int = N_FUZZ,
     size: int | None = None,
+    # One worker round trip (validate job in, result JSON out); the
+    # function-fuzz checker swaps in a Warranted job (checks/function_fuzz.py).
+    run_model: Callable[[dict], dict] = _podman_worker,
 ) -> FnVerdict:
     if len(params) > len(BAREGS):
         return FnVerdict(
@@ -197,23 +212,15 @@ def validate_function(
             },
             skipped=skipped,
         )
-    # ISSUE-61: compile AND fork-per-case ctypes execution run against a scratch
-    # dir holding only the model source — the task dir (traces/ledger/accepts)
-    # is never inside the container's writable mount.
-    with tempfile.TemporaryDirectory(prefix="reschema-validate-") as scratch:
-        try:
-            r = podrun.run_worker(
-                {
-                    "mode": "validate",
-                    "c_source": c_source,
-                    "fname": func,
-                    "params": [p.to_json() for p in params],
-                    "cases": [_wire(case) for case, _ in kept],
-                },
-                Path(scratch),
-            )
-        except RuntimeError as e:  # missing podman/image: mandatory containment
-            return FnVerdict(False, {"stage": "infra", "detail": str(e)})
+    r = run_model(
+        {
+            "mode": "validate",
+            "c_source": c_source,
+            "fname": func,
+            "params": [p.to_json() for p in params],
+            "cases": [_wire(case) for case, _ in kept],
+        }
+    )
     if "stage" in r:
         return FnVerdict(False, r)  # compile/link/symbol/infra payloads pass through
     # The candidate's .so runs inside the worker (constructors at dlopen), so the

@@ -216,6 +216,23 @@ def validate_function(
             return FnVerdict(False, {"stage": "infra", "detail": str(e)})
     if "stage" in r:
         return FnVerdict(False, r)  # compile/link/symbol/infra payloads pass through
+    # The candidate's .so runs inside the worker (constructors at dlopen), so the
+    # worker's stdout is the candidate's claim: a forged short list would zip to
+    # zero comparisons and accept. Genuine output covers every case or stops at
+    # the first crash.
+    res = r.get("results")
+    if not (
+        isinstance(res, list)
+        and (len(res) == len(kept) or (0 < len(res) < len(kept) and "crash" in res[-1]))
+    ):
+        return FnVerdict(
+            False,
+            {
+                "stage": "worker",
+                "detail": f"worker results malformed for {len(kept)} cases",
+            },
+            skipped=skipped,
+        )
 
     compared = 0
     for (case, want), got in zip(kept, r["results"]):

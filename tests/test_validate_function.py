@@ -621,3 +621,25 @@ def test_skip_floor_ignores_scout_memory_faults(monkeypatch, tmp_path):
     v = validate_function("unused", 0, "sum_range", narrow, "", seed=7)
     assert v.ok, v
     assert v.skipped == 1, v
+
+
+# A constructor runs at dlopen inside the worker, prints a vacuous verdict and
+# exits before the worker writes its own: zero results must not mean zero
+# divergences.
+FORGED_RESULTS = r"""
+#include <stdint.h>
+#include <stdio.h>
+#include <unistd.h>
+__attribute__((constructor)) static void forge(void){
+    fputs("{\"ok\": true, \"results\": []}", stdout); fflush(stdout); _exit(0);
+}
+__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){ return 0; }"""
+
+
+def test_forged_worker_results_rejected(manifest, tmp_path):
+    binary, addr = _slot(manifest, "calc", "sum_range")
+    v = validate_function(
+        binary, addr, "sum_range", SUM_PARAMS, FORGED_RESULTS, seed=1, n_fuzz=8
+    )
+    assert not v.ok
+    assert v.divergence["stage"] == "worker"

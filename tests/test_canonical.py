@@ -5,7 +5,6 @@ def _trace(events):
     return {
         "argv": ["/home/x/reschema/.reschema/corpus/rot13/gcc-O2-sym/prog", "abc"],
         "stdin_hex": "",
-        "stdin_sha256": "",
         "stdout": "aa",
         "stderr": "",
         "exit_code": 0,

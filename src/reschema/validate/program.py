@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..driver import podrun
-from ..exec.canonical import canonicalize
+from ..exec.canonical import _mapper, _write_intent, canonicalize
 from ..exec.recorder import record
 
-CFLAGS = ["gcc", "-O1", "-static", "-fno-pie", "-no-pie", "-g0"]
+CFLAGS = ["-O1", "-static", "-fno-pie", "-no-pie", "-g0"]  # gcc
 
 
 @dataclass
@@ -39,7 +39,7 @@ def compile_model(c_source: str, out: Path) -> tuple[bool, str]:
                             "c_source": c_source,
                             "out": out.name,
                             "compiler": "gcc",
-                            "flags": CFLAGS[1:],
+                            "flags": CFLAGS,
                         }
                     ],
                 },
@@ -90,8 +90,6 @@ _OPEN_FAMILY = ("openat", "open", "creat")
 
 def _fd_table(events: list[dict]) -> dict[str, str]:
     """Literal fd -> FD_<n> for write-intent opens, mirroring canonicalize's walk."""
-    from ..exec.canonical import _mapper, _write_intent
-
     fd_of = _mapper("FD")
     fds: dict[str, str] = {}
     pending = False
@@ -107,55 +105,13 @@ def _fd_table(events: list[dict]) -> dict[str, str]:
     return fds
 
 
-def _dep_slice(trace: dict, focus_index: int) -> list[dict] | None:
-    """Chain for an event-divergence focus: opener pair for the focus fd, then
-    every write event on that fd up to (and incl) the focus, capped at 6."""
-    evs = trace["events"]
-    if not (0 <= focus_index < len(evs)):
-        return None
-    focus = evs[focus_index]
-    fd = focus["args"][0] if focus["args"] else None
-    if fd is None:
-        return None
-    inv = {v: k for k, v in _fd_table(evs).items()}
-    literal = inv.get(fd, fd)  # canonical FD_<n> -> original literal
-    from ..exec.canonical import _write_intent
+def _chain(evs: list[dict], literal: str, fd: str) -> list[dict] | None:
+    """Opener pair for `literal` + every write on `fd`, capped at the last 6.
 
-    # fd reuse: an earlier read-only open can return the same literal the real
-    # write-open reuses — the anchor must be the WRITE-INTENT open, not any
-    # syscall that happened to yield the same fd number (keeps collecting: the
-    # LAST qualifying opener before the focus owns the fd at divergence time).
-    chain, enter = [], None
-    for e in evs[: focus_index + 1]:
-        if e["sc"] in _OPEN_FAMILY and e["phase"] == "enter":
-            enter = e if _write_intent(e["sc"], e["args"]) else None
-        elif (
-            e["sc"] in _OPEN_FAMILY
-            and e["phase"] == "exit"
-            and e.get("result") == literal
-            and enter is not None
-        ):
-            chain = [enter, e]
-    chain.extend(
-        e
-        for e in evs[: focus_index + 1]
-        if e["sc"] in ("write", "writev") and e["args"] and e["args"][0] == fd
-    )
-    return (chain or None) and chain[-6:]
-
-
-def _dep_slice_for_files(trace: dict) -> list[dict] | None:
-    """Chain for a files_written mismatch: the fd-producing open + its writes.
-
-    ponytail: last write-intent open is the file in question (works for the
-    single-writer corpus; a multi-file seed needs path-aware slicing later).
-    """
-    evs, table = trace["events"], _fd_table(trace["events"])
-    if not table:
-        return None
-    literal, fd = next(reversed(list(table.items())))  # last write-open
-    from ..exec.canonical import _write_intent
-
+    fd reuse: an earlier read-only open can return the same literal the real
+    write-open reuses — the anchor must be the WRITE-INTENT open, not any
+    syscall that happened to yield the same fd number (keeps collecting: the
+    LAST qualifying opener owns the fd)."""
     chain, enter = [], None
     for e in evs:
         if e["sc"] in _OPEN_FAMILY and e["phase"] == "enter":
@@ -175,11 +131,47 @@ def _dep_slice_for_files(trace: dict) -> list[dict] | None:
     return (chain or None) and chain[-6:]
 
 
+def _dep_slice(trace: dict, focus_index: int) -> list[dict] | None:
+    """Chain for an event-divergence focus: opener pair for the focus fd, then
+    every write event on that fd up to (and incl) the focus, capped at 6."""
+    evs = trace["events"]
+    if not (0 <= focus_index < len(evs)):
+        return None
+    focus = evs[focus_index]
+    fd = focus["args"][0] if focus["args"] else None
+    if fd is None:
+        return None
+    inv = {v: k for k, v in _fd_table(evs).items()}
+    literal = inv.get(fd, fd)  # canonical FD_<n> -> original literal
+    return _chain(evs[: focus_index + 1], literal, fd)
+
+
+def _dep_slice_for_files(trace: dict) -> list[dict] | None:
+    """Chain for a files_written mismatch: the fd-producing open + its writes.
+
+    ponytail: last write-intent open is the file in question (works for the
+    single-writer corpus; a multi-file seed needs path-aware slicing later).
+    """
+    table = _fd_table(trace["events"])
+    if not table:
+        return None
+    literal, fd = next(reversed(list(table.items())))  # last write-open
+    return _chain(trace["events"], literal, fd)
+
+
+def _io(t: dict) -> dict:
+    return {
+        "stdout": t["stdout"],
+        "stderr": t["stderr"],
+        "exit_code": t["exit_code"],
+        "stdout_decoded": _shown(t["stdout"]),
+        "stderr_decoded": _shown(t["stderr"]),
+    }
+
+
 def replay_against(model_bin: Path, traces: list[dict]) -> Verdict:
     for tr in traces:
-        argv = tr["argv"][
-            1:
-        ]  # argv[0] is the original binary's path; model uses its own
+        argv = tr["argv"][1:]  # argv[0] is the original's path; model uses its own
         stdin = bytes.fromhex(tr["stdin_hex"])
         got = canonicalize(record(model_bin, argv, stdin))
         if (
@@ -187,23 +179,7 @@ def replay_against(model_bin: Path, traces: list[dict]) -> Verdict:
             or got["stderr"] != tr["stderr"]
             or got["exit_code"] != tr["exit_code"]
         ):
-            divergence = {
-                "argv": argv,
-                "expected": {
-                    "stdout": tr["stdout"],
-                    "stderr": tr["stderr"],
-                    "exit_code": tr["exit_code"],
-                    "stdout_decoded": _shown(tr["stdout"]),
-                    "stderr_decoded": _shown(tr["stderr"]),
-                },
-                "actual": {
-                    "stdout": got["stdout"],
-                    "stderr": got["stderr"],
-                    "exit_code": got["exit_code"],
-                    "stdout_decoded": _shown(got["stdout"]),
-                    "stderr_decoded": _shown(got["stderr"]),
-                },
-            }
+            divergence = {"argv": argv, "expected": _io(tr), "actual": _io(got)}
             if got["exit_code"] == -1 and got["events"]:
                 # Model crashed/timed out: surface the fault marker (where it died).
                 divergence["actual_fault"] = got["events"][-1]
@@ -231,14 +207,8 @@ def replay_against(model_bin: Path, traces: list[dict]) -> Verdict:
                     "expected": e,
                     "actual": a,
                 }
-                full_idx = next(
-                    pos
-                    for pos, n in zip(
-                        (j for j, x in enumerate(tr["events"]) if x["sc"] in OBS),
-                        range(len(te)),
-                    )
-                    if n == i
-                )
+                # the i-th observable event's index in the FULL stored stream
+                full_idx = [j for j, x in enumerate(tr["events"]) if x["sc"] in OBS][i]
                 sl = _dep_slice(tr, full_idx)
                 if sl:
                     divergence["dep_slice"] = sl

@@ -201,8 +201,7 @@ def _prep_function(
 
 
 def _judge_function(row: dict, job: dict) -> dict:
-    with tempfile.TemporaryDirectory(prefix="reschema-regrade-") as d:
-        v = validate_function(so_path=Path(d) / f"{job['func']}.so", **job)
+    v = validate_function(**job)
     row = {**row, "compared": v.compared, "skipped": v.skipped}
     if v.ok:
         return {**row, "new_verdict": "accept"}

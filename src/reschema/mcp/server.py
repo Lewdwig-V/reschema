@@ -208,7 +208,7 @@ def submit_model(
     cannot pin it; the effective seed is reported on the verdict and recorded
     in the ledger audit; n_fuzz raises the budget but is FLOORED at N_FUZZ=64
     at this boundary — you may not tune your own judge down). A model that segfaults or hangs a
-    case is rejected as a crash. Wrong memory direction or a no-op against a
+    case is rejected as a crash. Wrong memory writes or a no-op against a
     void spec with no memory channel is rejected too. The spec must admit at
     least 2 distinct inputs (empty params or all-fixed ranges are refused at
     the spec stage — never pass vacuously).

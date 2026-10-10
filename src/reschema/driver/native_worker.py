@@ -21,16 +21,28 @@ import time
 from reschema.driver.spec import Param
 
 CASE_TIMEOUT_S = 5
+STATIC = ["-O1", "-static", "-fno-pie", "-no-pie", "-g0"]  # compose's link flags
+
+
+def _sh(argv: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        argv, capture_output=True, text=True, timeout=timeout, check=False
+    )
+
+
+def _load(so_path: str) -> ctypes.CDLL:
+    # Fresh image per load: dlopen path-caches, so reusing so_path bleeds
+    # statics/globals across calls. ponytail: copied per load, never dlclosed.
+    fd, tmp = tempfile.mkstemp(suffix=".so")
+    os.close(fd)
+    try:
+        return ctypes.CDLL(shutil.copyfile(so_path, tmp), mode=os.RTLD_NOW)
+    finally:
+        os.unlink(tmp)
 
 
 def _call(so_path: str, fname: str, params: list[Param], case: dict) -> dict:
-    # Fresh image per call: dlopen path-caches, so reusing so_path bleeds
-    # statics/globals across calls. ponytail: copied per call, never dlclosed.
-    fd, tmp = tempfile.mkstemp(suffix=".so")
-    os.close(fd)
-    lib = ctypes.CDLL(shutil.copyfile(so_path, tmp), mode=os.RTLD_NOW)
-    os.unlink(tmp)
-    fn = getattr(lib, fname)
+    fn = getattr(_load(so_path), fname)
     fn.restype = ctypes.c_int32
     keep, args, watched = [], [], {}
     for p in params:
@@ -42,9 +54,8 @@ def _call(so_path: str, fname: str, params: list[Param], case: dict) -> dict:
             keep.append(b)
             args.append(ctypes.cast(b, ctypes.c_char_p))
             watched[p.name] = (b, "cstring")
-        elif p.kind == "buffer_i32":
-            n = len(v) if isinstance(v, list) else v  # int => out buffer of n elems
-            arr = (ctypes.c_int32 * n)(*(v if isinstance(v, list) else [0] * n))
+        elif p.kind == "buffer_i32":  # fuzz/scout cases always carry the list
+            arr = (ctypes.c_int32 * len(v))(*v)
             keep.append(arr)
             args.append(arr)
             watched[p.name] = (arr, "buffer_i32")
@@ -92,25 +103,15 @@ def _run_case(so_path: str, fname: str, params: list[Param], case: dict) -> dict
 
 
 def _compile(c_path: str, so_path: str) -> dict | None:
-    r = subprocess.run(
-        ["gcc", "-O1", "-shared", "-fPIC", c_path, "-o", so_path],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    r = _sh(["gcc", "-O1", "-shared", "-fPIC", c_path, "-o", so_path])
     return None if r.returncode == 0 else {"stage": "compile", "stderr": r.stderr}
 
 
 def _symbol_check(so_path: str, fname: str) -> dict | None:
-    fd, tmp = tempfile.mkstemp(suffix=".so")
-    os.close(fd)
     try:
-        lib = ctypes.CDLL(shutil.copyfile(so_path, tmp), mode=os.RTLD_NOW)
+        lib = _load(so_path)
     except OSError as e:
-        os.unlink(tmp)
         return {"stage": "link", "detail": f"{type(e).__name__}: {e}"}
-    os.unlink(tmp)
     if not hasattr(lib, fname):
         return {"stage": "symbol", "detail": f"'{fname}' not defined by submission"}
     return None
@@ -125,20 +126,13 @@ def _validate(job: dict) -> dict:
     err = _symbol_check(workdir + ".so", job["fname"])
     if err:
         return err
-    cases = []
-    for case in job["cases"]:
-        cases.append(
-            {
-                **{
-                    p.name: (
-                        bytes.fromhex(case[p.name])
-                        if p.kind == "cstring"
-                        else case[p.name]
-                    )
-                    for p in params
-                }
-            }
-        )
+    cases = [
+        {
+            p.name: bytes.fromhex(c[p.name]) if p.kind == "cstring" else c[p.name]
+            for p in params
+        }
+        for c in job["cases"]
+    ]
     results = []
     for case in cases:
         results.append(_run_case(workdir + ".so", job["fname"], params, case))
@@ -159,13 +153,7 @@ def _compile_jobs(job: dict) -> dict:
             src = f"/work/{j['out']}.c"
             with open(src, "w") as f:
                 f.write(j["c_source"])
-        r = subprocess.run(
-            [j["compiler"], *j["flags"], src, "-o", f"/work/{j['out']}"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
+        r = _sh([j["compiler"], *j["flags"], src, "-o", f"/work/{j['out']}"], 120)
         results.append({"out": j["out"], "rc": r.returncode, "stderr": r.stderr})
     return {"results": results}
 
@@ -175,59 +163,21 @@ def _strip(job: dict) -> dict:
     stripping is always available here (unlike the ambient host toolchain)."""
     out = []
     for f in job["files"]:
-        r = subprocess.run(
-            ["strip", "-s", f"/work/{f}"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
+        r = _sh(["strip", "-s", f"/work/{f}"])
         out.append({"file": f, "rc": r.returncode, "stderr": r.stderr})
     return {"results": out}
 
 
 def _compile_link(job: dict) -> dict:
-    for name in job["objects"]:
+    for name, source in job["sources"].items():
         p = f"/work/{name}"
         with open(p + ".c", "w") as f:
-            f.write(job["sources"][name])
-        r = subprocess.run(
-            [
-                "gcc",
-                "-O1",
-                "-static",
-                "-fno-pie",
-                "-no-pie",
-                "-g0",
-                "-c",
-                p + ".c",
-                "-o",
-                p + ".o",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
+            f.write(source)
+        r = _sh(["gcc", *STATIC, "-c", p + ".c", "-o", p + ".o"])
         if r.returncode != 0:
             return {"ok": False, "stderr": r.stderr}
-    r = subprocess.run(
-        [
-            "gcc",
-            "-O1",
-            "-static",
-            "-fno-pie",
-            "-no-pie",
-            "-g0",
-            *[f"/work/{n}.o" for n in job["objects"]],
-            "-o",
-            f"/work/{job['out']}",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    objs = [f"/work/{n}.o" for n in job["sources"]]
+    r = _sh(["gcc", *STATIC, *objs, "-o", f"/work/{job['out']}"])
     return {"ok": r.returncode == 0, "stderr": r.stderr}
 
 

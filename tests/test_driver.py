@@ -129,7 +129,7 @@ def test_rot13_char_ground_truth(manifest):
 
 def test_rot13_in_out_memory(manifest):
     binary, addr = _slot(manifest, "rot13", "rot13")
-    params = [Param("in_out", "cstring", direction="in_out")]
+    params = [Param("in_out", "cstring")]
     case = {"in_out": b"hello\x00"}
     out = call_original(binary, addr, params, case)
     assert out["mem"]["in_out"] == b"uryyb\x00"
@@ -153,7 +153,7 @@ def test_check_pw_rejects_wrong_password(manifest):
 def test_scale_buf_in_out_buffer(manifest):
     binary, addr = _slot(manifest, "calc", "scale_buf")
     params = [
-        Param("buf", "buffer_i32", direction="in_out", length_param="n"),
+        Param("buf", "buffer_i32", length_param="n"),
         Param("n", "i32"),
         Param("factor", "i32"),
     ]
@@ -285,7 +285,6 @@ def test_batch_call_original_matches_fresh_per_case(manifest, probe_bin):
                 Param(
                     "buf",
                     "buffer_i32",
-                    direction="in_out",
                     length_param="n",
                     range=(51, 100),
                 ),
@@ -295,7 +294,7 @@ def test_batch_call_original_matches_fresh_per_case(manifest, probe_bin):
         ),
         (
             *_slot(manifest, "rot13", "rot13", opt="-O0"),
-            [Param("in_out", "cstring", direction="in_out")],
+            [Param("in_out", "cstring")],
         ),
         (pbin, syms["bump"][0], [Param("x", "i32", range=(-50, 50))]),
     ]

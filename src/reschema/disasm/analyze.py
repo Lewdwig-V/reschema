@@ -38,29 +38,21 @@ BAREGS = (
 )
 FAM_IDX = {r: i for i, g in enumerate(BAREGS) for r in g}
 RAX = ("rax", "eax", "ax", "al", "ah")
-BRANCHY = (
-    "jmp",
-    "je",
-    "jne",
-    "jg",
-    "jge",
-    "jl",
-    "jle",
-    "ja",
-    "jae",
-    "jb",
-    "jbe",
-    "js",
-    "jns",
-    "jp",
-    "jnp",
-    "jo",
-    "jno",
-    "jecxz",
-    "jrcxz",
-)
 
 LABELED = "heuristic guess — declare the falsifiable param spec yourself"
+
+
+def symtab(binary: str | Path) -> dict[str, tuple[int, int]]:
+    """STT_FUNC name -> (addr, size); {} for a stripped binary."""
+    with open(binary, "rb") as f:
+        sym = ELFFile(f).get_section_by_name(".symtab")
+        if not sym:
+            return {}
+        return {
+            s.name: (int(s["st_value"]), int(s["st_size"]))
+            for s in sym.iter_symbols()
+            if s["st_info"]["type"] == "STT_FUNC"
+        }
 
 
 def function_insns(binary: str, addr: int, size: int) -> list:
@@ -114,17 +106,15 @@ def _direct_fams(ii: list) -> tuple[set, set]:
     return fam, written
 
 
-def _callees(ii: list, addr2name: dict[int, str]) -> list[dict]:
-    out = []
-    for ins in ii:
-        if (
-            ins.mnemonic == "call"
-            and ins.operands
-            and ins.operands[0].type == X86_OP_IMM
-        ):
-            tgt = ins.operands[0].imm
-            out.append({"address": hex(tgt), "name": addr2name.get(tgt)})
-    return out
+def _call_targets(ii: list) -> list[int]:
+    """Direct `call rel32` targets, in order."""
+    return [
+        ins.operands[0].imm
+        for ins in ii
+        if ins.mnemonic == "call"
+        and ins.operands
+        and ins.operands[0].type == X86_OP_IMM
+    ]
 
 
 def _returns_hint(ii: list) -> bool:
@@ -145,7 +135,9 @@ def _returns_hint(ii: list) -> bool:
 
     block_start, r6 = 0, False
     for k, ins in enumerate(ii):
-        if ins.mnemonic in BRANCHY or ins.mnemonic == "ret":
+        # block ends: any jump or return (capstone groups; equal to the old
+        # jcc/jmp/ret mnemonic list over the whole corpus)
+        if ins.group(capstone.CS_GRP_JUMP) or ins.group(capstone.CS_GRP_RET):
             if ins.mnemonic == "ret" and any(
                 rax_writes(i2) for i2 in ii[block_start : k + 1]
             ):
@@ -168,20 +160,14 @@ def analyze_function(binary: str, functions: dict[str, dict]) -> dict[str, dict]
     out = {}
     for fn, ii in insns_of.items():
         fam, written = _direct_fams(ii)
-        for ins in ii:  # boundary pass-through credit at the first resolved call
-            if (
-                ins.mnemonic == "call"
-                and ins.operands
-                and ins.operands[0].type == X86_OP_IMM
-            ):
-                n = addr2name.get(ins.operands[0].imm)
-                if n is not None:
-                    fam |= {f for f in range(base_arity[n]) if f not in written}
-                break
+        targets = _call_targets(ii)
+        # boundary pass-through credit at the first direct call, if resolved
+        if targets and (n := addr2name.get(targets[0])) is not None:
+            fam |= {f for f in range(base_arity[n]) if f not in written}
         out[fn] = {
             "arity_guess": len(fam),
             "returns_hint": _returns_hint(ii),
-            "callees": _callees(ii, addr2name),
+            "callees": [{"address": hex(t), "name": addr2name.get(t)} for t in targets],
             "labeled": LABELED,
         }
     return out

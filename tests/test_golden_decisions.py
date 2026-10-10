@@ -109,7 +109,6 @@ def test_function_gate_decision(request, case):
             case["func"],
             [Param.from_json(p) for p in case["params"]],
             case["c_source"],
-            Path(d) / f"{case['func']}.so",
             seed=case["seed"],
             n_fuzz=case["n_fuzz"],
             size=size,

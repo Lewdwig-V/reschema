@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 KINDS = ("i32", "buffer_i32", "cstring")
 
@@ -11,7 +11,6 @@ KINDS = ("i32", "buffer_i32", "cstring")
 class Param:
     name: str
     kind: str  # one of KINDS
-    direction: str = "in"  # "in" | "out" | "in_out"
     length_param: str | None = None
     range: tuple[int, int] = (-100, 100)
     # "i32" | "void" — function-level, carried on the first param; void = mem-only compare
@@ -30,7 +29,6 @@ class Param:
         return cls(
             d["name"],
             d["kind"],
-            d.get("direction", "in"),
             d.get("length_param"),
             (r[0], r[1]),
             d.get("ret", "i32"),
@@ -38,11 +36,4 @@ class Param:
 
     def to_json(self) -> dict:
         # Wire shape for the level-B worker (mirrors from_json; no defaults elided).
-        return {
-            "name": self.name,
-            "kind": self.kind,
-            "direction": self.direction,
-            "length_param": self.length_param,
-            "range": list(self.range),
-            "ret": self.ret,
-        }
+        return {**asdict(self), "range": list(self.range)}

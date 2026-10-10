@@ -408,7 +408,7 @@ exercising yet.
 Each `record(binary, argv, stdin)` copies the binary into a fresh empty
 rootfs, hooks `read/write/writev/open/openat/creat/close/brk/mmap/exit_group`
 ENTER+EXIT, and returns
-`{argv, stdin_hex, stdin_sha256, stdout(hex), stderr(hex), exit_code,
+`{argv, stdin_hex, stdout(hex), stderr(hex), exit_code,
 files_written, events}`. `files_written` is a post-run scrape of the rootfs
 (real fs semantics for truncate/rename/append); crashes/timeouts produce
 `exit_code: -1` plus a trailing fault event. Ground truth is always
@@ -463,7 +463,7 @@ io-mismatch → files-mismatch → event-divergence/event-length; divergence on
 the first mismatch only.
 `hidden_input_stream` yields text charset draws by mode and `stdin-bytes`
 draws (random bytes with a guaranteed NUL and ≥0x80 byte) for binary-safe
-seeds; `STDIN_DRIVEN`/`STDIN_BYTES_DRIVEN` select modes per seed. Seeds with
+seeds; `INPUT_MODE` selects the mode per seed. Seeds with
 real wire formats override this per-name: `_SEED_GRAMMARS` (`pkfmt`) makes
 60% of hidden draws seed-grammar packets (real magic/version/records + the
 structured attack variants), interleaved with the uniform stream. Truncation
@@ -483,7 +483,7 @@ decoded stdout previews already localize those.
 
 ### driver/ — marshaling, original calls, container boundary
 
-- **spec.py**: `Param` (kinds `i32`/`buffer_i32`/`cstring`, direction,
+- **spec.py**: `Param` (kinds `i32`/`buffer_i32`/`cstring`,
   length_param, range default `(-100,100)`, `ret` carried on `params[0]`) with
   `from_json`/`to_json`.
 - **calling.py**: `call_original(binary, addr, params, case)` executes the

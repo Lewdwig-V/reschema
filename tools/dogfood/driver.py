@@ -20,7 +20,6 @@ from downstream statistics is the Task-7 render contract, not this module's.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import tomllib
@@ -28,13 +27,12 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from reschema.feedback import CONTINUATION_FEEDBACK_VERSION
+from reschema.engine import CONTINUATION_FEEDBACK_VERSION
 
 from .measure import render_report
-from .prompt import template_hash
 from .runners.base import AgentRunner, SlotSpec
 from .runners.opencode_v1 import OpenCodeV1Runner
-from .slot import SlotGuard, _driver_revision, run_slot
+from .slot import SlotGuard, _record, evidence_header, run_slot
 
 INFRA_STREAK_ABORT = 3
 BUDGET_CONSUMING = (
@@ -131,16 +129,8 @@ def run_campaign(
         # corpus identity + prompt + driver revision must reach even the
         # SYNTHETIC priming-failed records (run_slot re-derives the same
         # values from its mounted copies for real slot records)
-        "manifest_sha256": hashlib.sha256(
-            (Path(corpus_source) / "manifest.json").read_bytes()
-        ).hexdigest(),
-        "prompt_sha256": template_hash(),
-        "driver_revision": _driver_revision(),
-        "continuation_feedback": treatment,
+        **evidence_header(Path(corpus_source), continuation_feedback),
     }
-    sidecar = Path(corpus_source) / "canonicalizer_version"
-    if sidecar.exists():
-        run_header["canonicalizer_version"] = sidecar.read_text()
     infra_streak = 0
 
     def one(spec: SlotSpec) -> Path:
@@ -195,25 +185,17 @@ def run_campaign(
                     continue
                 store_flat(
                     later.result_stem,
-                    {
-                        "slot_id": later.slot_id,
-                        "family": later.family,
-                        "condition": later.condition,
-                        "slot": later.slot,
-                        "slot_index": later.slot_index,
-                        "rep": later.rep,
-                        "outcome": "aborted: priming-failed",
-                        "abort_reason": (
-                            f"chain slot {spec.slot} not accepted: {outcome}"
-                        ),
-                        "E": 0.0,
-                        "n_exp": 0,
-                        "n_sub": 0,
-                        "accepted": False,
-                        "wall_s": 0.0,
-                        "run_header": run_header,
-                        "transcript_tail": "",  # no agent ran; key parity holds
-                    },
+                    _record(  # no agent ran; key parity holds by construction
+                        later,
+                        outcome="aborted: priming-failed",
+                        abort_reason=f"chain slot {spec.slot} not accepted: {outcome}",
+                        e=0.0,
+                        n_exp=0,
+                        n_sub=0,
+                        accepted=False,
+                        wall_s=0.0,
+                        run_header=run_header,
+                    ),
                 )
             return
 

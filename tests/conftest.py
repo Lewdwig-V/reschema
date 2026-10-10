@@ -93,6 +93,22 @@ def mcp_call(tool, **kw):
     return anyio.run(go)
 
 
+def mcp_list_tools():
+    """The server's tool listing, in-process (same lazy-import rule as mcp_call)."""
+    import anyio
+    from mcp.client._memory import InMemoryTransport
+    from mcp.client.session import ClientSession
+
+    from reschema.mcp.server import server
+
+    async def go():
+        async with InMemoryTransport(server) as (r, w), ClientSession(r, w) as s:
+            await s.initialize()
+            return (await s.list_tools()).tools
+
+    return anyio.run(go)
+
+
 def wipe_task(store):
     """Clean slate for a shared-runtime-state task dir: traces + ledger gone."""
     for p in store.dir.glob("trace_*.json"):

@@ -20,12 +20,11 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 
-from elftools.elf.elffile import ELFFile
 from qiling import Qiling
 from unicorn import UcError
 from unicorn import unicorn_const as uc
 
-from ..disasm.analyze import function_insns
+from ..disasm.analyze import function_insns, symtab
 from .spec import Param
 
 SENTINEL = 0x1000000  # mapped far from the 0x400000 static image base
@@ -80,15 +79,15 @@ def gen_inputs(params: list[Param], rng: random.Random, n: int) -> list[dict]:
 
 
 def _marshal(p: Param, val, write):
-    """write() allocs memory, returns pointer."""
+    """The register value for one arg; write() allocs memory, returns pointer."""
     if p.kind == "i32":
-        return val, None
+        return val
     if p.kind == "cstring":
-        return write(val), None
+        return write(val)
     if p.kind == "buffer_i32":
         n = len(val) if isinstance(val, list) else val  # int => out buffer of n elems
         data = struct.pack(f"<{n}i", *val) if isinstance(val, list) else b"\x00" * 4 * n
-        return write(data), n
+        return write(data)
     raise ValueError(f"unknown param kind: {p.kind}")
 
 
@@ -128,7 +127,7 @@ def _run_case(ql: Qiling, addr: int, params: list[Param], case: dict) -> dict:
 
     regvals = []
     for p in params:
-        v, _ = _marshal(p, case[p.name], write)
+        v = _marshal(p, case[p.name], write)
         regvals.append(v)
         if p.kind in ("buffer_i32", "cstring"):
             ptrs[p.name] = v
@@ -172,14 +171,14 @@ def _run_case(ql: Qiling, addr: int, params: list[Param], case: dict) -> dict:
         "events": [],
     }
     for p in params:
-        if p.kind == "buffer_i32" and p.name in ptrs:
+        if p.kind == "buffer_i32":
             n = len(case[p.name]) if isinstance(case[p.name], list) else case[p.name]
             out["mem"][p.name] = list(
                 struct.unpack(f"<{n}i", bytes(ql.mem.read(ptrs[p.name], 4 * n)))
             )
         # Read back in ALL directions: a "pure-in" cstring that was written is a
         # mis-declared spec, and the mem mismatch is how the validator catches it.
-        if p.kind == "cstring" and p.name in ptrs:
+        if p.kind == "cstring":
             out["mem"][p.name] = bytes(ql.mem.read(ptrs[p.name], len(case[p.name])))
     return out
 
@@ -196,18 +195,7 @@ def _fn_has_syscall(binary: str, addr: int) -> bool | None:
     None = unanswerable here: the slice is bounded by the binary's own symtab,
     so a stripped or zero-size symbol leaves no honest extent to scan.
     This direct-opcode screen does not establish purity of callees."""
-    with open(binary, "rb") as f:
-        sym = ELFFile(f).get_section_by_name(".symtab")
-        if not sym:
-            return None
-        size = next(
-            (
-                int(s["st_size"])
-                for s in sym.iter_symbols()
-                if s["st_info"]["type"] == "STT_FUNC" and int(s["st_value"]) == addr
-            ),
-            None,
-        )
+    size = next((sz for a, sz in symtab(binary).values() if a == addr), None)
     if not size:
         return None
     return any(
@@ -250,6 +238,7 @@ def batch_call_original(
     _guard_arity(params)
     if not cases:
         return []
+    scope = hook_scope or (lambda _ql: nullcontext(lambda: None))
     if _fn_has_syscall(binary, addr) is not False:
         # Syscalling or unscannable original: per-case fresh VMs. (Fresh VMs
         # were the pre-batch behavior for every path — the suite already paid
@@ -257,11 +246,8 @@ def batch_call_original(
         outs = []
         for case in cases:
             ql = _boot_vm(binary)
-            with (
-                hook_scope(ql) if hook_scope is not None else nullcontext()
-            ) as before_case:
-                if before_case is not None:
-                    before_case()
+            with scope(ql) as before_case:
+                before_case()
                 o = _run_case(ql, addr, params, case)
             o["batch_mode"] = "fresh-vm-fallback"
             outs.append(o)
@@ -269,11 +255,10 @@ def batch_call_original(
     ql = _boot_vm(binary)
     snap = ql.save()
     outs = []
-    with hook_scope(ql) if hook_scope is not None else nullcontext() as before_case:
+    with scope(ql) as before_case:
         for case in cases:
             ql.restore(snap)
-            if before_case is not None:
-                before_case()
+            before_case()
             o = _run_case(ql, addr, params, case)
             o["batch_mode"] = "batched-snapshot"
             outs.append(o)

@@ -50,19 +50,15 @@ def scrape_immediates(binary: str, addr: int, size: int) -> list[int]:
     clamped = min(size, len(data) - off)
     if clamped <= 0:
         return []
-    out, seen = [], set()
-    for ins in function_insns(binary, addr, clamped):
-        if ins.mnemonic not in _THRESH_MNEMONICS:
-            continue
-        for op in ins.operands:
-            if op.type != X86_OP_IMM:
-                continue
-            v = op.imm & 0xFFFFFFFF
-            if v in seen:
-                continue
-            seen.add(v)
-            out.append(v)
-    return out
+    return list(  # first-seen order, deduped
+        dict.fromkeys(
+            op.imm & 0xFFFFFFFF
+            for ins in function_insns(binary, addr, clamped)
+            if ins.mnemonic in _THRESH_MNEMONICS
+            for op in ins.operands
+            if op.type == X86_OP_IMM
+        )
+    )
 
 
 def scout_inputs(params: list[Param], immediates: list[int]) -> list[dict]:

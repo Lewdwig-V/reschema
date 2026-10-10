@@ -15,8 +15,7 @@ import json
 import os
 from pathlib import Path
 
-from elftools.elf.elffile import ELFFile
-
+from ..disasm.analyze import symtab as _symtab  # tests patch gen._symtab
 from ..driver import podrun
 from ..exec.canonical import CANONICALIZER_VERSION
 
@@ -46,18 +45,6 @@ OPTS = ["-O0", "-O1", "-O2"]
 CFLAGS = ["-static", "-fno-pie", "-no-pie", "-g0", "-fno-stack-protector"]
 
 
-def _symtab(binary: Path) -> dict[str, tuple[int, int]]:
-    with open(binary, "rb") as f:
-        sym = ELFFile(f).get_section_by_name(".symtab")
-        if not sym:
-            return {}
-        return {
-            s.name: (int(s["st_value"]), int(s["st_size"]))
-            for s in sym.iter_symbols()
-            if s["st_info"]["type"] == "STT_FUNC"
-        }
-
-
 def _slot_sort_key(task_id: str) -> tuple:
     seed, rest = task_id.split("::")
     cc, opt, variant = rest.split("-")
@@ -67,6 +54,17 @@ def _slot_sort_key(task_id: str) -> tuple:
         OPTS.index("-" + opt),
         ["sym", "stripped"].index(variant),
     )
+
+
+def _check(r: dict, what: str, key: str) -> None:
+    """Fail loudly on a container fault or any non-zero per-job rc."""
+    if "stage" in r:
+        raise RuntimeError(f"corpus {what} container failed: {r['detail']}")
+    bad = [j for j in r["results"] if j["rc"] != 0]
+    if bad:
+        raise RuntimeError(
+            f"corpus {what} failed for {bad[0][key]}: {bad[0]['stderr']}"
+        )
 
 
 def build(
@@ -86,13 +84,10 @@ def build(
         for cc in COMPILERS:
             for opt in OPTS:
                 for strip in (False, True):
-                    variant = "stripped" if strip else "sym"
-                    if (
-                        matrix is not None
-                        and f"{cc}-{opt.lstrip('-')}-{variant}" not in matrix
-                    ):
+                    slot = f"{cc}-{opt.lstrip('-')}-{'stripped' if strip else 'sym'}"
+                    if matrix is not None and slot not in matrix:
                         continue
-                    out = out_root / f"{name}/{cc}-{opt.lstrip('-')}-{variant}"
+                    out = out_root / name / slot
                     out.mkdir(parents=True, exist_ok=True)
                     jobs.append(
                         {
@@ -102,29 +97,22 @@ def build(
                             "flags": [opt, *CFLAGS],
                         }
                     )
-                    plan.append((name, cc, opt, strip, out / "prog"))
+                    plan.append((name, cc, opt, strip, slot, out / "prog"))
     if not plan:
         return []
     r = podrun.run_worker({"mode": "compile", "jobs": jobs}, out_root, timeout=600)
-    if "stage" in r:
-        raise RuntimeError(f"corpus toolchain container failed: {r['detail']}")
-    bad = [j for j in r["results"] if j["rc"] != 0]
-    if bad:
-        raise RuntimeError(
-            f"corpus compile failed for {bad[0]['out']}: {bad[0]['stderr']}"
-        )
+    _check(r, "compile", "out")
 
     built = []
     to_strip: list[str] = []
-    for name, cc, opt, strip, binary in plan:
-        slot = f"{name}/{cc}-{opt.lstrip('-')}-{'stripped' if strip else 'sym'}"
+    for name, cc, opt, strip, slot, binary in plan:
         syms = _symtab(binary)
         funcs = {
             f: {"addr": syms[f][0], "size": syms[f][1]}
             for f in FUNCS[name]
             if f in syms
         }
-        assert funcs, f"no functions captured for {slot}"
+        assert funcs, f"no functions captured for {name}/{slot}"
         if strip:
             to_strip.append(str(binary.relative_to(out_root)))
         built.append(
@@ -134,7 +122,7 @@ def build(
                 "opt": opt,
                 "stripped": strip,
                 "binary": str(binary),
-                "task_id": f"{name}::{cc}-{opt.lstrip('-')}-{'stripped' if strip else 'sym'}",
+                "task_id": f"{name}::{slot}",
                 "functions": funcs,
             }
         )
@@ -144,13 +132,7 @@ def build(
         r = podrun.run_worker(
             {"mode": "strip", "files": to_strip}, out_root, timeout=300
         )
-        if "stage" in r:
-            raise RuntimeError(f"corpus strip container failed: {r['detail']}")
-        bad = [j for j in r["results"] if j["rc"] != 0]
-        if bad:
-            raise RuntimeError(
-                f"corpus strip failed for {bad[0]['file']}: {bad[0]['stderr']}"
-            )
+        _check(r, "strip", "file")
     mf_path = out_root / "manifest.json"
     # Unfiltered builds regenerate the manifest from the current plan (stale
     # slots are pruned); targeted builds merge — anything outside the filter

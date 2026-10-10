@@ -88,7 +88,7 @@ def test_external_signal_death_is_error_not_timeout(tmp_path):
 
 def test_wait_without_spawn_is_error():
     out = OpenCodeV1Runner(binary="/bin/true").wait()
-    assert out.exit_kind == "error" and out.returncode is None
+    assert out.exit_kind == "error"
 
 
 def test_exited_tracks_process(tmp_path):

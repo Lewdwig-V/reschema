@@ -96,7 +96,6 @@ def test_buffer_i32_void_from_template_accepted(manifest):
             Param(
                 "buf",
                 "buffer_i32",
-                direction="in_out",
                 length_param="n",
                 range=(51, 100),
                 ret="void",
@@ -143,7 +142,7 @@ def test_cstring_void_from_template_accepted(manifest):
     r = submit_function(
         st,
         "rot13",
-        [Param("in_out", "cstring", direction="in_out", ret="void").to_json()],
+        [Param("in_out", "cstring", ret="void").to_json()],
         model,
         seed=4,
         n_fuzz=8,

@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from reschema.feedback import (
+from reschema.engine import (
     CONTINUATION_FEEDBACK_VERSION,
     FEEDBACK_DEADLINE_ENV,
     FEEDBACK_ENV,
@@ -204,7 +204,7 @@ class OpenCodeV1Runner:
             kind = "timeout" if self._killed else "error"
         else:
             kind = "exit"
-        return AgentOutcome(exit_kind=kind, returncode=rc, transcript_tail=tail)
+        return AgentOutcome(exit_kind=kind, transcript_tail=tail)
 
     def kill(self) -> None:
         if self._p and self._p.poll() is None:

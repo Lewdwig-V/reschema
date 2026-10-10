@@ -13,14 +13,11 @@ the corpus-matrix phrasings below are.
 import re
 from pathlib import Path
 
-import anyio
-from mcp.client._memory import InMemoryTransport
-from mcp.client.session import ClientSession
+from conftest import mcp_list_tools
 
 from reschema.corpus.generate import COMPILERS, FUNCS, OPTS
 from reschema.engine import HIDDEN_N
 from reschema.exec.canonical import CANONICALIZER_VERSION
-from reschema.mcp.server import server
 from reschema.validate.function import N_FUZZ
 
 REPO = Path(__file__).resolve().parents[1]
@@ -85,13 +82,7 @@ def test_seed_count_and_lists():
 
 
 def test_tool_count():
-    async def go():
-        async with InMemoryTransport(server) as (r, w), ClientSession(r, w) as s:
-            await s.initialize()
-            return len((await s.list_tools()).tools)
-
-    n_tools = anyio.run(go)
-    _check(NUM + r" (?:MCP )?tools\b", n_tools)
+    _check(NUM + r" (?:MCP )?tools\b", len(mcp_list_tools()))
 
 
 def test_tuning_constants():

@@ -40,6 +40,7 @@ stdout: one JSON line per accept. stderr: totals.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import sys
@@ -200,8 +201,7 @@ def _prep_function(
 
 
 def _judge_function(row: dict, job: dict) -> dict:
-    with tempfile.TemporaryDirectory(prefix="reschema-regrade-") as d:
-        v = validate_function(so_path=Path(d) / f"{job['func']}.so", **job)
+    v = validate_function(**job)
     row = {**row, "compared": v.compared, "skipped": v.skipped}
     if v.ok:
         return {**row, "new_verdict": "accept"}
@@ -284,7 +284,7 @@ def regrade(
     # or a missing corpus binary fails the job once, loudly.
     manifest = {t["task_id"]: t for t in load_manifest()}
     toolchain = podrun.image_id()
-    bin_digests: dict[str, str] = {}
+    digest = functools.cache(binary_digest)  # one hash per corpus binary
     rows = []
     for task_id, led, unit in accepts():
         if task_ids is not None and task_id not in task_ids:
@@ -303,11 +303,7 @@ def regrade(
             )
             continue
         meta = manifest.get(task_id)
-        current_bin = None
-        if meta is not None:
-            if task_id not in bin_digests:
-                bin_digests[task_id] = binary_digest(meta["binary"])
-            current_bin = bin_digests[task_id]
+        current_bin = digest(meta["binary"]) if meta is not None else None
         row: dict = {}
         try:
             if unit == "program":

@@ -40,7 +40,7 @@ __attribute__((sysv_abi)) void scale_buf(int32_t *buf,int32_t n,int32_t factor){
     for(int32_t i=0;i<n;i++){ int32_t v=buf[i]*factor; buf[i]=v<-100?-100:v>100?100:v; }
 }"""
 
-# Writes nothing: only passes if the buffer readback ignores the declared direction.
+# Writes nothing: rejected because every buffer is read back after the call.
 NOOP_SCALE = r"""
 #include <stdint.h>
 __attribute__((sysv_abi)) void scale_buf(int32_t *buf,int32_t n,int32_t factor){ (void)buf;(void)n;(void)factor; }"""
@@ -82,7 +82,6 @@ SCALE_PARAMS = [
     Param(
         "buf",
         "buffer_i32",
-        direction="in_out",
         length_param="n",
         range=(51, 100),
         ret="void",
@@ -90,14 +89,13 @@ SCALE_PARAMS = [
     Param("n", "i32", range=(3, 4)),
     Param("factor", "i32", range=(2, 5)),
 ]
-ROT13_PARAMS = [Param("in_out", "cstring", direction="in_out", ret="void")]
+ROT13_PARAMS = [Param("in_out", "cstring", ret="void")]
 # Same as SCALE_PARAMS but the buffer is declared pure-out: the driver must poison-fill
 # it from the rng stream so a no-op model can't match the original by sitting still.
 OUT_SCALE_PARAMS = [
     Param(
         "buf",
         "buffer_i32",
-        direction="out",
         length_param="n",
         range=(51, 100),
         ret="void",
@@ -140,7 +138,6 @@ def test_missing_worker_image_is_structured_infra(manifest, tmp_path, monkeypatc
         "sum_range",
         SUM_PARAMS,
         MODEL,
-        tmp_path / "m.so",
         seed=1,
         n_fuzz=2,
     )
@@ -158,7 +155,6 @@ def test_hanging_model_rejected_with_crash_detail(manifest, tmp_path):
         "sum_range",
         SUM_PARAMS,
         "__attribute__((sysv_abi)) int sum_range(int lo, int hi) { for (;;) {} }",
-        tmp_path / "m.so",
         seed=1,
         n_fuzz=2,
     )
@@ -175,7 +171,6 @@ def test_true_sum_range_accepted(manifest, tmp_path):
         "sum_range",
         SUM_PARAMS,
         MODEL,
-        tmp_path / "m.so",
         seed=1,
         n_fuzz=16,
     )
@@ -190,7 +185,6 @@ def test_true_clamp_i32_accepted(manifest, tmp_path):
         "clamp_i32",
         CLAMP_PARAMS,
         MODEL,
-        tmp_path / "m.so",
         seed=2,
         n_fuzz=16,
     )
@@ -206,7 +200,6 @@ def test_true_rot13_char_accepted(manifest, tmp_path):
         "rot13_char",
         params,
         GOOD_ROT,
-        tmp_path / "m.so",
         seed=3,
         n_fuzz=16,
     )
@@ -221,7 +214,6 @@ def test_constant_model_rejected(manifest, tmp_path):
         "sum_range",
         SUM_PARAMS,
         BAD_SUM,
-        tmp_path / "m.so",
         seed=1,
         n_fuzz=8,
     )
@@ -244,7 +236,6 @@ def test_wrong_memory_effects_rejected(manifest, tmp_path):
         "scale_buf",
         SCALE_PARAMS,
         BAD_SCALE,
-        tmp_path / "m.so",
         seed=1,
         n_fuzz=8,
     )
@@ -260,7 +251,6 @@ def test_compile_failure_rejected(manifest, tmp_path):
         "sum_range",
         SUM_PARAMS,
         NOT_C,
-        tmp_path / "m.so",
         seed=1,
         n_fuzz=8,
     )
@@ -276,7 +266,6 @@ def test_missing_symbol_rejected(manifest, tmp_path):
         "sum_range",
         SUM_PARAMS,
         MISSING_SYMBOL,
-        tmp_path / "m.so",
         seed=1,
         n_fuzz=8,
     )
@@ -294,7 +283,6 @@ def test_unresolved_extern_structured_link_reject(manifest, tmp_path):
         "sum_range",
         SUM_PARAMS,
         LINK_BROKEN,
-        tmp_path / "m.so",
         seed=1,
         n_fuzz=2,
     )
@@ -313,7 +301,6 @@ def test_all_original_faults_reject_skip_starvation(manifest, tmp_path):
         "sum_range",
         SUM_PARAMS,
         MODEL,
-        tmp_path / "m.so",
         seed=1,
         n_fuzz=4,
     )
@@ -329,9 +316,7 @@ def test_void_scalar_only_spec_rejected(manifest, tmp_path):
         Param("lo", "i32", range=(-20, 10), ret="void"),
         Param("hi", "i32", range=(10, 30)),
     ]
-    v = validate_function(
-        binary, addr, "sum_range", params, MODEL, tmp_path / "m.so", seed=1, n_fuzz=2
-    )
+    v = validate_function(binary, addr, "sum_range", params, MODEL, seed=1, n_fuzz=2)
     assert not v.ok
     assert v.divergence["stage"] == "spec"
 
@@ -348,9 +333,7 @@ def test_empty_params_vacuity_spec_rejected(manifest, tmp_path):
     # one-behavior-point comparison, i.e. a coin flip. The CORRECT source must
     # be refused too: vacuity is a property of the spec, not the source.
     binary, addr = _slot(manifest, "rot13", "rot13_char")
-    v = validate_function(
-        binary, addr, "rot13_char", [], GOOD_ROT, tmp_path / "m.so", seed=1, n_fuzz=4
-    )
+    v = validate_function(binary, addr, "rot13_char", [], GOOD_ROT, seed=1, n_fuzz=4)
     assert not v.ok
     assert v.divergence["stage"] == "spec"
     assert "distinct" in v.divergence["detail"]
@@ -362,9 +345,7 @@ def test_fixed_point_range_vacuity_spec_rejected(manifest, tmp_path):
     # one is legitimate — the others still vary.)
     binary, addr = _slot(manifest, "calc", "sum_range")
     params = [Param("lo", "i32", range=(5, 5)), Param("hi", "i32", range=(12, 12))]
-    v = validate_function(
-        binary, addr, "sum_range", params, MODEL, tmp_path / "m.so", seed=1, n_fuzz=4
-    )
+    v = validate_function(binary, addr, "sum_range", params, MODEL, seed=1, n_fuzz=4)
     assert not v.ok
     assert v.divergence["stage"] == "spec"
     assert "distinct" in v.divergence["detail"]
@@ -380,7 +361,6 @@ def test_true_scale_buf_void_accepted(manifest, tmp_path):
         "scale_buf",
         SCALE_PARAMS,
         GOOD_SCALE,
-        tmp_path / "m.so",
         seed=5,
         n_fuzz=16,
     )
@@ -397,7 +377,6 @@ def test_true_rot13_cstring_void_accepted(manifest, tmp_path):
         "rot13",
         ROT13_PARAMS,
         GOOD_ROT13_STR,
-        tmp_path / "m.so",
         seed=6,
         n_fuzz=16,
     )
@@ -415,7 +394,6 @@ def test_out_buffer_noop_model_rejected_on_poison(manifest, tmp_path):
         "scale_buf",
         OUT_SCALE_PARAMS,
         NOOP_SCALE,
-        tmp_path / "m.so",
         seed=1,
         n_fuzz=8,
     )
@@ -432,7 +410,6 @@ def test_out_buffer_correct_model_accepted(manifest, tmp_path):
         "scale_buf",
         OUT_SCALE_PARAMS,
         GOOD_SCALE,
-        tmp_path / "m.so",
         seed=5,
         n_fuzz=8,
     )
@@ -440,15 +417,14 @@ def test_out_buffer_correct_model_accepted(manifest, tmp_path):
     assert v.compared == 8 and v.skipped == 0
 
 
-def test_buffer_declared_in_noop_model_rejected(manifest, tmp_path):
-    """Wrong-spec flattery pin (i): buffer_i32 readback is direction-agnostic, so a
-    write-nothing model cannot hide behind a buffer mis-declared 'in'."""
+def test_buffer_noop_model_rejected(manifest, tmp_path):
+    """Flattery pin (i): every buffer_i32 is read back after the call, so a
+    write-nothing model cannot pass against a writing original."""
     binary, addr = _slot(manifest, "calc", "scale_buf")
     params = [
         Param(
             "buf",
             "buffer_i32",
-            direction="in",
             length_param="n",
             range=(51, 100),
             ret="void",
@@ -462,7 +438,6 @@ def test_buffer_declared_in_noop_model_rejected(manifest, tmp_path):
         "scale_buf",
         params,
         NOOP_SCALE,
-        tmp_path / "m.so",
         seed=1,
         n_fuzz=8,
     )
@@ -470,29 +445,27 @@ def test_buffer_declared_in_noop_model_rejected(manifest, tmp_path):
     assert v.divergence["field"] == "mem"
 
 
-def test_cstring_declared_in_noop_model_rejected(manifest, tmp_path):
-    """Wrong-spec flattery pin (ii): cstring readback must be direction-agnostic as well;
-    otherwise a mis-declared pure-'in' cstring compares nothing and the no-op passes."""
+def test_cstring_noop_model_rejected(manifest, tmp_path):
+    """Flattery pin (ii): every cstring is read back too; otherwise a cstring the
+    original writes compares nothing and the no-op passes."""
     binary, addr = _slot(manifest, "rot13", "rot13")
-    params = [Param("in_out", "cstring", direction="in", ret="void")]
-    v = validate_function(
-        binary, addr, "rot13", params, NOOP_ROT13, tmp_path / "m.so", seed=1, n_fuzz=8
-    )
+    params = [Param("in_out", "cstring", ret="void")]
+    v = validate_function(binary, addr, "rot13", params, NOOP_ROT13, seed=1, n_fuzz=8)
     assert not v.ok
     assert v.divergence["field"] == "mem"
 
 
 def test_resubmit_same_path_stale_dlopen_cache(manifest, tmp_path):
-    """A second submission to the SAME so_path must not pass the symbol gate on the first
-    submission's cached dlopen image; the symbol check runs against a temp copy."""
+    """A second submission of the SAME function must not pass the symbol gate on
+    the first submission's cached dlopen image; the symbol check runs against a
+    temp copy."""
     binary, addr = _slot(manifest, "calc", "sum_range")
-    so = tmp_path / "m.so"
     v1 = validate_function(
-        binary, addr, "sum_range", SUM_PARAMS, MODEL, so, seed=1, n_fuzz=4
+        binary, addr, "sum_range", SUM_PARAMS, MODEL, seed=1, n_fuzz=4
     )
     assert v1.ok, v1.divergence
     v2 = validate_function(
-        binary, addr, "sum_range", SUM_PARAMS, MISSING_SYMBOL, so, seed=1, n_fuzz=4
+        binary, addr, "sum_range", SUM_PARAMS, MISSING_SYMBOL, seed=1, n_fuzz=4
     )
     assert not v2.ok
     assert v2.divergence["stage"] == "symbol"
@@ -507,7 +480,6 @@ def test_verdict_reports_compared_and_skipped(manifest, tmp_path):
         "sum_range",
         SUM_PARAMS,
         MODEL,
-        tmp_path / "m.so",
         seed=9,
         n_fuzz=12,
     )
@@ -519,9 +491,7 @@ def test_over_six_params_structured_arity_reject(manifest, tmp_path):
     """_guard_arity's NotImplementedError must not escape as a raw traceback."""
     binary, addr = _slot(manifest, "calc", "sum_range")
     params = [Param(f"a{i}", "i32") for i in range(7)]
-    v = validate_function(
-        binary, addr, "sum_range", params, MODEL, tmp_path / "m.so", seed=1, n_fuzz=2
-    )
+    v = validate_function(binary, addr, "sum_range", params, MODEL, seed=1, n_fuzz=2)
     assert not v.ok
     assert v.divergence["stage"] == "arity"
 
@@ -544,7 +514,6 @@ __attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){
         "sum_range",
         SUM_PARAMS,
         STOWAWAY,
-        tmp_path / "m.so",
         seed=1,
         n_fuzz=8,
     )
@@ -620,9 +589,7 @@ def test_skip_floor_ignores_timeouts(monkeypatch, tmp_path):
     # Positive control: correct-typed wide ranges time out (never memory-
     # fault) on real originals; timeouts stay skipped and the round compares.
     _stub_original(monkeypatch, "timeout", [])
-    v = validate_function(
-        "unused", 0, "sum_range", WIDE_PARAMS, "", tmp_path / "m.so", seed=7
-    )
+    v = validate_function("unused", 0, "sum_range", WIDE_PARAMS, "", seed=7)
     assert v.ok, v
     assert v.skipped > 0 and v.compared > 0, v
 
@@ -634,9 +601,7 @@ def test_skip_floor_rejects_memory_faults(monkeypatch, tmp_path):
     # must offer narrowing the range, not only retyping as a pointer.
     msg = ["UcError: Invalid memory read (UC_ERR_READ_UNMAPPED)"]
     _stub_original(monkeypatch, "crash", msg)
-    v = validate_function(
-        "unused", 0, "sum_range", WIDE_PARAMS, "", tmp_path / "m.so", seed=7
-    )
+    v = validate_function("unused", 0, "sum_range", WIDE_PARAMS, "", seed=7)
     assert not v.ok and v.divergence["stage"] == "spec", v
     assert v.skipped > 0 and v.compared == 0, v
     assert "buffer_i32" in v.divergence["detail"], v
@@ -653,8 +618,6 @@ def test_skip_floor_ignores_scout_memory_faults(monkeypatch, tmp_path):
         scout, "scout_inputs", lambda params, imms: [{"lo": -99999, "hi": 99999}]
     )
     narrow = [Param("lo", "i32", range=(-10, 0)), Param("hi", "i32", range=(0, 10))]
-    v = validate_function(
-        "unused", 0, "sum_range", narrow, "", tmp_path / "m.so", seed=7
-    )
+    v = validate_function("unused", 0, "sum_range", narrow, "", seed=7)
     assert v.ok, v
     assert v.skipped == 1, v

@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from reschema.feedback import CONTINUATION_FEEDBACK_VERSION
+from reschema.engine import CONTINUATION_FEEDBACK_VERSION
 
 from .measure import slot_efficiency
 from .prompt import render, template_hash
@@ -53,11 +53,14 @@ class SlotGuard:
 
 
 def layout_root(spec: SlotSpec, runs_dir: Path, corpus_source: Path) -> Path:
-    """Mount the corpus in a legacy slot/chain root or an explicit trial root.
-
-    Reopening a grouped root resumes its lineage; it does not reset the judge.
-    """
-    root = runs_dir / spec.state_root_id
+    """Primed chains share one root across slots; unprimed gets a fresh root
+    per slot — memory-cold-by-filesystem, the CI isolation invariant."""
+    chain = (
+        f"{spec.family}-primed-r{spec.rep}"
+        if spec.condition == "primed"
+        else spec.slot_id
+    )
+    root = runs_dir / chain
     corp = root / ".reschema/corpus"
     # Manifest "binary" paths are baked at corpus build time (generate.py)
     # and resolve in the ORIGINAL corpus root, never in this mount — the
@@ -85,6 +88,26 @@ def _read_ledger(root: Path, task_id: str) -> dict:
     return json.loads(p.read_text()) if p.exists() else {}
 
 
+def evidence_header(corpus: Path, continuation_feedback: bool) -> dict:
+    """Comparability evidence (protocol §5): corpus identity, prompt, driver
+    revision, feedback arm, canonicalizer. The ONE builder, for real slot
+    records and the driver's synthetic priming-failed records alike."""
+    header = {
+        "manifest_sha256": hashlib.sha256(
+            (corpus / "manifest.json").read_bytes()
+        ).hexdigest(),
+        "prompt_sha256": template_hash(),
+        "driver_revision": _driver_revision(),
+        "continuation_feedback": CONTINUATION_FEEDBACK_VERSION
+        if continuation_feedback
+        else "off",
+    }
+    sidecar = corpus / "canonicalizer_version"
+    if sidecar.exists():  # stub corpora in tests carry no sidecar
+        header["canonicalizer_version"] = sidecar.read_text()
+    return header
+
+
 def _record(
     spec: SlotSpec,
     *,
@@ -107,8 +130,6 @@ def _record(
     poll and a guard's kill, and the post-kill ledger re-read then flips the
     outcome to accepted while the killed process's exit_kind stays as
     evidence. That pairing is by design; do not "fix" it."""
-    if spec.state_group is not None:
-        run_header = {**run_header, "state_group": spec.state_group}
     return {
         "slot_id": spec.slot_id,
         "family": spec.family,
@@ -139,24 +160,18 @@ def run_slot(
     run_header: dict | None = None,
     continuation_feedback: bool = False,
 ) -> Path:
-    """Run one slot or one sequential branch in an explicit state group.
-
-    Grouped callers own serialisation of the shared judge and use a new
-    group/rep/campaign for independent trials. Counters remain cumulative
-    within a grouped task, including on resume; guards use those same counters.
-    """
     guards = guards or SlotGuard()
     poll = poll_s if poll_s is not None else DEFAULT_POLL_S
     root = layout_root(spec, campaign_dir, corpus_source)
-    # Legacy campaign retries start this task afresh, without laundering a
-    # crashed slot's acceptance/counters. Explicit groups instead identify a
-    # continuing trial: deleting its task would erase sibling work and reset
-    # the shared budget. Fresh grouped trials get isolation from their root.
-    if spec.state_group is None:
-        shutil.rmtree(
-            root / ".reschema/tasks" / spec.task_id.replace("::", "__"),
-            ignore_errors=True,
-        )
+    # Resume honesty: layout_root REUSES roots, so a driver killed mid-slot
+    # leaves the crashed agent's ledger behind — the poll loop would launder a
+    # stale "accepted"/inflated counters into the fresh run's record. Wipe THIS
+    # task's dir before the agent spawns; chain memory and sibling slot
+    # ledgers are untouched.
+    shutil.rmtree(
+        root / ".reschema/tasks" / spec.task_id.replace("::", "__"),
+        ignore_errors=True,
+    )
     out = campaign_dir.parent / "results" / f"{spec.result_stem}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -176,21 +191,10 @@ def run_slot(
     # corpus identity + prompt + driver revision are comparability evidence
     # (protocol §5) — merge before preflight so even an infra-error record
     # carries them (an agent-dependent path can't be trusted to exist)
-    mounted = root / ".reschema/corpus"
     run_header = {
         **run_header,
-        "manifest_sha256": hashlib.sha256(
-            (mounted / "manifest.json").read_bytes()
-        ).hexdigest(),
-        "prompt_sha256": template_hash(),
-        "driver_revision": _driver_revision(),
-        "continuation_feedback": CONTINUATION_FEEDBACK_VERSION
-        if continuation_feedback
-        else "off",
+        **evidence_header(root / ".reschema/corpus", continuation_feedback),
     }
-    sidecar = mounted / "canonicalizer_version"
-    if sidecar.exists():  # stub corpora in tests carry no sidecar
-        run_header["canonicalizer_version"] = sidecar.read_text()
     preflight = getattr(runner, "preflight", None)
     if preflight is not None:
         try:

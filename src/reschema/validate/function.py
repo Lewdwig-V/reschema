@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import random
 import secrets
-import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +46,14 @@ def _preview(case: dict) -> dict:
     }
 
 
+def _wire(case: dict) -> dict:
+    """JSON-safe case: byte values (cstrings) as hex."""
+    return {
+        k: (v.hex() if isinstance(v, (bytes, bytearray)) else v)
+        for k, v in case.items()
+    }
+
+
 def _crash_text(crash: dict) -> str:
     if "signal" in crash:
         return f"signal {crash['signal']}"
@@ -68,7 +75,6 @@ def validate_function(
     func: str,
     params: list[Param],
     c_source: str,
-    so_path: Path,
     seed: int | None = None,
     n_fuzz: int = N_FUZZ,
     size: int | None = None,
@@ -118,14 +124,9 @@ def validate_function(
 
     immediates = scrape_immediates(binary, addr, size or 0x400)
     cases = merge_scout_cases(cases, scout_inputs(params, immediates), n_fuzz)
-    kept: list[tuple[dict, dict]] = []
-    skipped = 0
     wants = batch_call_original(binary, addr, params, cases)
-    for case, want in zip(cases, wants):
-        if want["exit_code"] == -1:
-            skipped += 1
-            continue
-        kept.append((case, want))
+    kept = [(c, w) for c, w in zip(cases, wants) if w["exit_code"] != -1]
+    skipped = len(cases) - len(kept)
     if not kept:
         # No case compared: never pass vacuously.
         return FnVerdict(
@@ -170,13 +171,7 @@ def validate_function(
             skipped=skipped,
         )
     distinct = {
-        json.dumps(
-            {
-                k: (v.hex() if isinstance(v, (bytes, bytearray)) else v)
-                for k, v in case.items()
-            },
-            sort_keys=True,
-        )
+        json.dumps(_wire(case), sort_keys=True)
         for case, _ in kept
         # The floor judges the AGENT's declared draw space only: harness
         # scouts (109-A) add evidence ON TOP and must never launder a
@@ -213,27 +208,14 @@ def validate_function(
                     "c_source": c_source,
                     "fname": func,
                     "params": [p.to_json() for p in params],
-                    "cases": [
-                        {
-                            k: (v.hex() if isinstance(v, (bytes, bytearray)) else v)
-                            for k, v in case.items()
-                        }
-                        for case, _ in kept
-                    ],
+                    "cases": [_wire(case) for case, _ in kept],
                 },
                 Path(scratch),
             )
-        except (
-            RuntimeError
-        ) as e:  # missing podman/image: mandatory containment, no fallback
+        except RuntimeError as e:  # missing podman/image: mandatory containment
             return FnVerdict(False, {"stage": "infra", "detail": str(e)})
-        if "stage" in r:
-            return FnVerdict(
-                False, r
-            )  # compile/link/symbol/infra payloads pass through
-        built = Path(scratch) / f"{func}.so"
-        if built.exists():
-            shutil.copy2(built, so_path)  # debug artifact parity with prior layout
+    if "stage" in r:
+        return FnVerdict(False, r)  # compile/link/symbol/infra payloads pass through
 
     compared = 0
     for (case, want), got in zip(kept, r["results"]):

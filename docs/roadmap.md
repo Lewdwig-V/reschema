@@ -189,7 +189,13 @@ before any engine work. **Entry (#111):** offline fodder-yield
 experiment — mine `rejected_sources` (the ledger failure store that
 prerequisite review required first, #116; pre-store history comes from
 floor transcripts), compile+double-trace every rejected source, report
-keep-rates per failure class.
+keep-rates per failure class. **Verdict (#111, closed): PROCEED** — 50/81 candidates
+(62%) survive compile + double-record stability. The yield skews to ordinary
+behavioral bugs: the UB-est classes mostly die at the compile gate
+(escape-slip 5/5, magic-stub 7/12), and the nondeterminism filter barely
+fires (1/82). The one-shot `tools/fodder.py` was removed after the verdict
+(restore from 435c5cb to re-run); the engine-side supply it mined
+(`rejected_sources`, `program_source`) stays.
 
 ### 3B — Judge-integrity circuitry (verifier hardener)
 

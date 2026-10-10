@@ -587,8 +587,8 @@ adapter, all reported on ARC-AGI-3. The report lives in Warranted
 ([research/2026-10-10-arc-agi-3-harness-lessons.md](https://github.com/Lewdwig-V/warranted/blob/main/docs/research/2026-10-10-arc-agi-3-harness-lessons.md)),
 because most of its recommendations land there (M9 strategy layer, M10
 adapter evidence, M6). Most sources were read as search extracts and every
-figure is self-reported, on public games only. Treat the numbers as
-directional. All items below wait for the M8 port: the gates, #113/#114 and
+figure is self-reported: AVO and VISTA on the public games, GPT-6 Astra on
+the Semi-Private set. Treat the numbers as directional. All items below wait for the M8 port: the gates, #113/#114 and
 #128/#129 are frozen until it lands, so the judge-facing work runs as
 Warranted campaigns over the ported checkers, not as edits to `engine.py`.
 None relaxes the judge.
@@ -608,9 +608,11 @@ None relaxes the judge.
   promoted into the 3A negative-regression garden as a permanent negative test.
   Outputs reach CI and benchmark artifacts only, never an agent-visible
   surface (rejected-ideas §4).
-- **The adapter is part of the metric epoch.** On ARC-AGI-3 the same GPT-6
-  weights reportedly scored 62.7% under the standard harness and 99.9% when
-  the provider adapter replayed native reasoning between turns. The epoch
+- **The adapter is part of the metric epoch.** GPT-6 Astra's best
+  Semi-Private ARC-AGI-3 results were 62.7% under the standard harness and
+  99.9% when the provider adapter replayed native reasoning between turns,
+  at different reasoning levels. That pair is not controlled, but OpenAI's
+  own comparison on a fixed model (13.3% to 38.3%) points the same way. The epoch
   that M8 starts (#114's `METRIC_EPOCH`, carried in the domain version)
   should name the Warranted adapter and its reasoning-retention setting, so
   an adapter upgrade cannot move E silently. Warranted M10 records the

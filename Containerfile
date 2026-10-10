@@ -15,7 +15,8 @@
 # (3) update the digest in FROM, the pin date above, and the snapshot
 #     timestamp in the sed below (snapshot date = pin date)
 # (4) rebuild localhost/reschema-toolchain:1 and run the full test suite
-#     (CI's image cache keys on this file's hash, so any edit here rebuilds it).
+#     (CI's image cache keys on this file's and checker-requirements.txt's
+#     hash, so any edit to either rebuilds it).
 FROM docker.io/library/debian:trixie-slim@sha256:38a76d01668772e381ad2826d876627c89e7133e2f8a0f5d567306798b0f2a16
 # Pin apt sources to the snapshot matching the digest pin date, else gcc/clang/libc
 # resolve against live rolling trixie and the digest pin guarantees nothing.
@@ -26,8 +27,19 @@ RUN sed -i 's|http://deb.debian.org/debian-security|http://snapshot.debian.org/a
 # Check-Valid-Until=false: snapshot Release files expire by design; the pin and
 # the InRelease signatures carry the trust, not the rolling-mirror freshness check.
 RUN apt-get -o Acquire::Check-Valid-Until=false update \
- && apt-get install -y --no-install-recommends gcc clang python3 \
+ && apt-get install -y --no-install-recommends gcc clang python3 python-is-python3 python3-pip \
  && rm -rf /var/lib/apt/lists/*
+# M8 D1: the image doubles as the checker image. The agent's model replays under
+# qiling inside a Warranted job, never on the host, so qiling ships here at the
+# exact set uv.lock pins (checker-requirements.txt: hash-checked, wheels where
+# they exist, a few pure-Python sdists). --no-deps: the export is the whole
+# resolved closure, including uv's pillow override that pip would re-reject.
+# Warranted's job wrapper runs `python`, hence python-is-python3. The recorder
+# is ReSchema code and travels as job files, not baked in.
+COPY checker-requirements.txt /tmp/
+RUN pip install --break-system-packages --no-cache-dir --require-hashes --no-deps \
+      --prefer-binary -r /tmp/checker-requirements.txt \
+ && rm /tmp/checker-requirements.txt
 WORKDIR /work
 # Worker module ships with the repo (mounted ro at run time), not baked in:
 # image rebuilds are only for toolchain changes.

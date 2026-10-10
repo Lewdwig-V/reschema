@@ -14,6 +14,8 @@ dependencies = [
     "capstone",
     "pyelftools",
     "mcp==2.2.*",  # tests import private mcp.client._memory; narrowed until that API settles
+    # M8: tag pin; uv.lock resolves it to the commit (v0.3.0 = 0772d2f)
+    "warranted @ git+https://github.com/Lewdwig-V/warranted@v0.3.0",
 ]
 
 [tool.uv]
@@ -28,6 +30,9 @@ dev = [
     "pytest-xdist>=3.8.0",
     "ruff",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true  # the warranted git pin
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/reschema"]

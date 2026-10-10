@@ -4,24 +4,14 @@ slot/driver code stays dumb."""
 from __future__ import annotations
 
 import json
-import math
 import statistics
 from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 
-from reschema.engine import E_ALPHA, E_BETA
+from reschema.engine import efficiency as slot_efficiency  # the ONE E formula
 
 FLAT_EPS = 1e-3  # "materially non-flat" threshold (protocol §5)
-
-
-def slot_efficiency(accepted: bool, probes: int, subs: int) -> float:
-    """E = accepted * exp(-(alpha*max(0,probes-1) + beta*max(0,subs-1))) — engine's formula."""
-    return (
-        math.exp(-(E_ALPHA * max(0, probes - 1) + E_BETA * max(0, subs - 1)))
-        if accepted
-        else 0.0
-    )
 
 
 def _e_by_slot(records: Iterable[dict]) -> dict[int, float]:

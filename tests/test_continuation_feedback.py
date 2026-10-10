@@ -40,7 +40,7 @@ def store(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(eng, "_record_notes", Mock())
     monkeypatch.setattr(eng, "_topology_digest", lambda *a: {})
-    monkeypatch.setattr("reschema.memory.append_fact", Mock())
+    monkeypatch.setattr(eng, "append_fact", Mock())
     return eng.TaskStore("task")
 
 
@@ -117,9 +117,7 @@ def test_feedback_payload_is_pinned_and_scoped(store, monkeypatch):
     }
     assert feedback["repair_directive"] == eng._repair_directive(store)
     assert store.ledger()["continuation_feedback"] == VERSION
-    from reschema.memory import append_fact
-
-    append_fact.assert_not_called()
+    eng.append_fact.assert_not_called()
 
 
 @pytest.mark.parametrize("mode", ["function", "recorded", "hidden"])

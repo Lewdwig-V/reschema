@@ -196,7 +196,7 @@ def test_submit_model_none_n_fuzz_stays_engine_default(monkeypatch):
 
 def test_task_open_program_mode_surfaces_input_mode():
     meta = call("task_open", task_id="rot13::gcc-O2-sym")
-    assert meta["input"] == "argv"  # rot13 not in STDIN_DRIVEN
+    assert meta["input"] == "argv"  # rot13 not in INPUT_MODE
 
 
 def test_experiment_cstring_hex_value_roundtrip():
@@ -242,6 +242,17 @@ def test_experiment_bad_param_spec_returns_spec_error():
         case={},
     )
     assert r2["error"] == "spec"
+
+
+def test_corpus_build_keyerror_is_internal_not_not_found(monkeypatch):
+    # corpus_build has no lookup boundary: a KeyError is corrupt manifest
+    # state (e.g. an entry missing task_id), never a missing resource
+    def corrupt(**_):
+        raise KeyError("task_id")
+
+    monkeypatch.setattr("reschema.corpus.generate.build", corrupt)
+    r = call("corpus_build")
+    assert r == {"error": "internal", "detail": "KeyError: 'task_id'"}
 
 
 def test_status_corrupt_ledger_returns_internal_error():

@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from reschema.feedback import CONTINUATION_FEEDBACK_VERSION
+from reschema.engine import CONTINUATION_FEEDBACK_VERSION
 
 from .measure import slot_efficiency
 from .prompt import render, template_hash

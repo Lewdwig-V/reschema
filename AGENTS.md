@@ -9,6 +9,8 @@ project-local override/context.
 uv run pytest -q -n auto  # full suite: 120s HARD wall-clock budget (conftest
                           # enforces, per xdist worker); exceeding it fails the run
 uv run ruff check src tests
+uv run pytest -q -n auto -m golden  # M8 parity fixture (tests/golden/), excluded
+                          # from the default run; CI gives it its own 300s budget
 uv lock                   # after touching pyproject
 ```
 

@@ -2425,11 +2425,11 @@
       "scope": "program_gate",
       "expect": {
         "accepted": false,
-        "reason": null,
+        "reason": "io-mismatch",
         "stage": "recorded",
         "reason_pinned": false
       },
-      "notes": "regrade -> program_gate with rec = accept-time snapshot (the 3 cases; the later 'late' trace is excluded). Stage 'recorded' asserted (twice: audit seed and fresh=True); reason not asserted (expected io-mismatch: ECHO prints the input un-rotated)"
+      "notes": "regrade -> program_gate with rec = accept-time snapshot (the 3 cases; the later 'late' trace is excluded). Stage 'recorded' asserted (twice: audit seed and fresh=True); reason not asserted (expected io-mismatch: ECHO prints the input un-rotated) reason observed by running the gate in CI (PR #156); no test asserts it."
     }
   ]
 }

@@ -1,0 +1,2435 @@
+{
+  "_meta": {
+    "description": "Golden accept/reject decisions of ReSchema's function gate (validate_function, plus flagged submit_function spec rejects) and program gate (engine.program_gate), extracted from existing test assertions only.",
+    "conventions": {
+      "function.expect.stage": "divergence['stage'] on reject; null = behavioural divergence (no stage key) or accept. expect.field (ret|mem|crash) given when the test pins it. expect.stage_pinned=false = only ok==false is asserted; stage then holds the best inference, not a pinned value.",
+      "function.call_path": "submit_function / regrade pass size=<manifest fn size> to validate_function (scout scrape window); validate_function means a direct call with size=None (0x400 window). addr is the manifest address of func unless addr_override is set.",
+      "function.gate_level": "validate_function = decided by validate_function; submit_function = rejected by Param.from_json inside submit_function before validate_function runs (response reason 'spec', no divergence).",
+      "function.seed": "the effective fuzz seed; seed_pinned=false would mean fresh entropy (none here).",
+      "program.cases": "recorded cases in replay order (store.recorded() sorts by trace label); argv excludes argv[0]; stdin as hex.",
+      "program.hidden_seed": "null = test does not pin it (fresh entropy). hidden_reached = whether the gate gets past the recorded stage.",
+      "program.scope": "program_gate = full gate outcome; recorded_only = only compile_model + replay_against on the recorded cases is pinned (accepted=true means passes the recorded stage).",
+      "program.expect.reason_pinned": "false = reason not asserted by any test."
+    },
+    "generated_from": [
+      "tests/test_engine.py",
+      "tests/test_engine_b.py",
+      "tests/test_validate_function.py",
+      "tests/test_validate_program.py",
+      "tests/test_hidden.py",
+      "tests/test_scout.py",
+      "tests/test_seed_boundary.py",
+      "tests/test_pkfmt.py",
+      "tests/test_regrade.py",
+      "tests/test_memory.py"
+    ]
+  },
+  "function": [
+    {
+      "id": "calc-o2-sum-right-s7-n64",
+      "source_test": "tests/test_engine_b.py::test_submit_function_accept_payload_carries_fuzz_audit",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\nstatic int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}",
+      "seed": 7,
+      "n_fuzz": 64,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "calc-o2-sum-wrong-s1-n64",
+      "source_test": "tests/test_engine_b.py::test_submit_function_rejects_then_accepts",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t sum_range(int32_t a,int32_t b){return a+b;}",
+      "seed": 1,
+      "n_fuzz": 64,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": null,
+        "field": "ret"
+      },
+      "notes": "n_fuzz omitted by the test: submit_function default N_FUZZ=64"
+    },
+    {
+      "id": "calc-o2-sum-right-s1-n64",
+      "source_test": "tests/test_engine_b.py::test_submit_function_rejects_then_accepts",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\nstatic int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}",
+      "seed": 1,
+      "n_fuzz": 64,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      },
+      "notes": "n_fuzz omitted by the test: submit_function default N_FUZZ=64",
+      "corroborating_tests": [
+        "tests/test_engine_b.py::test_submit_function_no_duplicate_ledger_entries",
+        "tests/test_engine_b.py::test_compose_compiles_accepted_sources",
+        "tests/test_engine_b.py::test_submit_function_reaccept_newest_source_wins"
+      ]
+    },
+    {
+      "id": "calc-o2-sum-right-s2-n64",
+      "source_test": "tests/test_engine_b.py::test_submit_function_no_duplicate_ledger_entries",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\nstatic int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}",
+      "seed": 2,
+      "n_fuzz": 64,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      },
+      "notes": "n_fuzz omitted by the test: default 64"
+    },
+    {
+      "id": "calc-o2-clamp-s1-n8",
+      "source_test": "tests/test_engine_b.py::test_compose_links_per_tu_with_static_helpers",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "clamp_i32",
+      "params": [
+        {
+          "name": "v",
+          "kind": "i32",
+          "range": [
+            -100,
+            100
+          ]
+        },
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -50,
+            0
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            0,
+            50
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      },
+      "corroborating_tests": [
+        "tests/test_engine_b.py::test_compose_duplicate_exported_symbol_structured_reject"
+      ]
+    },
+    {
+      "id": "calc-o2-sum-right-s1-n8",
+      "source_test": "tests/test_engine_b.py::test_compose_links_per_tu_with_static_helpers",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\nstatic int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      },
+      "corroborating_tests": [
+        "tests/test_engine_b.py::test_submit_function_audit_records_seed_and_budget",
+        "tests/test_engine_b.py::test_function_accept_reports_task_incomplete_with_note",
+        "tests/test_engine_b.py::test_submit_function_audit_newest_wins_and_entropy_seed",
+        "tests/test_regrade.py::test_known_function_accept_reproduces"
+      ]
+    },
+    {
+      "id": "calc-o2-sum-exported-helper-s1-n8",
+      "source_test": "tests/test_engine_b.py::test_compose_duplicate_exported_symbol_structured_reject",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "calc-o2-sum-right2-s1-n64",
+      "source_test": "tests/test_engine_b.py::test_submit_function_reaccept_newest_source_wins",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\nstatic int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v>hi?hi:v<lo?lo:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}",
+      "seed": 1,
+      "n_fuzz": 64,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      },
+      "notes": "n_fuzz omitted by the test: default 64"
+    },
+    {
+      "id": "rot13-o2-rot13char-s1-n8",
+      "source_test": "tests/test_engine_b.py::test_function_accept_after_program_accept_reports_task_complete",
+      "task_id": "rot13::gcc-O2-sym",
+      "func": "rot13_char",
+      "params": [
+        {
+          "name": "c",
+          "kind": "i32",
+          "range": [
+            0,
+            255
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t rot13_char(int32_t c){\n    int32_t b = c & 0xFF;  // original is char-typed: low byte carries the rot\n    if(b>=97&&b<=122) return 97+(b-97+13)%26;\n    if(b>=65&&b<=90) return 65+(b-65+13)%26;\n    return b;\n}",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "calc-o2-sum-right2-entropy-n8",
+      "source_test": "tests/test_engine_b.py::test_submit_function_audit_newest_wins_and_entropy_seed",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\nstatic int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v>hi?hi:v<lo?lo:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}",
+      "seed": "entententententententent",
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      },
+      "notes": "test passes seed=None and monkeypatches secrets.token_hex to return 'ent'*8, so the effective seed is that string; replay with seed='entententententententent'"
+    },
+    {
+      "id": "calc-o2-sum-void-scalar-only-s1-n8",
+      "source_test": "tests/test_engine_b.py::test_submit_function_void_scalar_only_counts_rejection",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ],
+          "ret": "void"
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\nstatic int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "spec"
+      },
+      "notes": "rejected inside validate_function (void floor), not by submit_function's Param.from_json"
+    },
+    {
+      "id": "calc-o2-sum-wrong-s1-n8",
+      "source_test": "tests/test_engine_b.py::test_function_rejects_persist_raw_sources_but_decl_failures_never",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t sum_range(int32_t a,int32_t b){return a+b;}",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": null
+      },
+      "notes": "stage pinned as journal 'divergence' (= no stage key on FnVerdict.divergence)"
+    },
+    {
+      "id": "calc-o2-sum-emptyparams-wrong-s1-n8",
+      "source_test": "tests/test_engine_b.py::test_function_rejects_persist_raw_sources_but_decl_failures_never",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [],
+      "c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t sum_range(int32_t a,int32_t b){return a+b;}",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "spec"
+      }
+    },
+    {
+      "id": "calc-o2-sum-emptyparams-smoke-s1-n8",
+      "source_test": "tests/test_engine_b.py::test_submit_function_empty_params_never_accepted_never_poisoned",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [],
+      "c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){if(lo>hi) return lo%21; // Wait, I'll just use the right modulus.\n// ...\nreturn 0;}",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "spec"
+      }
+    },
+    {
+      "id": "calc-o2-sum-emptyparams-right-s1-n2",
+      "source_test": "tests/test_engine_b.py::test_spec_stage_rejects_never_fingerprint_the_source",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [],
+      "c_source": "#include <stdint.h>\nstatic int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}",
+      "seed": 1,
+      "n_fuzz": 2,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "spec"
+      }
+    },
+    {
+      "id": "calc-o2-sum-right-s1-n2",
+      "source_test": "tests/test_engine_b.py::test_spec_stage_rejects_never_fingerprint_the_source",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\nstatic int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}",
+      "seed": 1,
+      "n_fuzz": 2,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "calc-o2-sum-link-s1-n8",
+      "source_test": "tests/test_engine_b.py::test_submit_function_link_failure_counts_rejection",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\nextern int32_t missing_dep(int32_t);\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){return missing_dep(lo)+hi;}",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "link"
+      }
+    },
+    {
+      "id": "calc-o2-sum-phantom-kind-spec",
+      "source_test": "tests/test_engine_b.py::test_submit_function_malformed_spec_counts_rejection",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "buffer_u8"
+        }
+      ],
+      "c_source": "#include <stdint.h>\nstatic int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}",
+      "seed": 1,
+      "n_fuzz": 64,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "submit_function",
+      "expect": {
+        "ok": false,
+        "stage": "spec"
+      },
+      "notes": "submit_function-level reject: Param.from_json raises ValueError before validate_function runs; response is {accepted: false, reason: 'spec', detail: ...} (no divergence dict). n_fuzz omitted (default 64, irrelevant)"
+    },
+    {
+      "id": "calc-o2-sum-missing-name-spec",
+      "source_test": "tests/test_engine_b.py::test_submit_function_malformed_spec_counts_rejection",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "kind": "i32"
+        }
+      ],
+      "c_source": "#include <stdint.h>\nstatic int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}",
+      "seed": 1,
+      "n_fuzz": 64,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "submit_function",
+      "expect": {
+        "ok": false,
+        "stage": "spec"
+      },
+      "notes": "submit_function-level reject: Param.from_json raises KeyError (missing 'name'); response reason 'spec'. n_fuzz omitted (default 64, irrelevant)"
+    },
+    {
+      "id": "calc-o1-sum-right-s3-n8",
+      "source_test": "tests/test_engine_b.py::test_status_snapshot_readiness_coverage_and_journal",
+      "task_id": "calc::gcc-O1-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\nstatic int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;}",
+      "seed": 3,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      },
+      "corroborating_tests": [
+        "tests/test_engine_b.py::test_status_snapshot_efficiency_metric"
+      ]
+    },
+    {
+      "id": "calc-o1-clamp-compile-s4-n8",
+      "source_test": "tests/test_engine_b.py::test_status_snapshot_readiness_coverage_and_journal",
+      "task_id": "calc::gcc-O1-sym",
+      "func": "clamp_i32",
+      "params": [
+        {
+          "name": "v",
+          "kind": "i32",
+          "range": [
+            -100,
+            100
+          ]
+        },
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -50,
+            0
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            0,
+            50
+          ]
+        }
+      ],
+      "c_source": "int main( {",
+      "seed": 4,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "compile"
+      }
+    },
+    {
+      "id": "calc-o1-sum-wrong-s1-n8",
+      "source_test": "tests/test_engine_b.py::test_task_open_repair_directive_only_after_rejection",
+      "task_id": "calc::gcc-O1-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t sum_range(int32_t a,int32_t b){return a+b;}",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": null
+      },
+      "notes": "indirect pin: the repair directive trigger reads 'last stage: divergence', i.e. a behavioural reject with no stage key"
+    },
+    {
+      "id": "vf-calc-sum-hang-s1-n2",
+      "source_test": "tests/test_validate_function.py::test_hanging_model_rejected_with_crash_detail",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "__attribute__((sysv_abi)) int sum_range(int lo, int hi) { for (;;) {} }",
+      "seed": 1,
+      "n_fuzz": 2,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": null,
+        "field": "crash"
+      },
+      "notes": "divergence actual == 'timeout'"
+    },
+    {
+      "id": "vf-calc-sum-model-s1-n16",
+      "source_test": "tests/test_validate_function.py::test_true_sum_range_accepted",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){\n    return v<lo?lo:v>hi?hi:v;\n}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){\n    int32_t s=0; for(int32_t i=lo;i<=hi;i++) s=clamp_i32(s+i,-1000,1000); return s;\n}",
+      "seed": 1,
+      "n_fuzz": 16,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "vf-calc-clamp-model-s2-n16",
+      "source_test": "tests/test_validate_function.py::test_true_clamp_i32_accepted",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "clamp_i32",
+      "params": [
+        {
+          "name": "v",
+          "kind": "i32"
+        },
+        {
+          "name": "lo",
+          "kind": "i32"
+        },
+        {
+          "name": "hi",
+          "kind": "i32"
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){\n    return v<lo?lo:v>hi?hi:v;\n}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){\n    int32_t s=0; for(int32_t i=lo;i<=hi;i++) s=clamp_i32(s+i,-1000,1000); return s;\n}",
+      "seed": 2,
+      "n_fuzz": 16,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "vf-rot13-rot13char-s3-n16",
+      "source_test": "tests/test_validate_function.py::test_true_rot13_char_accepted",
+      "task_id": "rot13::gcc-O2-sym",
+      "func": "rot13_char",
+      "params": [
+        {
+          "name": "c",
+          "kind": "i32",
+          "range": [
+            32,
+            126
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t rot13_char(int32_t c){\n    int32_t b = c & 0xFF;  // original is char-typed: low byte carries the rot\n    if(b>=97&&b<=122) return 97+(b-97+13)%26;\n    if(b>=65&&b<=90) return 65+(b-65+13)%26;\n    return b;\n}",
+      "seed": 3,
+      "n_fuzz": 16,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "vf-calc-sum-constant-s1-n8",
+      "source_test": "tests/test_validate_function.py::test_constant_model_rejected",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){ return 42; }",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": null,
+        "field": "ret"
+      }
+    },
+    {
+      "id": "vf-calc-scale-noclamp-s1-n8",
+      "source_test": "tests/test_validate_function.py::test_wrong_memory_effects_rejected",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "scale_buf",
+      "params": [
+        {
+          "name": "buf",
+          "kind": "buffer_i32",
+          "direction": "in_out",
+          "length_param": "n",
+          "range": [
+            51,
+            100
+          ],
+          "ret": "void"
+        },
+        {
+          "name": "n",
+          "kind": "i32",
+          "range": [
+            3,
+            4
+          ]
+        },
+        {
+          "name": "factor",
+          "kind": "i32",
+          "range": [
+            2,
+            5
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t scale_buf(int32_t *buf,int32_t n,int32_t factor){\n    for(int32_t i=0;i<n;i++) buf[i]*=factor; return 0;\n}",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": null,
+        "field": "mem"
+      }
+    },
+    {
+      "id": "vf-calc-sum-notc-s1-n8",
+      "source_test": "tests/test_validate_function.py::test_compile_failure_rejected",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "this is not C",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "compile"
+      }
+    },
+    {
+      "id": "vf-calc-sum-missing-symbol-s1-n8",
+      "source_test": "tests/test_validate_function.py::test_missing_symbol_rejected",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){ return v; }",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "symbol"
+      }
+    },
+    {
+      "id": "vf-calc-sum-link-broken-s1-n2",
+      "source_test": "tests/test_validate_function.py::test_unresolved_extern_structured_link_reject",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\nextern int32_t missing_dep(int32_t);\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){ return missing_dep(lo)+hi; }",
+      "seed": 1,
+      "n_fuzz": 2,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "link"
+      }
+    },
+    {
+      "id": "vf-calc-sum-bogus-addr-s1-n4",
+      "source_test": "tests/test_validate_function.py::test_all_original_faults_reject_skip_starvation",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){\n    return v<lo?lo:v>hi?hi:v;\n}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){\n    int32_t s=0; for(int32_t i=lo;i<=hi;i++) s=clamp_i32(s+i,-1000,1000); return s;\n}",
+      "seed": 1,
+      "n_fuzz": 4,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "skip-starvation"
+      },
+      "addr_override": 273,
+      "notes": "addr is NOT the manifest address: the test passes addr=0x111 (273) so the original faults on every case"
+    },
+    {
+      "id": "vf-calc-sum-void-scalar-only-s1-n2",
+      "source_test": "tests/test_validate_function.py::test_void_scalar_only_spec_rejected",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ],
+          "ret": "void"
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){\n    return v<lo?lo:v>hi?hi:v;\n}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){\n    int32_t s=0; for(int32_t i=lo;i<=hi;i++) s=clamp_i32(s+i,-1000,1000); return s;\n}",
+      "seed": 1,
+      "n_fuzz": 2,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "spec"
+      }
+    },
+    {
+      "id": "vf-rot13-rot13char-emptyparams-s1-n4",
+      "source_test": "tests/test_validate_function.py::test_empty_params_vacuity_spec_rejected",
+      "task_id": "rot13::gcc-O2-sym",
+      "func": "rot13_char",
+      "params": [],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t rot13_char(int32_t c){\n    int32_t b = c & 0xFF;  // original is char-typed: low byte carries the rot\n    if(b>=97&&b<=122) return 97+(b-97+13)%26;\n    if(b>=65&&b<=90) return 65+(b-65+13)%26;\n    return b;\n}",
+      "seed": 1,
+      "n_fuzz": 4,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "spec"
+      }
+    },
+    {
+      "id": "vf-calc-sum-fixed-point-s1-n4",
+      "source_test": "tests/test_validate_function.py::test_fixed_point_range_vacuity_spec_rejected",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            5,
+            5
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            12,
+            12
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){\n    return v<lo?lo:v>hi?hi:v;\n}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){\n    int32_t s=0; for(int32_t i=lo;i<=hi;i++) s=clamp_i32(s+i,-1000,1000); return s;\n}",
+      "seed": 1,
+      "n_fuzz": 4,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "spec"
+      }
+    },
+    {
+      "id": "vf-calc-scale-good-s5-n16",
+      "source_test": "tests/test_validate_function.py::test_true_scale_buf_void_accepted",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "scale_buf",
+      "params": [
+        {
+          "name": "buf",
+          "kind": "buffer_i32",
+          "direction": "in_out",
+          "length_param": "n",
+          "range": [
+            51,
+            100
+          ],
+          "ret": "void"
+        },
+        {
+          "name": "n",
+          "kind": "i32",
+          "range": [
+            3,
+            4
+          ]
+        },
+        {
+          "name": "factor",
+          "kind": "i32",
+          "range": [
+            2,
+            5
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) void scale_buf(int32_t *buf,int32_t n,int32_t factor){\n    for(int32_t i=0;i<n;i++){ int32_t v=buf[i]*factor; buf[i]=v<-100?-100:v>100?100:v; }\n}",
+      "seed": 5,
+      "n_fuzz": 16,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "vf-rot13-rot13-cstring-s6-n16",
+      "source_test": "tests/test_validate_function.py::test_true_rot13_cstring_void_accepted",
+      "task_id": "rot13::gcc-O2-sym",
+      "func": "rot13",
+      "params": [
+        {
+          "name": "in_out",
+          "kind": "cstring",
+          "direction": "in_out",
+          "ret": "void"
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) void rot13(char *s){\n    for(char *p=s;*p;p++){ char c=*p;\n        if(c>=97&&c<=122) *p=(char)(97+(c-97+13)%26);\n        else if(c>=65&&c<=90) *p=(char)(65+(c-65+13)%26);\n    }\n}",
+      "seed": 6,
+      "n_fuzz": 16,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "vf-calc-scale-out-noop-s1-n8",
+      "source_test": "tests/test_validate_function.py::test_out_buffer_noop_model_rejected_on_poison",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "scale_buf",
+      "params": [
+        {
+          "name": "buf",
+          "kind": "buffer_i32",
+          "direction": "out",
+          "length_param": "n",
+          "range": [
+            51,
+            100
+          ],
+          "ret": "void"
+        },
+        {
+          "name": "n",
+          "kind": "i32",
+          "range": [
+            3,
+            4
+          ]
+        },
+        {
+          "name": "factor",
+          "kind": "i32",
+          "range": [
+            2,
+            5
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) void scale_buf(int32_t *buf,int32_t n,int32_t factor){ (void)buf;(void)n;(void)factor; }",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": null,
+        "field": "mem"
+      }
+    },
+    {
+      "id": "vf-calc-scale-out-good-s5-n8",
+      "source_test": "tests/test_validate_function.py::test_out_buffer_correct_model_accepted",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "scale_buf",
+      "params": [
+        {
+          "name": "buf",
+          "kind": "buffer_i32",
+          "direction": "out",
+          "length_param": "n",
+          "range": [
+            51,
+            100
+          ],
+          "ret": "void"
+        },
+        {
+          "name": "n",
+          "kind": "i32",
+          "range": [
+            3,
+            4
+          ]
+        },
+        {
+          "name": "factor",
+          "kind": "i32",
+          "range": [
+            2,
+            5
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) void scale_buf(int32_t *buf,int32_t n,int32_t factor){\n    for(int32_t i=0;i<n;i++){ int32_t v=buf[i]*factor; buf[i]=v<-100?-100:v>100?100:v; }\n}",
+      "seed": 5,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "vf-calc-scale-in-noop-s1-n8",
+      "source_test": "tests/test_validate_function.py::test_buffer_declared_in_noop_model_rejected",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "scale_buf",
+      "params": [
+        {
+          "name": "buf",
+          "kind": "buffer_i32",
+          "length_param": "n",
+          "range": [
+            51,
+            100
+          ],
+          "ret": "void"
+        },
+        {
+          "name": "n",
+          "kind": "i32",
+          "range": [
+            3,
+            4
+          ]
+        },
+        {
+          "name": "factor",
+          "kind": "i32",
+          "range": [
+            2,
+            5
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) void scale_buf(int32_t *buf,int32_t n,int32_t factor){ (void)buf;(void)n;(void)factor; }",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": null,
+        "field": "mem"
+      }
+    },
+    {
+      "id": "vf-rot13-rot13-in-noop-s1-n8",
+      "source_test": "tests/test_validate_function.py::test_cstring_declared_in_noop_model_rejected",
+      "task_id": "rot13::gcc-O2-sym",
+      "func": "rot13",
+      "params": [
+        {
+          "name": "in_out",
+          "kind": "cstring",
+          "ret": "void"
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) void rot13(char *s){ (void)s; }",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": null,
+        "field": "mem"
+      }
+    },
+    {
+      "id": "vf-calc-sum-model-s1-n4",
+      "source_test": "tests/test_validate_function.py::test_resubmit_same_path_stale_dlopen_cache",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){\n    return v<lo?lo:v>hi?hi:v;\n}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){\n    int32_t s=0; for(int32_t i=lo;i<=hi;i++) s=clamp_i32(s+i,-1000,1000); return s;\n}",
+      "seed": 1,
+      "n_fuzz": 4,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "vf-calc-sum-missing-symbol-s1-n4",
+      "source_test": "tests/test_validate_function.py::test_resubmit_same_path_stale_dlopen_cache",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){ return v; }",
+      "seed": 1,
+      "n_fuzz": 4,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "symbol"
+      },
+      "notes": "test submits this right after an accepted MODEL to the SAME so_path; the verdict must not depend on that"
+    },
+    {
+      "id": "vf-calc-sum-model-s9-n12",
+      "source_test": "tests/test_validate_function.py::test_verdict_reports_compared_and_skipped",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){\n    return v<lo?lo:v>hi?hi:v;\n}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){\n    int32_t s=0; for(int32_t i=lo;i<=hi;i++) s=clamp_i32(s+i,-1000,1000); return s;\n}",
+      "seed": 9,
+      "n_fuzz": 12,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "vf-calc-sum-seven-params-s1-n2",
+      "source_test": "tests/test_validate_function.py::test_over_six_params_structured_arity_reject",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "a0",
+          "kind": "i32"
+        },
+        {
+          "name": "a1",
+          "kind": "i32"
+        },
+        {
+          "name": "a2",
+          "kind": "i32"
+        },
+        {
+          "name": "a3",
+          "kind": "i32"
+        },
+        {
+          "name": "a4",
+          "kind": "i32"
+        },
+        {
+          "name": "a5",
+          "kind": "i32"
+        },
+        {
+          "name": "a6",
+          "kind": "i32"
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\n__attribute__((sysv_abi)) int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){\n    return v<lo?lo:v>hi?hi:v;\n}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){\n    int32_t s=0; for(int32_t i=lo;i<=hi;i++) s=clamp_i32(s+i,-1000,1000); return s;\n}",
+      "seed": 1,
+      "n_fuzz": 2,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "arity"
+      }
+    },
+    {
+      "id": "vf-calc-sum-stowaway-s1-n8",
+      "source_test": "tests/test_validate_function.py::test_validate_execution_cannot_write_beyond_scratch",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\n#include <stdio.h>\nstatic int32_t clamp_i32(int32_t v,int32_t lo,int32_t hi){return v<lo?lo:v>hi?hi:v;}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo,int32_t hi){\n    FILE*f=fopen(\"/work/stowaway.txt\",\"w\"); if(f){fputs(\"owned\",f);fclose(f);}\n    int32_t s=0;for(int32_t i=lo;i<=hi;i++)s=clamp_i32(s+i,-1000,1000);return s;\n}",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "pkfmt-o2-versionok-s1-n4",
+      "source_test": "tests/test_hidden.py::test_pkfmt_unrepresentable_functions_are_not_function_tasks",
+      "task_id": "pkfmt::gcc-O2-sym",
+      "func": "pk_version_ok",
+      "params": [
+        {
+          "name": "v",
+          "kind": "i32",
+          "range": [
+            0,
+            8
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t pk_version_ok(int32_t v){if(v<2) return 0; if(v>4) return 0; return v*16; }",
+      "seed": 1,
+      "n_fuzz": 4,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "scout-magic-stub-s1-n64",
+      "source_test": "tests/test_scout.py::test_magic_branch_stub_exposed_only_by_scouts",
+      "task_id": null,
+      "func": "magic",
+      "params": [
+        {
+          "name": "x",
+          "kind": "i32",
+          "range": [
+            -10,
+            10
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t magic(int32_t x){ (void)x; return 0; }\nint main(void){ return 0; }\n",
+      "seed": 1,
+      "n_fuzz": 64,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": null,
+        "field": "ret"
+      },
+      "binary_override": {
+        "compile_from_c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t magic(int32_t x){\n    if (x == 0x7E3A99B1) return 999;\n    return 0;\n}\nint main(void){ return 0; }\n",
+        "compiled_with": "reschema.validate.program.compile_model",
+        "addr_symbol": "magic"
+      },
+      "notes": "original is a synthetic binary compiled from binary_override.compile_from_c_source (not a corpus slot); addr = .symtab st_value of 'magic'; size=None. n_fuzz omitted: validate_function default 64. Rejected only because the scout slice feeds 0x7E3A99B1"
+    },
+    {
+      "id": "scout-magic-good-s1-n64",
+      "source_test": "tests/test_scout.py::test_magic_branch_stub_exposed_only_by_scouts",
+      "task_id": null,
+      "func": "magic",
+      "params": [
+        {
+          "name": "x",
+          "kind": "i32",
+          "range": [
+            -10,
+            10
+          ]
+        }
+      ],
+      "c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t magic(int32_t x){\n    if (x == 0x7E3A99B1) return 999;\n    return 0;\n}\nint main(void){ return 0; }\n",
+      "seed": 1,
+      "n_fuzz": 64,
+      "seed_pinned": true,
+      "call_path": "validate_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      },
+      "binary_override": {
+        "compile_from_c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t magic(int32_t x){\n    if (x == 0x7E3A99B1) return 999;\n    return 0;\n}\nint main(void){ return 0; }\n",
+        "compiled_with": "reschema.validate.program.compile_model",
+        "addr_symbol": "magic"
+      },
+      "notes": "same synthetic binary; the truthful model is the original source itself. compared==64 pinned by test_scout_slice_budget_is_harness_owned_and_bounded",
+      "corroborating_tests": [
+        "tests/test_scout.py::test_scout_slice_budget_is_harness_owned_and_bounded"
+      ]
+    },
+    {
+      "id": "calc-o2-scale-mistyped-stub-s7-n64",
+      "source_test": "tests/test_regrade.py::test_pre_floor_accept_surfaces_as_flip",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "scale_buf",
+      "params": [
+        {
+          "name": "buf",
+          "kind": "i32"
+        },
+        {
+          "name": "n",
+          "kind": "i32"
+        },
+        {
+          "name": "factor",
+          "kind": "i32"
+        }
+      ],
+      "c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t scale_buf(int32_t buf,int32_t n,int32_t factor){return 0;}\n",
+      "seed": 7,
+      "n_fuzz": 64,
+      "seed_pinned": true,
+      "call_path": "regrade",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "spec"
+      },
+      "notes": "skip floor: original memory-faults on a pointer declared as i32"
+    },
+    {
+      "id": "calc-o2-scale-mistyped-stub-s4242-n64",
+      "source_test": "tests/test_regrade.py::test_pre_143_audit_falls_back_to_memory_params",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "scale_buf",
+      "params": [
+        {
+          "name": "buf",
+          "kind": "i32"
+        },
+        {
+          "name": "n",
+          "kind": "i32"
+        },
+        {
+          "name": "factor",
+          "kind": "i32"
+        }
+      ],
+      "c_source": "#include <stdint.h>\n__attribute__((sysv_abi)) int32_t scale_buf(int32_t buf,int32_t n,int32_t factor){return 0;}\n",
+      "seed": 4242,
+      "n_fuzz": 64,
+      "seed_pinned": true,
+      "call_path": "regrade",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": "spec",
+        "stage_pinned": false
+      },
+      "notes": "test pins only new_verdict == 'reject'; stage 'spec' inferred from the sibling seed-7 case, not asserted"
+    },
+    {
+      "id": "calc-o2-sum-right-clampit-s5-n8",
+      "source_test": "tests/test_memory.py::test_function_accept_writes_verified_fact",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\nstatic int32_t clamp_it(int32_t v, int32_t lo, int32_t hi){\n    return v < lo ? lo : v > hi ? hi : v;\n}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo, int32_t hi){\n    int32_t s=0; for(int32_t i=lo;i<=hi;i++) s=clamp_it(s+i,-1000,1000); return s;\n}",
+      "seed": 5,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      },
+      "corroborating_tests": [
+        "tests/test_memory.py::test_function_task_open_carries_card_and_framing"
+      ]
+    },
+    {
+      "id": "calc-o2-sum-wrong-band10-s1-n8",
+      "source_test": "tests/test_memory.py::test_notes_become_unverified_and_promote_on_acceptance",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\nstatic int32_t clamp_it(int32_t v, int32_t lo, int32_t hi){\n    return v < lo ? lo : v > hi ? hi : v;\n}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo, int32_t hi){\n    int32_t s=0; for(int32_t i=lo;i<=hi;i++) s=clamp_it(s+i,-10,10); return s;\n}",
+      "seed": 1,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": false,
+        "stage": null,
+        "stage_pinned": false
+      },
+      "notes": "test pins only accepted == False; a compiling wrong-clamp source, so a behavioural (no-stage) reject is expected but not asserted"
+    },
+    {
+      "id": "calc-o2-sum-right-clampit-s2-n8",
+      "source_test": "tests/test_memory.py::test_notes_become_unverified_and_promote_on_acceptance",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\nstatic int32_t clamp_it(int32_t v, int32_t lo, int32_t hi){\n    return v < lo ? lo : v > hi ? hi : v;\n}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo, int32_t hi){\n    int32_t s=0; for(int32_t i=lo;i<=hi;i++) s=clamp_it(s+i,-1000,1000); return s;\n}",
+      "seed": 2,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    },
+    {
+      "id": "calc-o2-sum-right-clampit-s9-n8",
+      "source_test": "tests/test_memory.py::test_task_open_injects_family_memory",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "sum_range",
+      "params": [
+        {
+          "name": "lo",
+          "kind": "i32",
+          "range": [
+            -20,
+            10
+          ]
+        },
+        {
+          "name": "hi",
+          "kind": "i32",
+          "range": [
+            10,
+            30
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\nstatic int32_t clamp_it(int32_t v, int32_t lo, int32_t hi){\n    return v < lo ? lo : v > hi ? hi : v;\n}\n__attribute__((sysv_abi)) int32_t sum_range(int32_t lo, int32_t hi){\n    int32_t s=0; for(int32_t i=lo;i<=hi;i++) s=clamp_it(s+i,-1000,1000); return s;\n}",
+      "seed": 9,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      },
+      "notes": "indirect pin: accept not asserted, but exactly one verified_fact with this c_source exists afterwards (written only on accept)"
+    },
+    {
+      "id": "calc-o2-scale-good-clampit-s3-n8",
+      "source_test": "tests/test_memory.py::test_verified_fact_carries_topology_digest",
+      "task_id": "calc::gcc-O2-sym",
+      "func": "scale_buf",
+      "params": [
+        {
+          "name": "buf",
+          "kind": "buffer_i32",
+          "direction": "in_out",
+          "length_param": "n",
+          "range": [
+            51,
+            100
+          ],
+          "ret": "void"
+        },
+        {
+          "name": "n",
+          "kind": "i32",
+          "range": [
+            3,
+            4
+          ]
+        },
+        {
+          "name": "factor",
+          "kind": "i32",
+          "range": [
+            2,
+            5
+          ]
+        }
+      ],
+      "c_source": "\n#include <stdint.h>\nstatic int32_t clamp_it(int32_t v, int32_t lo, int32_t hi){\n    return v < lo ? lo : v > hi ? hi : v;\n}\n__attribute__((sysv_abi)) void scale_buf(int32_t *buf,int32_t n,int32_t factor){\n    for(int32_t i=0;i<n;i++){ int32_t v=buf[i]*factor; buf[i]=clamp_it(v,-100,100); }\n}",
+      "seed": 3,
+      "n_fuzz": 8,
+      "seed_pinned": true,
+      "call_path": "submit_function",
+      "gate_level": "validate_function",
+      "expect": {
+        "ok": true,
+        "stage": null
+      }
+    }
+  ],
+  "program": [
+    {
+      "id": "rot13-o1-compile",
+      "source_test": "tests/test_engine.py::test_program_path_counts_submissions_and_rejections",
+      "task_id": "rot13::gcc-O1-sym",
+      "c_source": "int main( {",
+      "cases": [
+        {
+          "argv": [
+            "hello"
+          ],
+          "stdin_hex": ""
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": false,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": false,
+        "reason": "compile",
+        "stage": "compile"
+      },
+      "notes": "test asserts only accepted == False; stage 'compile' pinned by test_program_rejects_persist_raw_sources_for_self_play_mining; reason == stage for genuine compile errors (program_gate)",
+      "corroborating_tests": [
+        "tests/test_engine.py::test_program_rejects_persist_raw_sources_for_self_play_mining"
+      ]
+    },
+    {
+      "id": "rot13-o1-good",
+      "source_test": "tests/test_engine.py::test_program_path_counts_submissions_and_rejections",
+      "task_id": "rot13::gcc-O1-sym",
+      "c_source": "\n#include <stdio.h>\nint main(int argc, char **argv){ if(argc<2){puts(\"usage: rot13 WORD\");return 2;}\nfor(char*p=argv[1];*p;p++){char c=*p;\n if(c>='a'&&c<='z')*p='a'+(c-'a'+13)%26; else if(c>='A'&&c<='Z')*p='A'+(c-'A'+13)%26;}\nputs(argv[1]); return 0; }\n",
+      "cases": [
+        {
+          "argv": [
+            "hello"
+          ],
+          "stdin_hex": ""
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": true,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": true,
+        "reason": null,
+        "stage": null
+      },
+      "corroborating_tests": [
+        "tests/test_engine.py::test_program_accept_is_idempotent_and_audited",
+        "tests/test_engine.py::test_later_rejects_never_corrupt_the_accepted_program_source",
+        "tests/test_hidden.py::test_generalizing_model_passes_hidden"
+      ]
+    },
+    {
+      "id": "rot13-o1-hardcoded-uryyb",
+      "source_test": "tests/test_engine.py::test_program_path_counts_submissions_and_rejections",
+      "task_id": "rot13::gcc-O1-sym",
+      "c_source": "#include <stdio.h>\nint main(void){puts(\"uryyb\");return 0;}",
+      "cases": [
+        {
+          "argv": [
+            "hello"
+          ],
+          "stdin_hex": ""
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": true,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": false,
+        "reason": "io-mismatch",
+        "stage": "hidden"
+      },
+      "notes": "stage 'hidden' pinned by test_program_rejects_persist_raw_sources_for_self_play_mining; reason 'io-mismatch' pinned by test_hidden.py::test_hardcoded_model_fails_hidden (same slot, cases, source)",
+      "corroborating_tests": [
+        "tests/test_engine.py::test_program_rejects_persist_raw_sources_for_self_play_mining",
+        "tests/test_engine.py::test_later_rejects_never_corrupt_the_accepted_program_source",
+        "tests/test_hidden.py::test_hardcoded_model_fails_hidden"
+      ]
+    },
+    {
+      "id": "rot13-o1-good-two-cases",
+      "source_test": "tests/test_engine.py::test_program_accept_payload_is_rich",
+      "task_id": "rot13::gcc-O1-sym",
+      "c_source": "\n#include <stdio.h>\nint main(int argc, char **argv){ if(argc<2){puts(\"usage: rot13 WORD\");return 2;}\nfor(char*p=argv[1];*p;p++){char c=*p;\n if(c>='a'&&c<='z')*p='a'+(c-'a'+13)%26; else if(c>='A'&&c<='Z')*p='A'+(c-'A'+13)%26;}\nputs(argv[1]); return 0; }\n",
+      "cases": [
+        {
+          "argv": [
+            "hello"
+          ],
+          "stdin_hex": ""
+        },
+        {
+          "argv": [
+            "world"
+          ],
+          "stdin_hex": ""
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": true,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": true,
+        "reason": null,
+        "stage": null
+      }
+    },
+    {
+      "id": "rot13-o1-good-printf",
+      "source_test": "tests/test_engine.py::test_later_rejects_never_corrupt_the_accepted_program_source",
+      "task_id": "rot13::gcc-O1-sym",
+      "c_source": "\n#include <stdio.h>\nint main(int argc, char **argv){ if(argc<2){puts(\"usage: rot13 WORD\");return 2;}\nfor(char*p=argv[1];*p;p++){char c=*p;\n if(c>='a'&&c<='z')*p='a'+(c-'a'+13)%26; else if(c>='A'&&c<='Z')*p='A'+(c-'A'+13)%26;}\nprintf(\"%s\\n\", argv[1]); return 0; }\n",
+      "cases": [
+        {
+          "argv": [
+            "hello"
+          ],
+          "stdin_hex": ""
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": true,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": true,
+        "reason": null,
+        "stage": null
+      },
+      "notes": "GOOD_ROT13_PROG with puts(argv[1]); replaced by printf(\"%s\\n\", argv[1]);"
+    },
+    {
+      "id": "rot13-o2-good",
+      "source_test": "tests/test_engine_b.py::test_function_accept_after_program_accept_reports_task_complete",
+      "task_id": "rot13::gcc-O2-sym",
+      "c_source": "\n#include <stdio.h>\nint main(int argc, char **argv){ if(argc<2){puts(\"usage: rot13 WORD\");return 2;}\nfor(char*p=argv[1];*p;p++){char c=*p;\n if(c>='a'&&c<='z')*p='a'+(c-'a'+13)%26; else if(c>='A'&&c<='Z')*p='A'+(c-'A'+13)%26;}\nputs(argv[1]); return 0; }\n",
+      "cases": [
+        {
+          "argv": [
+            "hello"
+          ],
+          "stdin_hex": ""
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": true,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": true,
+        "reason": null,
+        "stage": null
+      },
+      "corroborating_tests": [
+        "tests/test_memory.py::test_program_accept_writes_main_fact",
+        "tests/test_memory.py::test_program_fact_omits_topology",
+        "tests/test_memory.py::test_program_task_open_carries_card_and_framing",
+        "tests/test_memory.py::test_program_task_open_injects_main_memory"
+      ]
+    },
+    {
+      "id": "calc-o1-compile",
+      "source_test": "tests/test_engine_b.py::test_status_snapshot_program_path_events",
+      "task_id": "calc::gcc-O1-sym",
+      "c_source": "int main( {",
+      "cases": [
+        {
+          "argv": [],
+          "stdin_hex": ""
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": false,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": false,
+        "reason": "compile",
+        "stage": "compile"
+      },
+      "notes": "journal stage 'compile' asserted; reason == stage for genuine compile errors. Store not wiped first: other leftover traces in the calc O1 dir do not matter for a compile reject"
+    },
+    {
+      "id": "vp-rot13-o2-good-recorded",
+      "source_test": "tests/test_validate_program.py::test_good_model_accepted",
+      "task_id": "rot13::gcc-O2-sym",
+      "c_source": "\n#include <stdio.h>\nint main(int argc, char **argv){ if(argc<2){puts(\"usage: rot13 WORD\");return 2;}\nfor(char*p=argv[1];*p;p++){char c=*p;\n if(c>='a'&&c<='z')*p='a'+(c-'a'+13)%26; else if(c>='A'&&c<='Z')*p='A'+(c-'A'+13)%26;}\nputs(argv[1]); return 0; }\n",
+      "cases": [
+        {
+          "argv": [
+            "abc"
+          ],
+          "stdin_hex": ""
+        },
+        {
+          "argv": [
+            "Hello"
+          ],
+          "stdin_hex": ""
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": true,
+      "call_path": "compile_model+replay_against",
+      "scope": "recorded_only",
+      "expect": {
+        "accepted": true,
+        "reason": null,
+        "stage": null
+      },
+      "notes": "only compile + recorded replay is pinned (accepted == passes recorded stage); hidden stage never run. Store fixture records a/b WITHOUT wiping, so leftover traces from other modules could also be replayed"
+    },
+    {
+      "id": "vp-rot13-o2-hardcoded-recorded",
+      "source_test": "tests/test_validate_program.py::test_hardcoded_model_rejected_with_divergence",
+      "task_id": "rot13::gcc-O2-sym",
+      "c_source": "#include <stdio.h>\nint main(void){puts(\"uryyb\");return 0;}",
+      "cases": [
+        {
+          "argv": [
+            "abc"
+          ],
+          "stdin_hex": ""
+        },
+        {
+          "argv": [
+            "Hello"
+          ],
+          "stdin_hex": ""
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": false,
+      "call_path": "compile_model+replay_against",
+      "scope": "recorded_only",
+      "expect": {
+        "accepted": false,
+        "reason": "io-mismatch",
+        "stage": "recorded"
+      },
+      "notes": "divergence argv == ['abc'] (first recorded case)"
+    },
+    {
+      "id": "vp-rot13-o2-awkward-recorded",
+      "source_test": "tests/test_validate_program.py::test_awkward_but_buffered_model_accepted",
+      "task_id": "rot13::gcc-O2-sym",
+      "c_source": "\n#include <stdio.h>\n#include <string.h>\nint main(int argc, char **argv){ if(argc<2){ puts(\"usage: rot13 WORD\"); return 2; }\nchar buf[256]; int i; for(i=0; argv[1][i] && i<255; i++){\n char c=argv[1][i];\n if(c>='a'&&c<='z') c='a'+(c-'a'+13)%26; else if(c>='A'&&c<='Z') c='A'+(c-'A'+13)%26;\n buf[i]=c; }\nbuf[i]=0; puts(buf); return 0; }\n",
+      "cases": [
+        {
+          "argv": [
+            "abc"
+          ],
+          "stdin_hex": ""
+        },
+        {
+          "argv": [
+            "Hello"
+          ],
+          "stdin_hex": ""
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": true,
+      "call_path": "compile_model+replay_against",
+      "scope": "recorded_only",
+      "expect": {
+        "accepted": true,
+        "reason": null,
+        "stage": null
+      },
+      "notes": "only compile + recorded replay pinned; hidden stage never run"
+    },
+    {
+      "id": "vp-rot13-o2-unbuffered-recorded",
+      "source_test": "tests/test_validate_program.py::test_unbuffered_writes_rejected",
+      "task_id": "rot13::gcc-O2-sym",
+      "c_source": "\n#include <unistd.h>\n#include <string.h>\nint main(int argc, char **argv){ if(argc<2){ write(2,\"usage\\n\",6); return 2; }\nchar buf[256]; int i; for(i=0; argv[1][i] && i<255; i++){\n char c=argv[1][i];\n if(c>='a'&&c<='z') c='a'+(c-'a'+13)%26; else if(c>='A'&&c<='Z') c='A'+(c-'A'+13)%26;\n buf[i]=c; }\nfor(i=0; buf[i]; i++) write(1, buf+i, 1);\nwrite(1, \"\\n\", 1); return 0; }\n",
+      "cases": [
+        {
+          "argv": [
+            "abc"
+          ],
+          "stdin_hex": ""
+        },
+        {
+          "argv": [
+            "Hello"
+          ],
+          "stdin_hex": ""
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": false,
+      "call_path": "compile_model+replay_against",
+      "scope": "recorded_only",
+      "expect": {
+        "accepted": false,
+        "reason": "event-divergence",
+        "stage": "recorded"
+      },
+      "notes": "first_diverging_event_index == 0 on argv ['abc']"
+    },
+    {
+      "id": "check-o1-hardcoded-stdin",
+      "source_test": "tests/test_hidden.py::test_hardcoded_stdin_model_fails_hidden",
+      "task_id": "check::gcc-O1-sym",
+      "c_source": "\n#include <stdio.h>\n#include <string.h>\nint main(void){ char buf[64];\n if(!fgets(buf,sizeof buf,stdin)) return 2;\n buf[strcspn(buf,\"\\n\")]=0;\n if(!strcmp(buf,\"hello\")){ puts(\"NOPE\"); return 1; }\n puts(\"zzz\"); return 0; }\n",
+      "cases": [
+        {
+          "argv": [],
+          "stdin_hex": "68656c6c6f0a"
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": true,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": false,
+        "reason": "io-mismatch",
+        "stage": "hidden"
+      }
+    },
+    {
+      "id": "filewrite-o1-good",
+      "source_test": "tests/test_hidden.py::test_generalizing_file_model_passes_hidden",
+      "task_id": "filewrite::gcc-O1-sym",
+      "c_source": "\n#include <stdio.h>\n#include <stdint.h>\nint main(void){\n unsigned char buf[8192]; size_t n=0; int c;\n while((c=getchar())!=EOF && n<sizeof buf) buf[n++]=(unsigned char)c;\n uint32_t h=5381u;\n for(size_t i=0;i<n;i++){ buf[i]=(unsigned char)(buf[i] ^ (unsigned char)((uint32_t)i*31u+7u)); h=h*33u+buf[i]; }\n FILE*f=fopen(\"out.bin\",\"wb\"); if(!f){puts(\"open failed\");return 2;}\n fwrite(buf,1,n,f); fclose(f);\n printf(\"%zu bytes -> out.bin djb2=%08x\\n\", n, h);\n return 0;\n}\n",
+      "cases": [
+        {
+          "argv": [],
+          "stdin_hex": "68656c6c6f0a"
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": true,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": true,
+        "reason": null,
+        "stage": null
+      }
+    },
+    {
+      "id": "filewrite-o1-nofile",
+      "source_test": "tests/test_hidden.py::test_missing_file_model_fails_recorded",
+      "task_id": "filewrite::gcc-O1-sym",
+      "c_source": "\n#include <stdio.h>\n#include <stdint.h>\nint main(void){\n unsigned char buf[8192]; size_t n=0; int c;\n while((c=getchar())!=EOF && n<sizeof buf) buf[n++]=(unsigned char)c;\n uint32_t h=5381u;\n for(size_t i=0;i<n;i++){ buf[i]=(unsigned char)(buf[i] ^ (unsigned char)((uint32_t)i*31u+7u)); h=h*33u+buf[i]; }\n printf(\"%zu bytes -> out.bin djb2=%08x\\n\", n, h);\n return 0;\n}\n",
+      "cases": [
+        {
+          "argv": [],
+          "stdin_hex": "68656c6c6f0a"
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": false,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": false,
+        "reason": "files-mismatch",
+        "stage": "recorded"
+      }
+    },
+    {
+      "id": "filewrite-o1-memorized",
+      "source_test": "tests/test_hidden.py::test_memorized_file_model_fails_hidden",
+      "task_id": "filewrite::gcc-O1-sym",
+      "c_source": "\n#include <stdio.h>\n#include <string.h>\n#include <stdint.h>\nint main(void){\n unsigned char buf[8192]; size_t n=0; int c;\n while((c=getchar())!=EOF && n<sizeof buf) buf[n++]=(unsigned char)c;\n if(n==6 && !memcmp(buf,\"hello\\n\",6)){\n   /* pre-image of xform(\"hello\\n\"), like check's crackme pre-image */\n   static const unsigned char gt[6]={0x6f,0x43,0x29,0x08,0xec,0xa8};\n   uint32_t h=5381u; for(unsigned i=0;i<6;i++) h=h*33u+gt[i];\n   FILE*f=fopen(\"out.bin\",\"wb\"); fwrite(gt,1,6,f); fclose(f);\n   printf(\"6 bytes -> out.bin djb2=%08x\\n\", h);\n   return 0;\n }\n uint32_t h=5381u;\n for(size_t i=0;i<n;i++){ buf[i]=(unsigned char)(buf[i] ^ (unsigned char)((uint32_t)i*31u+7u)); h=h*33u+buf[i]; }\n static const unsigned char z[2]={'z','z'};\n FILE*f=fopen(\"out.bin\",\"wb\"); fwrite(z,1,2,f); fclose(f);  /* wrong bytes */\n printf(\"%zu bytes -> out.bin djb2=%08x\\n\", n, h);\n return 0;\n}\n",
+      "cases": [
+        {
+          "argv": [],
+          "stdin_hex": "68656c6c6f0a"
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": true,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": false,
+        "reason": "files-mismatch",
+        "stage": "hidden"
+      }
+    },
+    {
+      "id": "filewrite-o1-cstring-overfit",
+      "source_test": "tests/test_hidden.py::test_cstring_overfit_model_fails_hidden",
+      "task_id": "filewrite::gcc-O1-sym",
+      "c_source": "\n#include <stdio.h>\n#include <string.h>\n#include <stdint.h>\nint main(void){\n char buf[8192];\n if(!fgets(buf, sizeof buf, stdin)) return 2;\n size_t n = strlen(buf);\n uint32_t h = 5381u;\n for(size_t i=0;i<n;i++){ buf[i]=(char)(buf[i] ^ (char)((uint32_t)i*31u+7u)); h=h*33u+(unsigned char)buf[i]; }\n FILE*f=fopen(\"out.bin\",\"wb\"); fwrite(buf,1,n,f); fclose(f);\n printf(\"%zu bytes -> out.bin djb2=%08x\\n\", n, h);\n return 0;\n}\n",
+      "cases": [
+        {
+          "argv": [],
+          "stdin_hex": "68656c6c6f0a"
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": true,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": false,
+        "reason": "io-mismatch",
+        "stage": "hidden"
+      }
+    },
+    {
+      "id": "pkfmt-o2-always-bad-magic",
+      "source_test": "tests/test_hidden.py::test_pkfmt_always_magic_stub_loses_at_the_hidden_gate",
+      "task_id": "pkfmt::gcc-O2-sym",
+      "c_source": "#include <stdio.h>\nint main(void){ puts(\"bad magic\"); return 1; }\n",
+      "cases": [
+        {
+          "argv": [],
+          "stdin_hex": "deadbeef"
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": true,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": false,
+        "reason": "io-mismatch",
+        "stage": "hidden"
+      },
+      "notes": "recorded case label 'r0'; stdin passed as bytearray"
+    },
+    {
+      "id": "rot13-o2-good-three-cases",
+      "source_test": "tests/test_regrade.py::test_program_accept_reproduces_and_planted_flip_surfaces",
+      "task_id": "rot13::gcc-O2-sym",
+      "c_source": "\n#include <stdio.h>\nint main(int argc, char **argv){ if(argc<2){puts(\"usage: rot13 WORD\");return 2;}\nfor(char*p=argv[1];*p;p++){char c=*p;\n if(c>='a'&&c<='z')*p='a'+(c-'a'+13)%26; else if(c>='A'&&c<='Z')*p='A'+(c-'A'+13)%26;}\nputs(argv[1]); return 0; }\n",
+      "cases": [
+        {
+          "argv": [
+            "alpha"
+          ],
+          "stdin_hex": ""
+        },
+        {
+          "argv": [
+            "Beta"
+          ],
+          "stdin_hex": ""
+        },
+        {
+          "argv": [
+            "zzz"
+          ],
+          "stdin_hex": ""
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": true,
+      "call_path": "submit_program",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": true,
+        "reason": null,
+        "stage": null
+      },
+      "notes": "accepted by submit_program (fresh hidden seed), then re-accepted by regrade with that audit seed; labels e00,e01,e02"
+    },
+    {
+      "id": "rot13-o2-echo-recorded",
+      "source_test": "tests/test_regrade.py::test_program_accept_reproduces_and_planted_flip_surfaces",
+      "task_id": "rot13::gcc-O2-sym",
+      "c_source": "\n#include <stdio.h>\nint main(int argc, char **argv){ if(argc<2){puts(\"usage: rot13 WORD\");return 2;}\nputs(argv[1]); return 0; }\n",
+      "cases": [
+        {
+          "argv": [
+            "alpha"
+          ],
+          "stdin_hex": ""
+        },
+        {
+          "argv": [
+            "Beta"
+          ],
+          "stdin_hex": ""
+        },
+        {
+          "argv": [
+            "zzz"
+          ],
+          "stdin_hex": ""
+        }
+      ],
+      "hidden_seed": null,
+      "hidden_reached": false,
+      "call_path": "regrade",
+      "scope": "program_gate",
+      "expect": {
+        "accepted": false,
+        "reason": null,
+        "stage": "recorded",
+        "reason_pinned": false
+      },
+      "notes": "regrade -> program_gate with rec = accept-time snapshot (the 3 cases; the later 'late' trace is excluded). Stage 'recorded' asserted (twice: audit seed and fresh=True); reason not asserted (expected io-mismatch: ECHO prints the input un-rotated)"
+    }
+  ]
+}

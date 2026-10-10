@@ -21,17 +21,19 @@ on is pinned, and an accept whose pins cannot be honored is emitted as
 
   no program_source | no audit seed | no audit hidden_seed | no params |
   no recorded snapshot | recorded cases changed | binary changed |
-  canonicalizer changed | unknown task | unknown function | bad ledger |
-  bad stored data: <error> | infra | hidden-starvation
+  toolchain changed | canonicalizer changed | unknown task |
+  unknown function | bad ledger | bad stored data: <error> |
+  bad stored data: corrupt memory (<n> lines) | infra | hidden-starvation
 
 The last two come from the judge (an environment outage or an unjudged
-draw). Legacy accepts without a binary digest still replay, flagged
-`binary_verified: false`.
+draw). Legacy accepts without a binary digest or toolchain image ID still
+replay, flagged `binary_verified: false` / `toolchain_verified: false`.
 
 Failure boundaries: each accept is PREPARED (every read of stored data) and
 then JUDGED. A prepare failure is a row; judge exceptions raise (engine bug).
 Environment faults — a missing tasks dir, an unreadable or stale manifest, a
-missing corpus binary — fail the whole job loudly, never per-row noise.
+missing corpus binary or toolchain image — fail the whole job loudly, never
+per-row noise.
 
 stdout: one JSON line per accept. stderr: totals.
 """
@@ -46,6 +48,7 @@ from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 
+from .driver import podrun
 from .driver.spec import Param
 from .engine import (
     PROGRAM_NO_VERDICT_STAGES,
@@ -58,7 +61,7 @@ from .engine import (
     program_gate,
 )
 from .exec.canonical import CANONICALIZER_VERSION
-from .memory import read_family
+from .memory import scan_family
 from .validate.function import validate_function
 
 
@@ -96,12 +99,14 @@ def accepts() -> Iterator[tuple[str, dict | None, str]]:
         task_id = p.parent.name.replace("__", "::")
         try:
             led = json.loads(p.read_text())
-            entries = led.get("accepted", [])
+            # every engine-written ledger carries the key: absent is
+            # corruption, never "0 accepts" (#148)
+            entries = led["accepted"]
             if not isinstance(entries, list) or not all(
                 x == "program" or _is_fn_entry(x) for x in entries
             ):
                 raise ValueError("malformed accepted")
-        except (OSError, ValueError, TypeError, AttributeError):
+        except (OSError, ValueError, TypeError, AttributeError, KeyError):
             yield task_id, None, "ledger"
             continue
         for x in reversed(entries):
@@ -111,15 +116,20 @@ def accepts() -> Iterator[tuple[str, dict | None, str]]:
 def _fn_params(store: TaskStore, func: str, src: str, audit: dict) -> list | None:
     if "params" in audit:
         return audit["params"]
+    entries, bad = scan_family(store.meta["seed"], fn=func)
     facts = [
         e
-        for e in read_family(store.meta["seed"], fn=func)
+        for e in entries
         if e.get("tier") == "verified_fact"
         and e.get("task_id") == store.meta["task_id"]
         and e.get("c_source") == src
         and e.get("audit_seed") == audit.get("seed")
     ]
-    return facts[-1]["params"] if facts else None
+    if facts:
+        return facts[-1]["params"]
+    if bad:  # the fact may be one of them: unreadable data, not absent data
+        raise Unreplayable(f"bad stored data: corrupt memory ({bad} lines)")
+    return None
 
 
 def _check_binary(audit: dict, current: str, row: dict) -> None:
@@ -131,6 +141,15 @@ def _check_binary(audit: dict, current: str, row: dict) -> None:
         raise Unreplayable("binary changed")
 
 
+def _check_toolchain(audit: dict, current: str, row: dict) -> None:
+    # The same tag may name a rebuilt image whose gcc/clang compiles the
+    # accepted source differently: a toolchain change, not a judge flip.
+    stored = audit.get("toolchain")
+    row["toolchain_verified"] = stored is not None
+    if stored is not None and stored != current:
+        raise Unreplayable("toolchain changed")
+
+
 def _int(x: object, what: str) -> int:
     # stored values reach the judge, which runs OUTSIDE the prepare net:
     # type-check here so a malformed ledger is a row, not a batch abort
@@ -140,7 +159,12 @@ def _int(x: object, what: str) -> int:
 
 
 def _prep_function(
-    led: dict, func: str, meta: dict | None, current_bin: str | None, row: dict
+    led: dict,
+    func: str,
+    meta: dict | None,
+    current_bin: str | None,
+    toolchain: str,
+    row: dict,
 ) -> dict:
     # `row` is filled as identity becomes known, so an unreplayable row still
     # names the accepted revision (source_hash, seed) it could not test.
@@ -155,6 +179,7 @@ def _prep_function(
     if meta is None:  # ledger for a slot the current manifest lacks
         raise Unreplayable("unknown task")
     _check_binary(audit, current_bin, row)
+    _check_toolchain(audit, toolchain, row)
     store = TaskStore(meta["task_id"])
     params = _fn_params(store, func, src, audit)
     if params is None:
@@ -186,7 +211,12 @@ def _judge_function(row: dict, job: dict) -> dict:
 
 
 def _prep_program(
-    led: dict, fresh: bool, meta: dict | None, current_bin: str | None, row: dict
+    led: dict,
+    fresh: bool,
+    meta: dict | None,
+    current_bin: str | None,
+    toolchain: str,
+    row: dict,
 ) -> dict:
     src = led.get("program_source")
     if src is None:  # accepts before #118 kept no body
@@ -210,6 +240,7 @@ def _prep_program(
     if meta is None:
         raise Unreplayable("unknown task")
     _check_binary(audit, current_bin, row)
+    _check_toolchain(audit, toolchain, row)
     # stored traces are canonicalized at record time: under other rules
     # their expected output is stale format, not a judge change
     if audit.get("canonicalizer") != CANONICALIZER_VERSION:
@@ -252,6 +283,7 @@ def regrade(
     # Environment, read OUTSIDE the per-accept net: a stale/corrupt manifest
     # or a missing corpus binary fails the job once, loudly.
     manifest = {t["task_id"]: t for t in load_manifest()}
+    toolchain = podrun.image_id()
     bin_digests: dict[str, str] = {}
     rows = []
     for task_id, led, unit in accepts():
@@ -279,9 +311,9 @@ def regrade(
         row: dict = {}
         try:
             if unit == "program":
-                job = _prep_program(led, fresh, meta, current_bin, row)
+                job = _prep_program(led, fresh, meta, current_bin, toolchain, row)
             else:
-                job = _prep_function(led, unit, meta, current_bin, row)
+                job = _prep_function(led, unit, meta, current_bin, toolchain, row)
         except Exception as e:  # noqa: BLE001 - stored data only; judges run below
             reason = (
                 str(e)

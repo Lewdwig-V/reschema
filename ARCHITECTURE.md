@@ -152,7 +152,8 @@ Control flow across the tour sections below, as it actually happens.
    `audit.program` (`hidden_seed`; `recorded`, the accept-time recorded
    cases as sorted `[argv[1:], stdin_hex, content digest]`; `binary`, the
    corpus binary's content digest; `canonicalizer`, the rules version the
-   traces were recorded under), and a journal entry; `memory.append_fact`
+   traces were recorded under; `toolchain`, the toolchain image ID, read
+   before the gate and kept only if unchanged at accept, else null), and a journal entry; `memory.append_fact`
    writes the accepted source as a `verified_fact` (`fn: "__main__"`) other
    slots of the family will see at their `task_open`.
 6. **Reject.** Counters + journal update; any agent `notes` land as
@@ -218,7 +219,7 @@ the container (containment for untrusted code). They never share a substrate.
    `{input, field, expected, actual, seed}`.
 7. Accept: newest source wins in the ledger (`{func: c_source}`, moved to the
    end on re-accept so list order is accept recency), audit keeps
-   `{seed, n_fuzz, compared, skipped, params, binary}`, and a `verified_fact`
+   `{seed, n_fuzz, compared, skipped, params, binary, toolchain}`, and a `verified_fact`
    (params, source, topology digest) is appended to the family cache.
 
 ### Composition (`engine.compose`, deliberately not an MCP tool)
@@ -365,7 +366,7 @@ exercising yet.
   submission memory, no entropy-policy violation, and wrong-branch stubs on
   sparse cmp sites provably die (tests/test_scout.py). Accepts carry
   `compared/skipped/seed` and write
-  `audit[func] = {seed, n_fuzz, compared, skipped, params, binary}`.
+  `audit[func] = {seed, n_fuzz, compared, skipped, params, binary, toolchain}`.
 - **compose** links awaited sources per-TU through the worker's
   `compile-link` mode; duplicate externally-visible symbols map to a
   structured "declare helpers static" reject. Not exposed as an MCP tool.
@@ -597,7 +598,7 @@ transfer in a live agent; a live-agent measurement is still pending (see
 re-judges ledger accepts under the CURRENT verifier and prints one
 verdict-diff JSON line per accept, stamped with the canonicalizer version:
 `task_id, unit, old_verdict, new_verdict, source_hash, seed,
-binary_verified` plus `compared/skipped` (function), `fresh` (program),
+binary_verified, toolchain_verified` plus `compared/skipped` (function), `fresh` (program),
 `divergence` (reject) or `reason` (unreplayable). Totals go to stderr.
 Measurement only: it writes no ledger or memory state, and a flip is data
 for 3B adjudication, not a verdict on the old judge.
@@ -608,7 +609,10 @@ for 3B adjudication, not a verdict on the old judge.
 - Function accepts replay `validate_function` with the audit seed and
   `n_fuzz`, so a flip isolates the judge change from the draw. Params come
   from `audit[func]["params"]` or, for pre-#143 entries, the
-  `verified_fact` with the same task, source and audit seed.
+  `verified_fact` with the same task, source and audit seed. When no fact
+  matches and the family file has unreadable lines, the reason names the
+  corruption (`bad stored data: corrupt memory (<n> lines)`) instead of
+  `no params`.
 - The program accept re-runs `engine.program_gate` (the judge
   `submit_program` wraps) on `program_source` with the audit `hidden_seed`,
   or fresh entropy under `--fresh`, replaying the accept-time recorded set
@@ -622,15 +626,20 @@ for 3B adjudication, not a verdict on the old judge.
   `no recorded snapshot` (pre-#144), `recorded cases changed` (a snapshot
   case vanished or its content digest differs), `binary changed` (the
   corpus binary's digest differs; legacy accepts without one replay with
-  `binary_verified: false`), `canonicalizer changed` (stored traces are in
+  `binary_verified: false`), `toolchain changed` (the toolchain image ID
+  differs: `localhost/reschema-toolchain:1` is a mutable tag, so a rebuild
+  may compile the source differently; legacy accepts without one, or with a
+  null one because the image changed mid-gate, replay with
+  `toolchain_verified: false`), `canonicalizer changed` (stored traces are in
   another rules version's format), `unknown task` / `unknown function`,
-  `bad ledger` (unreadable, or a malformed `accepted`), `bad stored data:
+  `bad ledger` (unreadable, or a missing or malformed `accepted`), `bad stored data:
   <error>` (any other stored-data load/decode/type failure), and from the
   judge `infra` / `hidden-starvation` (an outage or an unjudged draw).
 - Failure boundaries: each accept is prepared (every stored-data read and
   type check) then judged. Only the prepare phase degrades to a row; judge
   exceptions raise (engine bug). Environment faults (a missing tasks dir,
-  a stale or corrupt manifest, a missing corpus binary) fail the whole job
+  a stale or corrupt manifest, a missing corpus binary or toolchain image)
+  fail the whole job
   once, loudly, rather than as per-accept noise.
 
 Negative tests (`tests/test_regrade.py`): a real function accept and a real

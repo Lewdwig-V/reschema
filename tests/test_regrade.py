@@ -334,6 +334,29 @@ def test_reaccept_is_newest_for_last_k(calc, monkeypatch):
     assert row["source_hash"] == _src_hash(revised), row
 
 
+@pytest.mark.parametrize("ids, stamped", [(["a", "a"], "a"), (["a", "b"], None)])
+@pytest.mark.parametrize("mode", ["function", "program"])
+def test_toolchain_stamp_must_hold_across_the_gate(
+    calc, monkeypatch, tmp_path, mode, ids, stamped
+):
+    # The ID is read before the gate and re-read at accept: an image rebuilt
+    # mid-gate stamps null (unverifiable), never the image that did not
+    # compile the source. Judges stubbed: the stamp is the subject.
+    monkeypatch.setattr("reschema.memory.MEMORY", tmp_path)
+    monkeypatch.setattr(eng.podrun, "image_id", iter(ids).__next__)
+    if mode == "function":
+        ok = lambda *a, **k: FnVerdict(True, compared=8, seed=1)
+        monkeypatch.setattr(eng, "validate_function", ok)
+        r = submit_function(calc, "sum_range", PARAMS, RIGHT, seed=1, n_fuzz=8)
+        unit = "sum_range"
+    else:
+        monkeypatch.setattr(eng, "program_gate", lambda *a, **k: (None, "s"))
+        r = submit_program(calc, GOOD_ROT13)
+        unit = "program"
+    assert r["accepted"], r
+    assert calc.ledger()["audit"][unit]["toolchain"] == stamped
+
+
 def test_corrupt_memory_is_named_not_no_params(calc, monkeypatch, tmp_path):
     # #147: a pre-#143 accept whose matching verified_fact line is corrupt
     # must name the unreadable store, not claim the params never existed.

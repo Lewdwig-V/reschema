@@ -385,6 +385,22 @@ def binary_digest(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
 
 
+def _toolchain_id() -> str | None:
+    """The toolchain image ID, or None if unreadable (a missing image is the
+    gate's own structured infra reject, not an exception here)."""
+    try:
+        return podrun.image_id()
+    except RuntimeError:
+        return None
+
+
+def _held_toolchain(before: str | None) -> str | None:
+    # Stamp only an ID that held across the whole gate: a rebuild mid-gate
+    # means the source may have compiled under either image, so the accept
+    # is unverifiable (None, replayed like a legacy one), never a wrong pin.
+    return before if before is not None and _toolchain_id() == before else None
+
+
 def program_gate(
     store: TaskStore,
     c_source: str,
@@ -496,10 +512,11 @@ def submit_program(
             ),
         )
 
+    toolchain = _toolchain_id()
     fail, hidden_seed = program_gate(store, c_source, model)
     if fail is not None:
         return reject(**fail)
-    toolchain = podrun.image_id()  # before any accept side effect, like digests
+    toolchain = _held_toolchain(toolchain)  # before any accept side effect
     # Accept marker is idempotent (re-accept re-records one), audit keeps the
     # effective hidden seed so the passing suite is traceable like function mode.
     led["accepted"] = [
@@ -849,6 +866,7 @@ def submit_function(
     # ponytail: agent-controlled cost (fresh Qiling VM per case) — clamp runaway budgets
     n_fuzz = min(n_fuzz, 4 * N_FUZZ)
     fmeta = _fn_meta(store, func)
+    toolchain = _toolchain_id()
     v = validate_function(
         store.meta["binary"],
         fmeta["addr"],
@@ -864,7 +882,7 @@ def submit_function(
     # digest BEFORE any accept side effect (notes promote below): a failure
     # here must not leave promoted notes for an accept never saved
     bin_digest = binary_digest(store.meta["binary"]) if v.ok else None
-    toolchain = podrun.image_id() if v.ok else None
+    toolchain = _held_toolchain(toolchain) if v.ok else None
     _record_notes(store, func, notes, promoted=v.ok)
     if not v.ok:
         led["rejections"] += 1

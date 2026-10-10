@@ -152,8 +152,8 @@ Control flow across the tour sections below, as it actually happens.
    `audit.program` (`hidden_seed`; `recorded`, the accept-time recorded
    cases as sorted `[argv[1:], stdin_hex, content digest]`; `binary`, the
    corpus binary's content digest; `canonicalizer`, the rules version the
-   traces were recorded under; `toolchain`, the toolchain image ID that
-   compiled the source), and a journal entry; `memory.append_fact`
+   traces were recorded under; `toolchain`, the toolchain image ID, read
+   before the gate and kept only if unchanged at accept, else null), and a journal entry; `memory.append_fact`
    writes the accepted source as a `verified_fact` (`fn: "__main__"`) other
    slots of the family will see at their `task_open`.
 6. **Reject.** Counters + journal update; any agent `notes` land as
@@ -628,8 +628,9 @@ for 3B adjudication, not a verdict on the old judge.
   corpus binary's digest differs; legacy accepts without one replay with
   `binary_verified: false`), `toolchain changed` (the toolchain image ID
   differs: `localhost/reschema-toolchain:1` is a mutable tag, so a rebuild
-  may compile the source differently; legacy accepts without one replay
-  with `toolchain_verified: false`), `canonicalizer changed` (stored traces are in
+  may compile the source differently; legacy accepts without one, or with a
+  null one because the image changed mid-gate, replay with
+  `toolchain_verified: false`), `canonicalizer changed` (stored traces are in
   another rules version's format), `unknown task` / `unknown function`,
   `bad ledger` (unreadable, or a missing or malformed `accepted`), `bad stored data:
   <error>` (any other stored-data load/decode/type failure), and from the

@@ -88,3 +88,34 @@ def test_podman_store_ignores_sandbox_pinned_xdg(tmp_path, monkeypatch):
         assert kw["env"]["XDG_DATA_HOME"] == str(real_data)
         assert kw["env"]["XDG_DATA_HOME"] != str(fake_data)
         assert kw["env"]["HOME"] == str(tmp_path)  # ambient env otherwise passes
+
+
+def test_image_id_reads_the_real_store(monkeypatch):
+    # #146: the ID accepts stamp must come from the account's image store
+    # (same XDG seam as ensure_image), stripped of podman's trailing newline.
+    captured = []
+
+    def fake_run(argv, **kw):
+        captured.append((argv, kw))
+        return subprocess.CompletedProcess(argv, 0, stdout="abc123\n")
+
+    monkeypatch.setattr(podrun.subprocess, "run", fake_run)
+    assert podrun.image_id() == "abc123"
+    ((argv, kw),) = captured
+    assert argv == ["podman", "image", "inspect", "--format", "{{.Id}}", podrun.IMAGE]
+    assert kw["env"] == podrun._podman_env()
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        Mock(return_value=subprocess.CompletedProcess([], 125, stdout="")),
+        Mock(return_value=subprocess.CompletedProcess([], 0, stdout="\n")),
+        Mock(side_effect=FileNotFoundError),
+    ],
+)
+def test_image_id_missing_image_or_podman_is_runtimeerror(monkeypatch, run):
+    # Never an empty or garbage ID stamped into an audit.
+    monkeypatch.setattr(podrun.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="podman"):
+        podrun.image_id()

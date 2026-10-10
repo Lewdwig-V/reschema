@@ -46,7 +46,7 @@ class FakeRunner:
         return self._killed or self.script.get("ledger") is not None
 
     def wait(self):
-        eof = AgentOutcome(exit_kind="eof", returncode=0, transcript_tail="fake")
+        eof = AgentOutcome(exit_kind="eof", transcript_tail="fake")
         hang = self.script.get("alive_after_accept")
         while not self._killed:
             if not hang and self.script.get("ledger") is not None:
@@ -54,9 +54,7 @@ class FakeRunner:
             time.sleep(0.05)
         if self.script.get("ledger") is not None:
             return eof  # life reached disk; a post-accept kill can't erase it
-        return AgentOutcome(
-            exit_kind="timeout", returncode=-9, transcript_tail="killed"
-        )
+        return AgentOutcome(exit_kind="timeout", transcript_tail="killed")
 
     def kill(self):
         self._killed = True

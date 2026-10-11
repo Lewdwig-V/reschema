@@ -25,7 +25,8 @@ and 256 probes: with a task's 8 submissions, the submissions bind first.
 ## Allowances
 
 `python -m reschema.campaign write` prints the project's `--allow` flags: every
-planned run spending its whole `[budgets]`, and every task its 8 checks. For
+planned run spending its whole `[budgets]`, and every task its 8 checks. A run
+config must therefore set `model`, `tool` and `probe` in `[budgets]`. For
 the smoke under one run config: `model=3200 tool=3200 probe=2560 check=80`.
 
 ## Local smoke

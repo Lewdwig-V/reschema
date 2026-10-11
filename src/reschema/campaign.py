@@ -26,6 +26,8 @@ from . import tasks
 from .corpus import generate
 
 DOMAIN = "reschema.domain:ReSchemaDomain"
+# Units every run spends: steps cost model and tool, experiments cost probe.
+REQUIRED_BUDGETS = {"model", "tool", "probe"}
 
 
 def _fail(reason: str, **detail) -> int:
@@ -64,11 +66,18 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, tomllib.TOMLDecodeError) as e:
         return _fail("bad-config", detail=str(e))
     for c, b in zip(a.config, budgets):
-        if type(b) is not dict or not all(
-            type(u) is str and type(n) is int and n >= 0 for u, n in b.items()
+        # explicit, so the printed allowances cover every unit a run spends
+        if (
+            type(b) is not dict
+            or not REQUIRED_BUDGETS <= set(b)
+            or not all(
+                type(u) is str and type(n) is int and n >= 0 for u, n in b.items()
+            )
         ):
             return _fail(
-                "bad-config", detail=f"{c}: [budgets] maps units to integers >= 0"
+                "bad-config",
+                detail=f"{c}: [budgets] must set {sorted(REQUIRED_BUDGETS)} "
+                "(and any other units) to integers >= 0",
             )
 
     current = generate.all_task_ids()

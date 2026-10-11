@@ -104,7 +104,16 @@ def test_printed_commands_are_shell_quoted(tmp_path, built_corpus, monkeypatch, 
 
 
 @pytest.mark.parametrize(
-    "budgets", ['model = "320"', "model = -1", "model = 1.5", "model = true"]
+    "budgets",
+    [
+        'model = "320"\ntool = 1\nprobe = 1',
+        "model = -1\ntool = 1\nprobe = 1",
+        "model = 1.5\ntool = 1\nprobe = 1",
+        "model = true\ntool = 1\nprobe = 1",
+        # Codex #168: a missing unit would print an init that can't run
+        "model = 1\ntool = 1",
+        "",
+    ],
 )
 def test_non_integer_budgets_are_a_structured_reject(tmp_path, capsys, budgets):
     # Codex #168: these used to reach the allowance arithmetic and raise

@@ -133,3 +133,25 @@ def test_an_undecodable_config_is_a_structured_reject(tmp_path, capsys):
     argv = ["write", "--out", str(tmp_path / "c"), "--config", str(cfg)]
     assert campaign.main([*argv, "rot13::gcc-O2-sym"]) == 2
     assert json.loads(capsys.readouterr().err)["reason"] == "bad-config"
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        'provider = "ollama"\n',  # no model
+        "model = 1\n",
+        'model = "m"\nprovider = "openrouter"\n',
+        'model = "m"\nprovider = "litellm"\n[adapter]\nmax_tokens = 1\n',
+        'model = "m"\nmax_steps = 0\n',
+        'model = "m"\nextra = 1\n',
+    ],
+)
+def test_the_whole_run_config_is_checked_before_writing(tmp_path, capsys, config):
+    # Codex #168: only [budgets] was checked, so a config Warranted refuses
+    # still produced a campaign
+    cfg = tmp_path / "bad.toml"
+    cfg.write_text(config + "\n[budgets]\nmodel = 1\ntool = 1\nprobe = 1\n")
+    argv = ["write", "--out", str(tmp_path / "c"), "--config", str(cfg)]
+    assert campaign.main([*argv, "rot13::gcc-O2-sym"]) == 2
+    assert json.loads(capsys.readouterr().err)["reason"] == "bad-config"
+    assert not (tmp_path / "c").exists()

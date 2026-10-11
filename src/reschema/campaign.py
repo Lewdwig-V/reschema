@@ -22,17 +22,48 @@ import tomllib
 from collections import Counter
 from pathlib import Path
 
+from warranted import RunConfig
+
 from . import tasks
 from .corpus import generate
 
 DOMAIN = "reschema.domain:ReSchemaDomain"
 # Units every run spends: steps cost model and tool, experiments cost probe.
 REQUIRED_BUDGETS = {"model", "tool", "probe"}
+LITELLM_ADAPTER = {"api_key_file", "max_tokens", "timeout_seconds"}
 
 
 def _fail(reason: str, **detail) -> int:
     print(json.dumps({"accepted": False, "reason": reason, **detail}), file=sys.stderr)
     return 2
+
+
+def _budgets(data: dict) -> dict:
+    """The run config's [budgets], after checking the whole config as far as
+    Warranted's public API allows (it has no public config loader; the
+    litellm key file is only read at run time, so it may not exist yet)."""
+    known = {"model", "provider", "max_steps", "budgets", "adapter"}
+    if not data.keys() <= known or type(data.get("model")) is not str:
+        raise ValueError(f"needs a model string, and only {sorted(known)}")
+    provider = data.get("provider", "ollama")
+    adapter = data.get("adapter", {})
+    if provider not in ("ollama", "litellm") or type(adapter) is not dict:
+        raise ValueError("provider is ollama or litellm; [adapter] is a table")
+    if provider == "litellm" and not LITELLM_ADAPTER <= adapter.keys():
+        raise ValueError(f"a litellm [adapter] needs {sorted(LITELLM_ADAPTER)}")
+    b = data.get("budgets", {})
+    # explicit, so the printed allowances cover every unit a run spends
+    if (
+        type(b) is not dict
+        or not REQUIRED_BUDGETS <= set(b)
+        or not all(type(u) is str and type(n) is int and n >= 0 for u, n in b.items())
+    ):
+        raise ValueError(
+            f"[budgets] must set {sorted(REQUIRED_BUDGETS)} "
+            "(and any other units) to integers >= 0"
+        )
+    RunConfig(data["model"], data.get("max_steps", 4), b)  # Warranted's own checks
+    return b
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,24 +92,14 @@ def main(argv: list[str] | None = None) -> int:
     names = [c.stem for c in a.config]
     if len(set(names)) != len(names):
         return _fail("duplicate-config-name", configs=names)
-    try:
-        budgets = [tomllib.loads(c.read_text()).get("budgets", {}) for c in a.config]
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
-        return _fail("bad-config", detail=str(e))
-    for c, b in zip(a.config, budgets):
-        # explicit, so the printed allowances cover every unit a run spends
-        if (
-            type(b) is not dict
-            or not REQUIRED_BUDGETS <= set(b)
-            or not all(
-                type(u) is str and type(n) is int and n >= 0 for u, n in b.items()
-            )
-        ):
-            return _fail(
-                "bad-config",
-                detail=f"{c}: [budgets] must set {sorted(REQUIRED_BUDGETS)} "
-                "(and any other units) to integers >= 0",
-            )
+    budgets = []
+    for c in a.config:
+        try:
+            budgets.append(_budgets(tomllib.loads(c.read_text())))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
+            return _fail("bad-config", detail=f"{c}: {e}")
+        except (ValueError, TypeError) as e:
+            return _fail("bad-config", detail=f"{c}: {e}")
 
     current = generate.all_task_ids()
     unknown = [s for s in a.slots if s not in current]

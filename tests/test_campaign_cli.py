@@ -144,6 +144,25 @@ def test_an_undecodable_config_is_a_structured_reject(tmp_path, capsys):
         'model = "m"\nprovider = "litellm"\n[adapter]\nmax_tokens = 1\n',
         'model = "m"\nmax_steps = 0\n',
         'model = "m"\nextra = 1\n',
+        # Codex #168: adapter values, not only keys
+        'model = "m"\n[adapter]\nmax_tokens = "many"\n',
+        'model = "m"\n[adapter]\nbase_url = "http://example.com/v1"\n',
+        (
+            'model = "a/b"\nprovider = "litellm"\n[adapter]\napi_key_file = 1\n'
+            "max_tokens = 1\ntimeout_seconds = 1\n"
+        ),
+        (
+            'model = "a/b"\nprovider = "litellm"\n[adapter]\napi_key_file = "k"\n'
+            'max_tokens = "many"\ntimeout_seconds = 1\n'
+        ),
+        (
+            'model = "a/b"\nprovider = "litellm"\n[adapter]\napi_key_file = "k"\n'
+            "max_tokens = 1\ntimeout_seconds = false\n"
+        ),
+        (
+            'model = "nomodel"\nprovider = "litellm"\n[adapter]\napi_key_file = "k"\n'
+            "max_tokens = 1\ntimeout_seconds = 1\n"
+        ),
     ],
 )
 def test_the_whole_run_config_is_checked_before_writing(tmp_path, capsys, config):
@@ -155,3 +174,17 @@ def test_the_whole_run_config_is_checked_before_writing(tmp_path, capsys, config
     assert campaign.main([*argv, "rot13::gcc-O2-sym"]) == 2
     assert json.loads(capsys.readouterr().err)["reason"] == "bad-config"
     assert not (tmp_path / "c").exists()
+
+
+def test_glm_config_writes_before_its_key_exists(tmp_path, built_corpus, monkeypatch):
+    # the key file is read at run time, so a campaign can be laid out first
+    monkeypatch.setattr(generate, "build", lambda *a, **k: None)
+    glm = str(CAMPAIGNS / "run-glm-openrouter.toml")
+    out = tmp_path / "glm"
+    assert (
+        campaign.main(
+            ["write", "--out", str(out), "--config", glm, "rot13::gcc-O2-sym"]
+        )
+        == 0
+    )
+    assert (out / "campaign.toml").exists()

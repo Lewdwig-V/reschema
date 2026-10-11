@@ -22,7 +22,7 @@ import tomllib
 from collections import Counter
 from pathlib import Path
 
-from warranted import RunConfig
+from warranted import LocalChatCompletions, RunConfig
 
 from . import tasks
 from .corpus import generate
@@ -30,7 +30,13 @@ from .corpus import generate
 DOMAIN = "reschema.domain:ReSchemaDomain"
 # Units every run spends: steps cost model and tool, experiments cost probe.
 REQUIRED_BUDGETS = {"model", "tool", "probe"}
-LITELLM_ADAPTER = {"api_key_file", "max_tokens", "timeout_seconds"}
+LITELLM_REQUIRED = {"api_key_file", "max_tokens", "timeout_seconds"}
+LITELLM_FIELDS = LITELLM_REQUIRED | {"api_base", "parameters"}
+OLLAMA_URL = "http://127.0.0.1:11434/v1"  # Warranted's default local endpoint
+
+
+def _int_in(n, lo: int, hi: int) -> bool:
+    return type(n) is int and lo <= n <= hi
 
 
 def _fail(reason: str, **detail) -> int:
@@ -39,9 +45,9 @@ def _fail(reason: str, **detail) -> int:
 
 
 def _budgets(data: dict) -> dict:
-    """The run config's [budgets], after checking the whole config as far as
-    Warranted's public API allows (it has no public config loader; the
-    litellm key file is only read at run time, so it may not exist yet)."""
+    """The run config's [budgets], after checking the whole config the way
+    `warranted run` would (its loader is private: warranted#78), short of
+    reading the litellm key file, which may not exist until run time."""
     known = {"model", "provider", "max_steps", "budgets", "adapter"}
     if not data.keys() <= known or type(data.get("model")) is not str:
         raise ValueError(f"needs a model string, and only {sorted(known)}")
@@ -49,8 +55,32 @@ def _budgets(data: dict) -> dict:
     adapter = data.get("adapter", {})
     if provider not in ("ollama", "litellm") or type(adapter) is not dict:
         raise ValueError("provider is ollama or litellm; [adapter] is a table")
-    if provider == "litellm" and not LITELLM_ADAPTER <= adapter.keys():
-        raise ValueError(f"a litellm [adapter] needs {sorted(LITELLM_ADAPTER)}")
+    adapter = dict(adapter)
+    if provider == "ollama":
+        # Warranted's own adapter: its construction validates every field and
+        # touches nothing (no request until a run)
+        LocalChatCompletions(
+            adapter.pop("base_url", OLLAMA_URL), data["model"], **adapter
+        )
+    else:
+        # The litellm adapter reads the key and probes litellm when built, so
+        # mirror its field rules instead; the key file is read at run time.
+        if not LITELLM_REQUIRED <= adapter.keys() <= LITELLM_FIELDS:
+            raise ValueError(
+                f"a litellm [adapter] needs {sorted(LITELLM_REQUIRED)}, "
+                f"and only {sorted(LITELLM_FIELDS)}"
+            )
+        if "/" not in data["model"].strip("/") or (
+            type(adapter["api_key_file"]) is not str
+            or not _int_in(adapter["max_tokens"], 1, 131072)
+            or not _int_in(adapter["timeout_seconds"], 1, 600)
+            or type(adapter.get("api_base", "")) is not str
+            or type(adapter.get("parameters", {})) is not dict
+        ):
+            raise ValueError(
+                "litellm: model is provider/model; api_key_file a path; "
+                "max_tokens 1..131072; timeout_seconds 1..600"
+            )
     b = data.get("budgets", {})
     # explicit, so the printed allowances cover every unit a run spends
     if (

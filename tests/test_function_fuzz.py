@@ -165,6 +165,20 @@ def test_missing_candidate_file_is_a_spec_reject(sum_private):
     }
 
 
+def test_foreign_declaration_is_a_spec_reject(sum_private):
+    # Codex #165: the guard fingerprints cases.json too, so an unused copy could
+    # be varied to resubmit a judged source past it.
+    cand = {
+        "model.c": SUM.encode(),
+        "params.json": json.dumps(SUM_PARAMS).encode(),
+        "cases.json": b"[]",
+    }
+    jobs = FakeJobs(b"")
+    v = FunctionFuzz(n_fuzz=8).check(Pinned(cand, {}, sum_private, jobs=jobs))
+    assert (v.status, v.feedback["reason"]) == (VerdictStatus.REJECTED, "spec")
+    assert jobs.sent == []
+
+
 def test_accept_in_a_real_job_records_fact_and_seed(sum_private):
     v, ctx = _check(sum_private, PodmanJobs())
     assert v.status is VerdictStatus.PASSED, v.feedback

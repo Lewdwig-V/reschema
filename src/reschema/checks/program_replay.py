@@ -164,6 +164,12 @@ class ProgramReplay:
             return _reject("candidate", "candidate", detail="model.c is missing")
         except UnicodeDecodeError:
             return _reject("candidate", "candidate", detail="model.c is not UTF-8")
+        if "params.json" in ctx.candidate:
+            # The guard fingerprints every declaration file; an unused one could
+            # be varied to dodge it while the judged source repeats.
+            return _reject(
+                "candidate", "candidate", detail="params.json belongs to function tasks"
+            )
         cases = _parse_cases(ctx.candidate.get("cases.json", b"[]"))
         if type(cases) is str:
             return _reject("cases", "candidate", detail=cases)

@@ -153,6 +153,12 @@ class FunctionFuzz:
         missing = sorted({"model.c", "params.json"} - set(ctx.candidate))
         if missing:
             return _reject({"reason": "spec", "detail": f"missing {missing}"})
+        if "cases.json" in ctx.candidate:
+            # The guard fingerprints every declaration file; an unused one could
+            # be varied to dodge it while the judged source repeats.
+            return _reject(
+                {"reason": "spec", "detail": "cases.json belongs to program tasks"}
+            )
         try:
             params = _params(ctx.candidate["params.json"])
             source = ctx.candidate["model.c"].decode()

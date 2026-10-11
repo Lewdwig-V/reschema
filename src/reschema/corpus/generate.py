@@ -68,6 +68,17 @@ def _check(r: dict, what: str, key: str) -> None:
         )
 
 
+def all_task_ids() -> set[str]:
+    """Every slot the full matrix builds, as manifest task ids."""
+    return {
+        f"{seed.stem}::{cc}-{opt.lstrip('-')}-{'stripped' if strip else 'sym'}"
+        for seed in SEEDS.glob("*.c")
+        for cc in COMPILERS
+        for opt in OPTS
+        for strip in (False, True)
+    }
+
+
 def build(
     out_root: Path = OUT_ROOT,
     *,

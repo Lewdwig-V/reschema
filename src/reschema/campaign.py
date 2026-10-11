@@ -4,7 +4,7 @@
 
 Lays out `DIR/campaign.toml` and its tasks (each slot's function tasks, then
 its program task) with `tasks.write_campaign`, building the corpus only if it
-has no manifest, and prints the `warranted` commands that run it. The project
+has no manifest (or, for --all, lacks a slot of the full matrix), and prints the `warranted` commands that run it. The project
 allowances it prints are the campaign's worst case: every planned run spending
 its run config's whole [budgets], and every task its whole check budget.
 Errors are one JSON object on stderr, exit 2.
@@ -61,11 +61,22 @@ def main(argv: list[str] | None = None) -> int:
         budgets = [tomllib.loads(c.read_text()).get("budgets", {}) for c in a.config]
     except (OSError, tomllib.TOMLDecodeError) as e:
         return _fail("bad-config", detail=str(e))
+    for c, b in zip(a.config, budgets):
+        if type(b) is not dict or not all(
+            type(u) is str and type(n) is int and n >= 0 for u, n in b.items()
+        ):
+            return _fail(
+                "bad-config", detail=f"{c}: [budgets] maps units to integers >= 0"
+            )
 
     if not (generate.OUT_ROOT / "manifest.json").exists():
         generate.build()
     try:
         manifest = {m["task_id"]: m for m in generate.load_manifest()}
+        if a.all and not generate.all_task_ids() <= set(manifest):
+            # a targeted build left a partial manifest; --all means every slot
+            generate.build()
+            manifest = {m["task_id"]: m for m in generate.load_manifest()}
     except RuntimeError as e:  # recorded under another canonicalizer
         return _fail("stale-corpus", detail=str(e))
     unknown = [s for s in a.slots if s not in manifest]

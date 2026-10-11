@@ -340,13 +340,15 @@ def test_experiment_function_calls_the_task_function(tmp_path, meta):
     assert proj.status(run.run_id).accounting["probe"].spent == 2
 
 
-def test_experiment_function_on_a_program_task_fails(tmp_path, meta):
+def test_experiment_function_on_a_program_task_fails_uncharged(tmp_path, meta):
     probe = fn_request({"params": CHAR, "case": {"c": 1}})
     proj, _ = project(tmp_path, [[probe, bad_program("a")]], jobs=NoJobs())
-    proj.start(one(meta), CONFIG, Model())
+    run = proj.start(one(meta), CONFIG, Model())
     [(op, a)] = ops(proj, "operation")
     assert op.completion.result.outcome is Outcome.FAILED
     assert "function task" in json.loads(a["shown.json"])["error"]
+    # listed for every task (operations are per domain), but runs nothing here
+    assert proj.status(run.run_id).accounting["probe"].spent == 0
 
 
 def test_experiment_function_target_is_not_the_workers(tmp_path, meta):

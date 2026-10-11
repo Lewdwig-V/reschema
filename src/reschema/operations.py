@@ -137,7 +137,7 @@ class ExperimentFunction:
     """One call of the task's original function on a worker-chosen case. The
     target (name, addr, size) comes from the private task.json, never from the
     worker. Operations are per domain in Warranted, so program tasks offer it
-    too: their task.json names no function, and the call is FAILED."""
+    too: their task.json names no function, and the call is FAILED, uncharged."""
 
     version = "1"
     effect = "none"  # qiling on the host, fresh empty rootfs per call
@@ -167,9 +167,11 @@ class ExperimentFunction:
     def execute(self, ctx: OperationContext, arguments) -> OperationResult:
         fn = json.loads(ctx.inputs["task.json"]).get("function")
         if fn is None:
+            # Operations are per domain, so program tasks list this one too; a
+            # call there runs nothing and is not charged.
             return OperationResult(
                 Outcome.FAILED,
-                _USAGE,
+                {"probe": 0},
                 shown={"error": "experiment_function needs a function task"},
             )
         params = [Param.from_json(p) for p in arguments["params"]]

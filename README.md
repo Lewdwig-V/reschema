@@ -172,7 +172,8 @@ whole program (`reschema.tasks`).
 
 ### Live campaign
 
-`python -m reschema.campaign write` lays out a campaign for corpus slots (each
+`python -m reschema.campaign write` lays out a campaign in a new or empty
+`--out` directory for corpus slots (each
 slot's function tasks, then its program task) after a full corpus rebuild
 (about 10s; it replaces the manifest and binaries, never a past project's
 pinned task files), and prints the commands below with the project's `--allow`

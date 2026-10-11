@@ -243,3 +243,17 @@ def test_a_symlinked_config_inside_out_is_rejected(tmp_path, capsys):
     assert campaign.main([*argv, "rot13::gcc-O2-sym"]) == 2
     assert json.loads(capsys.readouterr().err)["reason"] == "bad-config"
     assert real.read_text() == Path(QWEN).read_text()
+
+
+def test_out_must_be_new_or_empty(tmp_path, capsys):
+    # Codex #168: OUT/campaign.toml symlinked to the (outside) run config was
+    # written through; any pre-existing file under OUT can alias one
+    real = tmp_path / "qwen.toml"
+    real.write_text(Path(QWEN).read_text())
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "campaign.toml").symlink_to(real)
+    argv = ["write", "--out", str(out), "--config", str(real)]
+    assert campaign.main([*argv, "rot13::gcc-O2-sym"]) == 2
+    assert json.loads(capsys.readouterr().err)["reason"] == "bad-config"
+    assert real.read_text() == Path(QWEN).read_text()

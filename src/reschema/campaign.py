@@ -126,16 +126,10 @@ def main(argv: list[str] | None = None) -> int:
     out = a.out.resolve()
     campaign_id = a.id or out.name
     project = a.project or a.out / "project"
-    inside = [
-        str(c)
-        for c in a.config
-        # where it lies (a symlink under OUT would be written through) and
-        # what it points at
-        if (c.absolute().parent.resolve() / c.name).is_relative_to(out)
-        or c.resolve().is_relative_to(out)
-    ]
-    if inside:  # write regenerates OUT; a config there could be overwritten
-        return _fail("bad-config", detail=f"run configs inside --out: {inside}")
+    # A fresh directory: anything already under OUT (a config, or a symlink
+    # aliasing one at a path write_campaign will write) could be overwritten.
+    if out.exists() and (not out.is_dir() or any(out.iterdir())):
+        return _fail("bad-config", detail=f"--out must be new or empty: {out}")
     names = [c.stem for c in a.config]
     if len(set(names)) != len(names):
         return _fail("duplicate-config-name", configs=names)

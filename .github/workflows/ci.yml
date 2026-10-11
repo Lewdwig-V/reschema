@@ -26,8 +26,8 @@ jobs:
           ! command -v gcc && ! command -v cc && ! command -v clang && ! command -v strip
       - run: uv sync
       # The image is a pure function of Containerfile and its COPYs,
-      # checker-requirements.txt and tools/worker/ (the level-B worker is mounted
-      # at run time), so their hash is the whole cache key and the GHCR tag (tools/toolchain_image.sh --tag). Order: actions cache, then the
+      # checker-requirements.txt and tools/worker/ (native_worker.py reaches it as
+      # job files or the corpus build's mount, never a COPY), so their hash is the whole cache key and the GHCR tag (tools/toolchain_image.sh --tag). Order: actions cache, then the
       # image main published to GHCR, then a build. A miss saves the tar.
       - name: toolchain image tag
         id: tc

@@ -7,6 +7,13 @@ same seed — without making the judge any softer?
 Reader's guide: this is a methods document. Section 4 states plainly what is
 proven today (instrumentation only) and what is not (any live-agent transfer).
 
+> **M8 S7:** the engine, its family memory cache, the CI reference run
+> (`tests/test_transfer_protocol.py`) and the `tools/dogfood/` driver this
+> document names were removed when ReSchema moved onto Warranted. The methods
+> stand; the measurements restart in a new metric epoch on Warranted
+> campaigns and memory (S8, `docs/proposals/m8-rebuild-on-warranted.md`).
+> Paths below are historical.
+
 ## 1. Question and hypothesis
 
 The engine caches two kinds of memory per seed family (all build slots of one
@@ -108,8 +115,8 @@ state (task dirs, ledger, memory roots).
    constant embedded in the binary). *Confound removed:* an always-reject
    model could otherwise "solve" a family whose recorded cases are all
    rejections — and worse, get cached as a `verified_fact` for later slots.
-   `tests/test_transfer_protocol.py::test_check_family_rejects_always_nope_attack`
-   demonstrates the attack and the control.
+   `tests/test_program_replay.py::test_always_nope_dies_on_a_nominated_accepting_case`
+   demonstrates the attack and the control on the M8 checker.
 2. **UNPRIMED isolates memory per slot.** Slot-local memory roots keep each
    unprimed slot cold at its `task_open`. *Confound removed:* a shared memory
    root leaks slot 0's auto-written `verified_fact` into later openings,

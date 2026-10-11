@@ -10,8 +10,8 @@ when some cases survive, any MEMORY fault (unmapped/protection/alignment) of the
 original on a declared case is a spec-stage reject (a pointer typed as a
 scalar); timeouts stay skipped (skip floor, roadmap).
 
-Containment: agent source compiles and executes ONLY inside the level-B podman
-worker (see ARCHITECTURE.md) — never in this process.
+Containment: agent source compiles and executes ONLY inside a contained
+Warranted job (`run_model`, see checks/function_fuzz.py) — never in this process.
 """
 
 from __future__ import annotations
@@ -19,12 +19,9 @@ from __future__ import annotations
 import json
 import random
 import secrets
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 
-from ..driver import podrun
 from ..driver.calling import BAREGS, batch_call_original, gen_inputs
 from ..driver.spec import Param
 
@@ -70,17 +67,6 @@ def _is_mem_fault(want: dict) -> bool:
     return want["exit_code"] == -1 and want["events"][-1].get("mem_fault") is True
 
 
-def _podman_worker(job: dict) -> dict:
-    # ISSUE-61: compile AND fork-per-case ctypes execution run against a scratch
-    # dir holding only the model source — the task dir (traces/ledger/accepts)
-    # is never inside the container's writable mount.
-    with tempfile.TemporaryDirectory(prefix="reschema-validate-") as scratch:
-        try:
-            return podrun.run_worker(job, Path(scratch))
-        except RuntimeError as e:  # missing podman/image: mandatory containment
-            return {"stage": "infra", "detail": str(e)}
-
-
 def validate_function(
     binary: str,
     addr: int,
@@ -90,9 +76,10 @@ def validate_function(
     seed: int | None = None,
     n_fuzz: int = N_FUZZ,
     size: int | None = None,
-    # One worker round trip (validate job in, result JSON out); the
-    # function-fuzz checker swaps in a Warranted job (checks/function_fuzz.py).
-    run_model: Callable[[dict], dict] = _podman_worker,
+    *,
+    # One worker round trip (validate job in, result JSON out): a Warranted
+    # job, see checks/function_fuzz.job_model. There is no in-process default.
+    run_model: Callable[[dict], dict],
 ) -> FnVerdict:
     if len(params) > len(BAREGS):
         return FnVerdict(

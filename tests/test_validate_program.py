@@ -1,108 +1,21 @@
-import pytest
+"""`compare`: the program gate's host-side judgment of a model's canonical
+traces against ground truth. The model's own compile and replay run in a job
+(test_program_replay.py; real models in the golden fixture's vp-* cases).
+Here the model's raw trace is a stub, so every divergence shape is pinned
+without qiling."""
 
-from reschema.engine import TaskStore
 from reschema.exec.canonical import canonicalize
-from reschema.validate.program import compile_model, replay_against
-
-GOOD = r"""
-#include <stdio.h>
-int main(int argc, char **argv){ if(argc<2){puts("usage: rot13 WORD");return 2;}
-for(char*p=argv[1];*p;p++){char c=*p;
- if(c>='a'&&c<='z')*p='a'+(c-'a'+13)%26; else if(c>='A'&&c<='Z')*p='A'+(c-'A'+13)%26;}
-puts(argv[1]); return 0; }
-"""
-BAD = '#include <stdio.h>\nint main(void){puts("uryyb");return 0;}'
-
-# Awkward-but-equivalent: precomputes into a local buffer instead of mutating argv,
-# still emits stdout with one stdio buffered write.
-AWKWARD_BUFFERED = r"""
-#include <stdio.h>
-#include <string.h>
-int main(int argc, char **argv){ if(argc<2){ puts("usage: rot13 WORD"); return 2; }
-char buf[256]; int i; for(i=0; argv[1][i] && i<255; i++){
- char c=argv[1][i];
- if(c>='a'&&c<='z') c='a'+(c-'a'+13)%26; else if(c>='A'&&c<='Z') c='A'+(c-'A'+13)%26;
- buf[i]=c; }
-buf[i]=0; puts(buf); return 0; }
-"""
-
-# Same stdout bytes, but emitted as one raw write syscall PER BYTE plus newline.
-UNBUFFERED = r"""
-#include <unistd.h>
-#include <string.h>
-int main(int argc, char **argv){ if(argc<2){ write(2,"usage\n",6); return 2; }
-char buf[256]; int i; for(i=0; argv[1][i] && i<255; i++){
- char c=argv[1][i];
- if(c>='a'&&c<='z') c='a'+(c-'a'+13)%26; else if(c>='A'&&c<='Z') c='A'+(c-'A'+13)%26;
- buf[i]=c; }
-for(i=0; buf[i]; i++) write(1, buf+i, 1);
-write(1, "\n", 1); return 0; }
-"""
+from reschema.validate import program
+from reschema.validate.program import compare
 
 
-@pytest.fixture(scope="module")
-def manifest(built_corpus):
-    return built_corpus
-
-
-@pytest.fixture(scope="module")
-def store(manifest):
-    st = TaskStore("rot13::gcc-O2-sym")
-    st.record_case("a", ["abc"], b"")
-    st.record_case("b", ["Hello"], b"")
-    return st
-
-
-def test_good_model_accepted(store, tmp_path):
-    ok, err = compile_model(GOOD, tmp_path / "m")
-    assert ok, err
-
-    v = replay_against(tmp_path / "m", store.recorded())
-    assert v.ok, v.divergence
-
-
-def test_hardcoded_model_rejected_with_divergence(store, tmp_path):
-    ok, _ = compile_model(BAD, tmp_path / "b")
-    assert ok
-
-    v = replay_against(tmp_path / "b", store.recorded())
-    assert not v.ok
-    assert v.reason == "io-mismatch"
-    assert v.divergence["argv"] == ["abc"]  # first recorded case diverges
-
-
-def test_compile_error_rejected(tmp_path):
-    ok, err = compile_model("int main( {", tmp_path / "bad")
-    assert not ok and err
-
-
-def test_awkward_but_buffered_model_accepted(store, tmp_path):
-    # Pins: structural style differences are invisible to validation when the
-    # observable channel (stdout bytes + write-family event shape) matches.
-    ok, err = compile_model(AWKWARD_BUFFERED, tmp_path / "awk")
-    assert ok, err
-
-    v = replay_against(tmp_path / "awk", store.recorded())
-    assert v.ok, v.divergence
-
-
-def test_unbuffered_writes_rejected(store, tmp_path):
-    # Pins: write CHUNK SHAPE is observable. The write `count` arg and the number
-    # of write syscalls are compared, so a model that dribbles bytes one syscall
-    # at a time is rejected even with byte-identical stdout — models must buffer
-    # stdout the way stdio does. Observed: seed emits "nop\n" as one write(,,4),
-    # model as four write(,,1) — count differs, so it's event-divergence at the
-    # very first event, not event-length.
-    ok, err = compile_model(UNBUFFERED, tmp_path / "unb")
-    assert ok, err
-
-    v = replay_against(tmp_path / "unb", store.recorded())
-    assert not v.ok
-    assert v.reason == "event-divergence"
-    assert v.divergence["argv"] == ["abc"]
-    assert v.divergence["first_diverging_event_index"] == 0
-    assert v.divergence["expected"]["args"][-1] == "0x4"  # seed's single 4-byte write
-    assert v.divergence["actual"]["args"][-1] == "0x1"  # model's 1-byte dribble
+def replay_against(_model, traces):
+    """The model's traces as the job yields them (canonicalized recordings,
+    `program.record` stubbed per test), compared like the checker does."""
+    return compare(
+        traces,
+        [canonicalize(program.record(None, t["argv"][1:], b"")) for t in traces],
+    )
 
 
 def _trace(stdout_hex, exit_code, events):
@@ -392,19 +305,6 @@ def test_io_mismatch_has_no_dependency_slice(tmp_path, monkeypatch):
     assert "dep_slice" not in v.divergence  # stdout mismatch: no fd chain worth slicing
 
 
-def test_compile_infra_errors_rejected(tmp_path, monkeypatch):
-    from unittest.mock import Mock
-
-    from reschema.driver import podrun
-
-    def boom(job, workdir):
-        raise RuntimeError("level-B worker image missing; build it: podman build")
-
-    monkeypatch.setattr(podrun, "run_worker", Mock(side_effect=boom))
-    ok, err = compile_model(GOOD, tmp_path / "infra")
-    assert not ok and err.startswith("compile infra:")
-
-
 def test_io_mismatch_decoded_previews_and_actual_fault(tmp_path, monkeypatch):
     fault = {"phase": "fault", "sc": "crash", "args": ["QlErrorCoreUnmapped"]}
     monkeypatch.setattr(
@@ -438,14 +338,3 @@ def test_event_length_reason_pinned(tmp_path, monkeypatch):
     assert not v.ok and v.reason == "event-length"
     assert v.divergence["expected_len"] == 2
     assert v.divergence["actual_len"] == 4
-
-
-def test_compile_mount_exposes_no_oracle_files(tmp_path):
-    # ISSUE-61: the worker mount must hold ONLY the model source. Pre-fix the
-    # task dir (traces/ledger) was bind-mounted rw, and gcc diagnostics quote
-    # offending source lines — #include of a trace leaked recorded ground truth
-    # through the returned stderr channel.
-    (tmp_path / "trace_a.json").write_text('{"argv": ["QzxCANARY7"]}\n')
-    ok, detail = compile_model('#include "/work/trace_a.json"\n', tmp_path / "model")
-    assert not ok
-    assert "QzxCANARY7" not in detail

@@ -12,7 +12,8 @@ from conftest import check_context
 from warranted import FEEDBACK_LIMIT, CheckContext, JobResult, VerdictStatus
 
 from reschema.checks.program_replay import MAX_CASES, ProgramReplay, _capped
-from reschema.engine import HIDDEN_N, TaskStore, _record_stable
+from reschema.corpus.generate import slot
+from reschema.validate.program import HIDDEN_N, record_stable
 
 ROT13 = "rot13::gcc-O1-sym"
 GOOD = r"""
@@ -120,14 +121,14 @@ def test_job_sees_inputs_never_ground_truth(built_corpus):
     cases = json.loads(jobs.files["job.json"])["cases"]
     assert len(cases) == 1 + HIDDEN_N and cases[0] == HELLO[0]
     assert all(set(c) == {"argv", "stdin_hex"} for c in cases)
-    code = Path(TaskStore(ROT13).meta["binary"]).read_bytes()[4096:8192]
+    code = Path(slot(ROT13)["binary"]).read_bytes()[4096:8192]
     assert not any(code in data for data in jobs.files.values())
 
 
 def test_forged_trace_passes_nominated_but_not_hidden(built_corpus):
     # The worker knows its nominated cases' ground truth (it recorded them),
     # never the hidden ones: echoing what it knows fails the hidden stage.
-    known = _record_stable(TaskStore(ROT13).meta["binary"], ["hello"], b"")
+    known = record_stable(slot(ROT13)["binary"], ["hello"], b"")
     jobs = Forge(lambda cases: b"\n".join(json.dumps(known).encode() for _ in cases))
     v = ProgramReplay().check(
         check_context(
@@ -223,3 +224,23 @@ def test_flattering_nominations_lose_at_the_hidden_stage(built_corpus):
     )
     assert v.status is VerdictStatus.REJECTED
     assert (v.feedback["reason"], v.feedback["stage"]) == ("io-mismatch", "hidden")
+
+
+@pytest.mark.golden
+def test_always_nope_dies_on_a_nominated_accepting_case(built_corpus):
+    # The check family's P1 pin: an always-"NOPE" model passes every rejecting
+    # input; nominating the known-accepting pre-image is what kills it.
+    always_nope = '#include <stdio.h>\nint main(void){ puts("NOPE"); return 1; }\n'
+    cases = [
+        {"argv": [], "stdin_hex": b"nope\n".hex()},
+        {"argv": [], "stdin_hex": b'txy"od\n'.hex()},  # the accepting pre-image
+    ]
+    v = ProgramReplay().check(
+        check_context(
+            "check::gcc-O0-sym",
+            {"model.c": always_nope, "cases.json": json.dumps(cases)},
+            seed=6,
+        )
+    )
+    assert v.status is VerdictStatus.REJECTED
+    assert (v.feedback["reason"], v.feedback["stage"]) == ("io-mismatch", "recorded")

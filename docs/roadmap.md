@@ -22,6 +22,27 @@ separate agents, not one stitched pipeline.
 Phases 2+ shape the judge/coaching toward the RE agent's solve rate; the
 refactoring agent rides on the same verified substrate once it exists.
 
+## M8 — ReSchema rebuilt on Warranted (in progress)
+
+[Proposal](proposals/m8-rebuild-on-warranted.md), Warranted milestone M8.
+ReSchema keeps the reverse engineering (corpus, ground truth,
+canonicalisation, the two checkers, task presentation); Warranted owns task
+state, the ledger and accounting, budgets, the duplicate guard, containment
+and memory.
+
+- **S1–S6 (done):** golden decision fixture; `warranted` v0.3.0 pin and the
+  domain; `function-fuzz` and `program-replay` checkers over `run_job`
+  (D1, D3); the `experiment` operations, task specs per slot (D2), memory
+  and guard; the worker image, `task.md` and helpers; a scripted-model
+  campaign through the CLI.
+- **S7 (done, 2026-10-11):** the engine ledger code, `podrun`, the MCP
+  server, the memory cache and `tools/dogfood/` removed; `regrade` re-runs
+  the current checkers over recorded check evidence (misfit noted for
+  Lewdwig-V/warranted#78: no public re-check entry point).
+- **S8 (next):** a live-agent campaign through the CLI with full accounting
+  (M8 completion). The 2C results below are not comparable across the port:
+  it starts a new metric epoch.
+
 ## Phase 1.5 — Engine Hardening & Spec Alignment
 
 Close the MVP-sweep issues (raised 2026-08-01, ISSUE-01 … ISSUE-10, P0–P2):
@@ -114,7 +135,7 @@ with the reference agent in CI as the wiring proof, and a documented dogfood
 protocol to measure the same with a live agent (the way ISSUE-08/09/10
 feedback was measured). Runs once after 2B lands, before phase 3 consumption.
 Driver for the live-agent reruns shipped as `tools/dogfood/` (PR #75;
-invocation in docs/benchmark-protocol.md §6).
+removed in M8 S7: live runs go through Warranted campaigns).
 
 Three published, integrity-audited floors under `docs/benchmark-results/2c/`
 (gemma4:26b via ollama), one per prompt/tool-surface configuration
@@ -590,7 +611,7 @@ adapter evidence, M6). Most sources were read as search extracts and every
 figure is self-reported: AVO and VISTA on the public games, GPT-6 Astra on
 the Semi-Private set. Treat the numbers as directional. All items below wait for the M8 port: the gates, #113/#114 and
 #128/#129 are frozen until it lands, so the judge-facing work runs as
-Warranted campaigns over the ported checkers, not as edits to `engine.py`.
+Warranted campaigns over the ported checkers (`engine.py` is gone since S7).
 None relaxes the judge.
 
 - **AVO as the variation operator for judge hardening.** An agent

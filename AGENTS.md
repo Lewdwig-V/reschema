@@ -24,68 +24,71 @@ fix the test, not the scheduler.
 
 Run pytest **via `uv run` only** — the venv (`.venv`, Python 3.12) carries native
 deps. Rootless **podman** is the hard dependency: every compile (corpus matrix,
-model checks, `strip`) runs inside the pinned `localhost/reschema-toolchain:1`
-image — get it once with `tools/toolchain_image.sh`, which pulls the build CI
+`strip`, every model) and every checker job runs inside the pinned
+`localhost/reschema-toolchain:1` image — get it once with
+`tools/toolchain_image.sh`, which pulls the build CI
 published to `ghcr.io/lewdwig-v/reschema-toolchain:<sha256 of the sha256sum manifest of Containerfile, checker-requirements.txt, tools/worker/*>[:16]`
 and falls back to `podman build -t localhost/reschema-toolchain:1 -f
 Containerfile .`. Sandboxes that block the snapshot.debian.org apt mirror need
 the pull (blobs come from pkg-containers.githubusercontent.com). No host
 `gcc`/`strip` is needed (or used) anywhere.
 
+## Running a slot on Warranted
+
+ReSchema is a Warranted domain (`reschema.domain:ReSchemaDomain`, Warranted
+pinned at v0.3.0). Warranted owns task state, the ledger, accounting, budgets,
+the duplicate guard, containment and memory; ReSchema owns the corpus, ground
+truth, canonicalisation, the `function-fuzz` and `program-replay` checkers,
+the `experiment`/`experiment_function` operations and the task specs. See
+`docs/proposals/m8-rebuild-on-warranted.md` (decisions D1–D3).
+
+```bash
+# tasks.write_campaign(id, tasks.slot_tasks(slot(...)), {"cfg": "run.toml"}, out)
+uv run warranted init PROJ --domain reschema.domain:ReSchemaDomain \
+    --allow model=N --allow tool=N --allow check=N --allow probe=N
+uv run warranted campaign run PROJ OUT/campaign.toml
+uv run warranted campaign report PROJ ID
+uv run python -m reschema.regrade PROJ [--run R] [--submission N]
+```
+
+The worker image is the toolchain image: the `Containerfile` copies
+`tools/worker/` (`experiment`, `experiment-function`, `submit`) onto PATH, so
+the worker, the checkers' jobs and the corpus build share one image ID
+(`toolchain.image_id()`, the domain's `worker_image`). Changing a helper means
+a new image tag. A project pins the domain identity (package sources, image,
+Warranted build): rebuilding the image or editing `src/reschema` needs a new
+project; `reschema.regrade` reads an old project's ledger directly.
+
 ## Conventions
 
 - **TDD, and negative tests are first-class.** Every acceptance path ships with
   the attack it must reject (hardcoding, overfit, wrong-spec flattery, event
-  splitting, void-register residue). A gate without its negative test is
-  unfinished.
+  splitting, void-register residue, forged job output). A gate without its
+  negative test is unfinished.
+- **Parity is pinned.** `tests/golden/m8_decisions.json` is the old gates'
+  recorded decisions; the checkers must reproduce every one (golden run).
 - **Canonicalize before diffing.** Address-shaped tokens → `ADDR_<n>` ordinals,
-  `argv[0]` → basename. Changing `exec/canonical.py` rules = corpus re-record
-  (see "rules v2" in its docstring; `CANONICALIZER_VERSION = "2.1"`).
-- **Structured rejects, never tracebacks**, at every agent-facing boundary:
-  `{accepted: False, reason?, divergence?, detail?}` — exact keys vary by
-  path (see ARCHITECTURE.md §"The rejection payload"); function-floor rejects
-  nest `detail` under `divergence`, they are not top-level. The engine is the
-  only logic owner; `mcp/server.py` is dispatch-only.
-- **Entropy policy:** production validation/sampling draws fresh per call
-  (`secrets.token_hex(16)`); tests pin explicit seeds. Fuzz budgets are
-  harness-controlled (`N_FUZZ` floor at the MCP boundary — the agent cannot
-  tune its own judge).
-- **Trust model is deliberate:** agent C is compiled and executed — level A
-  (qiling vs a fresh empty rootfs), level B (mandatory one-shot rootless podman
-  worker; podman is a hard dependency for all build/validate/test flows).
-  ALL compiles — corpus matrix and both levels' models — run inside the one
-  pinned toolchain image (`Containerfile`); host gcc is never used. See README "Trust model".
-- On-disk state under `.reschema/` (gitignored) is shared runtime state; tests
-  wipe what they own (see `tests/test_hidden.py` pattern). Single-process use
-  is assumed (engine module docstring). `RESCHEMA_HOME` overrides the state
+  `argv[0]` → basename. Changing `exec/canonical.py` rules = corpus rebuild
+  (see "rules v2" in its docstring; `CANONICALIZER_VERSION = "2.1"`), and the
+  version is in each task's `family.json`, so it marks old memory stale.
+- **Structured rejects, never tracebacks**, for anything the worker controls:
+  a checker returns `Verdict(REJECTED, {accepted: False, reason?, stage?,
+  divergence?, detail?})` (exact keys vary by checker, see ARCHITECTURE.md
+  §"The rejection payload"). Only a host-side fault (missing image, runner
+  failure) raises, which Warranted records as an infrastructure failure. Job
+  output is the model's claim: shape-check it, judge it on the host.
+- **Entropy policy:** checkers draw seeds only through `ctx.draw_seed()`
+  (fresh per check, recorded as check evidence); tests pin explicit seeds.
+  Fuzz and hidden budgets (`N_FUZZ`, `HIDDEN_N`) are checker constants, never
+  worker input.
+- **Trust model is deliberate (D1):** agent C is compiled and executed only in
+  Warranted jobs (no network, no mounts, read-only root); ground truth is
+  recorded on the host under qiling against a fresh empty rootfs. The corpus
+  build (`toolchain.run_build`) is the only bind-mounted container, and it
+  only ever sees ReSchema's own seed sources. See README "Trust model".
+- `.reschema/` (gitignored) holds the corpus; `RESCHEMA_HOME` overrides its
   root — set it for installed-layout runs, where the default would land
-  `.reschema/` under site-packages (engine.py `ROOT`).
-- `tools/dogfood/` is benchmark tooling (phase 2C), NOT shipped in the
-  `reschema` package; its tests live in `tests/dogfood2c/` and must stay
-  CI-safe (no LLM, no podman, no endpoint).
-
-## 2C smoke campaign (manual)
-
-```bash
-uv run python -m tools.dogfood.driver tools/dogfood/campaigns/smoke.toml \
-    --out results/smoke          # [--pool N]; needs an opencode binary, an
-                                 # endpoint (RESCHEMA_DOGFOOD_ENDPOINT), and
-                                 # .reschema/corpus (`uv run python -m
-                                 # reschema.corpus.generate` first)
-```
-
-Before trusting a run:
-- Keep `--out` INSIDE the repo: the slot's MCP server is `uv run` from the
-  sandbox under the results dir; an out-of-repo `--out` breaks launcher
-  discovery and masquerades as agent failure.
-- After the first smoke slot, read its transcript_tail: the 5 reschema tools
-  (corpus_build, task_open, experiment, submit_model, status) must be visible.
-- Review the report's abort classes BEFORE interpreting φ. Mid-slot endpoint
-  death POST-preflight surfaces as `aborted: agent-exit` / `aborted: timeout`
-  — an abort-class signature to recognize, not agent failure.
-- Housekeeping: a killed driver leaves `<out>/runs` staging roots and stray
-  `opencode` processes behind; both are restart-free — kill/delete them
-  freely between campaigns.
+  `.reschema/` under site-packages (`corpus/generate.py` `ROOT`).
 - Commits: short imperative subject; quality-review fix rounds use
   `fix: ... (quality findings)`. Work happens on feature branches; `main`
   requires PR + green `test` check.

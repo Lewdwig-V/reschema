@@ -1,6 +1,22 @@
+import json
 from pathlib import Path
 
-from reschema.driver.podrun import run_worker
+from warranted import PodmanJobs
+
+from reschema import toolchain
+from reschema.checks.function_fuzz import worker_job
+
+
+def run_worker(job: dict, workdir: Path) -> dict:
+    """The worker as production runs it: a validate round in a Warranted job
+    (flat files, no mounts, TMPDIR=/work), a corpus compile through the
+    toolchain build (trusted sources, binaries back through the mount)."""
+    if job["mode"] == "compile":
+        return toolchain.run_build(job, workdir)
+    r = worker_job(PodmanJobs().run, job)
+    assert r.returncode == 0 and not r.timed_out, r.stderr
+    return json.loads(r.stdout)
+
 
 SUM = r"""
 __attribute__((sysv_abi)) int sum_range(int lo, int hi) {

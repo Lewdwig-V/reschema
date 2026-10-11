@@ -26,9 +26,9 @@ import random
 import sys
 from collections import Counter
 
+from reschema.corpus.generate import load_manifest
 from reschema.driver.calling import batch_call_original, gen_inputs
 from reschema.driver.spec import Param
-from reschema.engine import load_manifest
 from reschema.validate.function import N_FUZZ
 from reschema.validate.scout import merge_scout_cases, scout_inputs, scrape_immediates
 

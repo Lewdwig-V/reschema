@@ -1,6 +1,6 @@
 """Build the synthetic corpus matrix; write manifest with function addresses.
 
-All compiles run inside the pinned toolchain image (driver/podrun), so corpus
+All compiles run inside the pinned toolchain image (reschema.toolchain), so corpus
 binaries carry identical toolchain/libc encodings on every machine — the
 darwin/CI/local gcc matrix is pinned, not ambient.
 
@@ -15,11 +15,12 @@ import json
 import os
 from pathlib import Path
 
+from .. import toolchain
 from ..disasm.analyze import symtab as _symtab  # tests patch gen._symtab
-from ..driver import podrun
 from ..exec.canonical import CANONICALIZER_VERSION
 
-# RESCHEMA_HOME: see engine.py (xdist per-worker isolation); default unchanged.
+# RESCHEMA_HOME overrides the state root (xdist gives each worker its own;
+# installed layouts must set it, the default lands under site-packages).
 ROOT = Path(os.environ.get("RESCHEMA_HOME", Path(__file__).resolve().parents[3]))
 SEEDS = Path(__file__).resolve().parent / "seeds"
 OUT_ROOT = ROOT / ".reschema" / "corpus"
@@ -100,7 +101,7 @@ def build(
                     plan.append((name, cc, opt, strip, slot, out / "prog"))
     if not plan:
         return []
-    r = podrun.run_worker({"mode": "compile", "jobs": jobs}, out_root, timeout=600)
+    r = toolchain.run_build({"mode": "compile", "jobs": jobs}, out_root)
     _check(r, "compile", "out")
 
     built = []
@@ -129,9 +130,7 @@ def build(
     # Stripping (binutils) happens inside the pinned image with everything else
     # binary — the ambient host toolchain is never in the corpus artifact path.
     if to_strip:
-        r = podrun.run_worker(
-            {"mode": "strip", "files": to_strip}, out_root, timeout=300
-        )
+        r = toolchain.run_build({"mode": "strip", "files": to_strip}, out_root, 300)
         _check(r, "strip", "file")
     mf_path = out_root / "manifest.json"
     # Unfiltered builds regenerate the manifest from the current plan (stale
@@ -150,10 +149,33 @@ def build(
             [manifest[k] for k in sorted(manifest, key=_slot_sort_key)], indent=2
         )
     )
-    # Machine-checkable canonicalizer stamp: engine refuses to load a corpus
+    # Machine-checkable canonicalizer stamp: load_manifest refuses a corpus
     # recorded under different sanitizer rules (rules change = corpus re-record).
     (out_root / "canonicalizer_version").write_text(CANONICALIZER_VERSION)
     return built
+
+
+def load_manifest(out_root: Path = OUT_ROOT) -> list[dict]:
+    """The built corpus's slots; refuses one recorded under another canonicalizer."""
+    sidecar = out_root / "canonicalizer_version"
+    stamped = sidecar.read_text() if sidecar.exists() else "(missing)"
+    if stamped != CANONICALIZER_VERSION:
+        raise RuntimeError(
+            f"corpus recorded under canonicalizer {stamped}, current "
+            f"{CANONICALIZER_VERSION}: rebuild it (`python -m reschema.corpus.generate`)"
+        )
+    return json.loads((out_root / "manifest.json").read_text())
+
+
+def slot(task_id: str) -> dict:
+    """One slot's manifest entry (binary, seed, functions, ...)."""
+    man = load_manifest()
+    for t in man:
+        if t["task_id"] == task_id:
+            return t
+    raise KeyError(
+        f"unknown task_id: {task_id}; available: {[t['task_id'] for t in man]}"
+    )
 
 
 if __name__ == "__main__":

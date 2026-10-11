@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 
 from reschema.corpus.generate import OUT_ROOT, build
-from reschema.driver.podrun import run_worker
 from reschema.exec.recorder import record
+from reschema.toolchain import run_build as run_worker
 
 
 def _compile_probe(workdir: Path, name: str, c_source: str) -> Path:
@@ -27,7 +27,7 @@ def _compile_probe(workdir: Path, name: str, c_source: str) -> Path:
         },
         workdir,
     )
-    assert r.get("results"), r  # infra failure surfaces the podrun stage detail
+    assert r.get("results"), r  # infra failure surfaces the container stage detail
     res = r["results"][0]
     assert res["rc"] == 0, res["stderr"]
     return workdir / name

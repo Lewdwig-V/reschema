@@ -9,8 +9,8 @@ import pytest
 from warranted import FEEDBACK_LIMIT, CheckContext, JobResult, PodmanJobs, VerdictStatus
 
 from reschema.checks.function_fuzz import FunctionFuzz
+from reschema.corpus.generate import slot
 from reschema.domain import ReSchemaDomain
-from reschema.engine import TaskStore
 
 SUM_PARAMS = [
     {"name": "lo", "kind": "i32", "range": [-20, 10]},
@@ -44,7 +44,7 @@ class Pinned(CheckContext):
 
 @pytest.fixture(scope="module")
 def sum_private(built_corpus):
-    meta = TaskStore("calc::gcc-O2-sym").meta
+    meta = slot("calc::gcc-O2-sym")
     f = meta["functions"]["sum_range"]
     fn = {"name": "sum_range", "addr": f["addr"], "size": f["size"]}
     with open(meta["binary"], "rb") as b:

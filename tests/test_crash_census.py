@@ -4,11 +4,11 @@ pointer-as-i32 artifact; correct types over a wide declared range DO fault
 (timeout), so faults are not purely a typing signal."""
 
 import pytest
+from conftest import validate_function
 
 from reschema.corpus.generate import FUNCS
 from reschema.driver.calling import batch_call_original
 from reschema.driver.spec import Param
-from reschema.validate.function import validate_function
 from tools.crash_census import REF, _mistyped, census
 
 # Stub tuned to scale_buf's mistyped survivors: the original leaves eax == 0

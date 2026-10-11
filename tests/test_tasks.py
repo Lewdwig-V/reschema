@@ -27,8 +27,8 @@ from warranted._ledger import Ledger, Result
 from warranted._worker import AttemptResult
 
 from reschema import operations, tasks
+from reschema.corpus.generate import slot as corpus_slot
 from reschema.domain import ReSchemaDomain
-from reschema.engine import TaskStore
 from reschema.exec import canonical
 from reschema.operations import Experiment, ExperimentFunction
 
@@ -149,7 +149,7 @@ def episode_files(proj, episode) -> dict[str, bytes]:
 
 @pytest.fixture(scope="module")
 def meta(built_corpus):
-    return TaskStore(SLOT).meta
+    return corpus_slot(SLOT)
 
 
 @pytest.fixture(scope="module")
@@ -296,7 +296,7 @@ def test_oversized_trace_is_capped_and_delivered_whole(monkeypatch):
         "files_written": {},
         "events": [{"phase": "enter", "sc": "write", "args": ["1"]}] * 5000,
     }
-    monkeypatch.setattr(operations, "_record_stable", lambda *a: big)
+    monkeypatch.setattr(operations, "record_stable", lambda *a: big)
     args = Experiment().parse({"argv": []})
     r = Experiment().execute(OperationContext({"binary": b""}), args)
     assert r.outcome is Outcome.SUCCEEDED and dict(r.usage) == {"probe": 1}
@@ -304,7 +304,7 @@ def test_oversized_trace_is_capped_and_delivered_whole(monkeypatch):
     assert r.shown["events_omitted"] == 5000
     assert json.loads(r.files["trace.json"]) == big
 
-    monkeypatch.setattr(operations, "_record_stable", lambda *a: None)
+    monkeypatch.setattr(operations, "record_stable", lambda *a: None)
     r = Experiment().execute(OperationContext({"binary": b""}), args)
     assert r.outcome is Outcome.FAILED and "flaky" in r.shown["error"]
 
@@ -481,7 +481,7 @@ BASE = "int main(void){ int t = 0; for (int i = 0; i < 10; i++) t += i; return t
 
 
 def test_guard_refuses_an_exact_repeat_before_any_check(tmp_path, meta):
-    # comments and whitespace are no change (engine._norm_source)
+    # comments and whitespace are no change (domain.norm_source)
     sources = [BASE, "/* again */ " + BASE.replace(" ", "  "), BASE + "\n// 3\n"]
     assert _decisions(tmp_path, meta, sources) == (
         ["rejected", "rejected", "duplicate"],

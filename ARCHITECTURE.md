@@ -6,402 +6,222 @@
 - [Life of a submission](#life-of-a-submission)
 - [The rejection payload](#the-rejection-payload)
 - [Components](#components)
-  - [mcp/server.py — 5 tools, dispatch only](#mcpserverpy--5-tools-dispatch-only)
-  - [engine.py — task state, gates, ledger](#enginepy--task-state-gates-ledger)
-  - [exec/recorder.py — ground-truth records](#execrecorderpy--ground-truth-records)
-  - [exec/canonical.py — canonicalize](#execcanonicalpy--canonicalize)
-  - [validate/program.py — program gate](#validateprogrampy--program-gate)
-  - [driver/ — marshaling, original calls, container boundary](#driver--marshaling-original-calls-container-boundary)
-  - [corpus/generate.py — 60-slot seed matrix](#corpusgeneratepy--60-slot-seed-matrix)
-  - [disasm/ — task_open facts](#disasm--task_open-facts)
-  - [memory.py — deduction cache](#memorypy--deduction-cache)
-  - [regrade.py — #112 re-grade job](#regradepy--112-re-grade-job)
-  - [tools/dogfood/ — 2C live-agent transfer driver](#toolsdogfood--2c-live-agent-transfer-driver)
 - [Key architectural decisions](#key-architectural-decisions)
 - [Decision records](#decision-records)
 - [Verification & maintenance](#verification--maintenance)
 
 ## Overview
 
-ReSchema is an MCP tool server (`src/reschema/`) that forces an LLM agent to
-hold executable C world-models of x86-64 static ELFs: ground truth is recorded
-by emulating binaries (qiling, in-process), and an agent's C candidate is
-validated against it at two levels — **program mode** (whole-binary canonical
-trace replay + 8 hidden fresh inputs per submission) and **function mode**
-(differential fuzzing over `{ret, mem}` against the original function).
-Rejections are always structured (`{accepted: false, ...}`), never tracebacks.
+ReSchema is a [Warranted](https://github.com/Lewdwig-V/warranted) domain
+(`reschema.domain:ReSchemaDomain`, Warranted pinned at v0.3.0) that makes an
+LLM agent hold executable C world-models of x86-64 static ELFs. Ground truth
+is recorded by emulating the corpus binaries (qiling, on the host), and the
+agent's C candidate is judged against it by two checkers: **program-replay**
+(whole-program canonical trace replay of the worker's nominated cases plus
+8 hidden fresh inputs per check) and **function-fuzz** (differential fuzzing
+over `{ret, mem}` against the original function). Rejections are always
+structured feedback, never tracebacks.
 
-The harness itself is adversarial-by-design: agent-authored C is compiled and
-executed. All compilation and all native execution happen **inside one-shot
-throwaway rootless podman containers** spawned from a pinned toolchain image
-(`Containerfile`, debian trixie + gcc + clang), and qiling emulation runs
-against **fresh empty rootfs** — host `gcc` is never invoked for agent or
-corpus code, and guest file operations can never reach the host filesystem.
+Warranted owns everything that is not reverse engineering: task state, the
+evidence ledger and accounting, budgets, the duplicate guard, the worker
+sandbox, contained checker jobs, and verified vs unverified memory. The port
+and its decisions (D1–D3) are in `docs/proposals/m8-rebuild-on-warranted.md`;
+the engine ledger, MCP server and live-agent driver it replaced were removed
+in M8 S7.
 
-State lives on disk under `.reschema/` (task dirs, family memory) with atomic
-temp-file+rename writes but **no coordination: single-process access is
-assumed** throughout (the engine module docstring carries the same warning).
-The state root is `RESCHEMA_HOME`-overridable (default: the repo for src-layout
-checkouts); the test suite uses it for per-worker isolation under pytest-xdist.
+The harness is adversarial by design: agent-authored C is compiled and
+executed only inside Warranted jobs from the pinned toolchain image
+(`Containerfile`, debian trixie + gcc + clang + pinned qiling), with no
+network, no host mounts and a read-only root. Qiling emulation of the
+originals runs against a **fresh empty rootfs**; host `gcc` is never invoked.
+
+ReSchema's own on-disk state is the corpus under `.reschema/corpus/`
+(`RESCHEMA_HOME`-overridable; the test suite uses it for per-worker
+isolation under pytest-xdist). Everything a run produces lives in the
+Warranted project.
 
 ## Terms
 
 Standard reverse-engineering vocabulary is assumed. These are the project's
-own words, used everywhere and defined nowhere else:
+own words:
 
 - **case** — one input run: an `(argv, stdin)` pair plus the trace it
-  produced, persisted per task as `trace_<label>.json`. The unit experiments
-  append and gates replay.
+  produced. A program candidate nominates its cases in `cases.json`; the
+  checker re-records each on the corpus binary (D3).
 - **record** — executing a binary under qiling and capturing its trace
   (`exec/recorder.record`).
 - **trace** — the JSON dict for one run: `argv`, `stdin_hex`,
   `stdout`/`stderr` (hex), `exit_code`, `files_written`, `events`.
 - **event** — one observed syscall in a trace: `{sc, phase, args, result?}`
   where `phase` is `enter` or `exit` (the recorder hooks both).
-- **probe** — one `experiment` call. Counted in the ledger's `probes` key and
-  priced in the efficiency metric. A function-mode probe is the cheap scout
-  round: exactly one emulated call against the original, one probe
-  accounted, no trace persisted.
+- **probe** — one `experiment` or `experiment_function` operation, charged
+  one `probe` unit by Warranted.
 - **slot** — one cell of the corpus build matrix, e.g. `gcc-O2-sym`
-  (compiler × optimization × symbols kept vs stripped). A `task_id` is
-  `{seed}::{slot}`.
-- **family** — all slots derived from one seed. The family is what the
-  deduction cache keys on (`{seed, function}`): a fact learned on
-  `gcc-O0-sym` travels to `gcc-O2-sym` of the same seed and nowhere else.
-- **TU** (translation unit) — one `.c` file compiled standalone. Composition
-  builds one TU per accepted function, then links them.
-- **write-family shape** — the syscall skeleton the program gate compares:
+  (compiler × optimization × symbols kept vs stripped). A slot ID is
+  `{seed}::{slot}`; its tasks are `{slot ID}::fn::<name>` and
+  `{slot ID}::program`.
+- **family** — all slots derived from one seed: the tasks' shared memory
+  scope. `family.json` (seed, seed source digest, function names,
+  canonicalizer version) is the memory dependency, so a change to any of
+  them marks earlier facts stale.
+- **write-family shape** — the syscall skeleton the program checker compares:
   `(sc, fd, byte count)` for `write`/`writev`/`exit_group`, with address
-  arguments wildcarded. Which bytes are written is already covered by the
-  stdout/files channels; the shape pins *how* they are written.
+  arguments wildcarded.
 - **canonicalize** — rewrite legitimately-divergent tokens before comparing
   traces (`ADDR_<n>`, `FD_<n>`, `PATH_<n>`, argv[0] → basename). Rules are
-  versioned (`2.1`); a rules change forces a corpus re-record.
-- **starvation**, **hidden-starvation** — a submission is rejected when fewer
-  than `HIDDEN_N=8` distinct usable hidden inputs can be drawn for it: a loud
-  failure instead of a vacuous pass.
+  versioned (`2.1`); a rules change forces a corpus rebuild.
+- **hidden-starvation** — a check is rejected when fewer than `HIDDEN_N=8`
+  distinct usable hidden inputs can be drawn: a loud failure instead of a
+  vacuous pass.
 - **event-split** — a model emitting output in different syscall-sized chunks
   than the original. Chunking is observable, so it diverges and rejects.
 - **dep_slice** — the fd-linked backward syscall chain attached to
-  event-divergence and files-mismatch rejects: the write-intent open pair
-  that produced the diverging fd, plus every write on it up to the
-  divergence, capped at 6 raw events.
+  event-divergence and files-mismatch rejects, capped at 6 raw events.
 - **poison-filled** — fuzz out-buffers pre-loaded with random bytes, so a
   no-op model leaves detectable garbage instead of matching a
   memory-preserving original.
 - **case budget** — the 5s wall-clock limit per fuzz case in the native
-  worker (one fork per case); the container timeout is sized from it.
-- **ledger** — a task's persistent JSON state: accepted entries,
-  submission/rejection counters, audit seeds, and the capped `recent`
-  journal. Alongside the family deduction cache, the only cross-run memory.
-- **verified_fact**, **unverified_hypothesis** — the two tiers of the family
-  deduction cache: harness-written ground truth on gate acceptance vs
-  agent-declared notes promoted only by the acceptance of their own
-  submission.
-- **dogfood** — the harness exercised end-to-end through its own MCP
-  interface (`tests/test_dogfood.py`).
+  worker (one fork per case); the job timeout is sized from it.
+- **check evidence** — what Warranted records for each check: the seeds the
+  checker drew (`seeds.json`), its jobs (`jobs.json`: image, argv, input
+  digests, limits, exit status) and their output, and the verdict.
 
 ## Component boundaries & data flow
 
 ```
-agent ──stdio MCP──> mcp/server (5 tools, dispatch-only)
-                        │
-                        ├─ engine.TaskStore          ledger/traces on disk
-                        │    ├─ exec.recorder.record()      qiling + empty rootfs
-                        │    ├─ exec.canonical.canonicalize rules v2 (v2.1)
-                        │    ├─ validate.program           replay gate (program)
-                        │    └─ validate.function          fuzz gate (function)
-                        │
-                        ├─ corpus.generate           60-slot seed matrix build
-                        ├─ driver.podrun.run_worker  one-shot podman containers
-                        │    └─ driver.native_worker validate/compile/compile-link modes
-                        └─ disasm.{slice, analyze}   capstone facts for task_open
+warranted CLI / Project ──> ReSchemaDomain (domain.py)
+   │ task specs (tasks.py)          checkers (checks/)          operations
+   │  inputs: task.md,               function-fuzz ─┐            experiment
+   │  family.json, disasm,           program-replay ┤            experiment_function
+   │  abi_template.c, ...            (host: qiling  │             (host: qiling on
+   │  private: binary, task.json     ground truth)  │              the private binary)
+   │                                                └─ ctx.run_job: the model,
+   │                                                   in the toolchain image
+   └─ worker sandbox (toolchain image + tools/worker: experiment, submit)
 
-tools/dogfood/ (benchmark tooling, NOT part of the package):
-   campaign (TOML) ──> driver.run_campaign ──> slot.run_slot ──> AgentRunner
-                        (pool, sequential primed chains, honest resume)
-                        └─ measure.render_report   φ + deltas + abort evidence
+corpus.generate ──> toolchain.run_build   60-slot seed matrix + manifest
+exec.{recorder, canonical}                qiling + empty rootfs; rules v2 (v2.1)
+validate.{program, function, scout}       hidden suite + compare; fuzz gate
+regrade                                   current checkers over recorded evidence
 ```
 
 ## Life of a submission
 
-Control flow across the tour sections below, as it actually happens.
+The worker writes `workspace/model.c` and its declaration, then runs
+`submit`, which packs them into `/work/result.json`. Warranted captures the
+candidate, applies the duplicate guard (`ReSchemaDomain.normalize`:
+comment/whitespace-stripped source plus the canonical declaration), then
+runs the task's checker in a `CheckContext`.
 
-### Program mode (`submit_model` without `function=`)
+### Program task (`program-replay`, decisions D1 and D3)
 
-1. `mcp/server.submit_model` dispatches to `engine.submit_program`. The ledger
-   `submissions` counter increments first — every outcome is accounted,
-   including compile failures.
-2. `validate/program.compile_model` hands the C source to
-   `driver/podrun.run_worker` (`compile` job): a one-shot container compiles
-   it `gcc -O1 -static -fno-pie -no-pie -g0`, binary at `model` in the task
-   dir. Missing podman/image fails loudly as a structured `compile` reject,
-   never a fallback to the host.
-3. **Recorded stage.** `replay_against(model, recorded_traces)`: per stored
-   case, the model is run under qiling against a fresh empty rootfs
-   (`exec/recorder.record`), the run is canonicalized, and the gate compares
-   — in order — stdout/stderr/exit_code (byte-exact), `files_written`
-   (paths+bytes exact), and the write-family event shape. The *first*
-   divergence wins and comes back as
-   `{accepted: false, reason, stage: "recorded", divergence}`.
-4. **Hidden stage.** 8 fresh inputs drawn with per-submission entropy
-   (`secrets.token_hex(16)`), deduplicated against recorded cases, each
-   ground-truth *double-recorded*. Same replay comparison, `stage: "hidden"`.
-   Too few distinct usable inputs → `hidden-starvation` reject.
-5. **Accept.** The ledger gets the idempotent `"program"` marker,
-   `audit.program` (`hidden_seed`; `recorded`, the accept-time recorded
-   cases as sorted `[argv[1:], stdin_hex, content digest]`; `binary`, the
-   corpus binary's content digest; `canonicalizer`, the rules version the
-   traces were recorded under; `toolchain`, the toolchain image ID, read
-   before the gate and kept only if unchanged at accept, else null), and a journal entry; `memory.append_fact`
-   writes the accepted source as a `verified_fact` (`fn: "__main__"`) other
-   slots of the family will see at their `task_open`.
-6. **Reject.** Counters + journal update; any agent `notes` land as
-   unpromoted `unverified_hypothesis` entries. One submission teaches the
-   family nothing verified.
+1. The candidate is `model.c` plus `cases.json`: at most 16 nominated cases
+   `{argv, stdin_hex}`. A malformed candidate is a `candidate`/`cases`
+   reject before anything runs.
+2. **Ground truth on the host.** Each nominated case is double-recorded on
+   the private corpus binary (a flaky case rejects as `flaky-case`, the
+   input's fault). The hidden suite is drawn from `ctx.draw_seed()` (fresh
+   per check, recorded as check evidence): `HIDDEN_N` distinct inputs,
+   deduplicated against the nominated ones, each double-recorded; crashing
+   or flaky draws are redrawn.
+3. **The model in one job.** The job receives only the model source, the
+   recorder, the canonicaliser and the case INPUTS. It compiles the model
+   `gcc -O1 -static -fno-pie -no-pie -g0` and replays every case under
+   qiling, printing canonical traces. Ground truth never enters the job, so
+   its output is the model's claim, shape-checked on the host.
+4. **Recorded stage**, then **hidden stage**: `validate.program.compare`
+   checks per case, in order, stdout/stderr/exit_code (byte-exact),
+   `files_written` (paths and bytes) and the write-family event shape. The
+   first divergence wins. Too few hidden inputs is `hidden-starvation`.
+5. **Accept**: the fact `{fn: "__main__", c_source}` (or its digest when too
+   large) becomes verified memory for the family.
 
-### Function mode (`submit_model(function=f)`)
+### Function task (`function-fuzz`, decision D2)
 
-1. Dispatch to `engine.submit_function`. The agent-declared param spec is
-   parsed first; a malformed spec JSON is a counted reject here, at top level:
-   `{accepted: false, reason: "spec", detail}`.
-2. Spec floors live inside the validator: more than 6 register args rejects
-   (stage `arity`); `ret: "void"` without at least one memory-channel param
-   (`buffer_i32`/`cstring`) rejects (stage `spec`) — a scalar-only void would
-   compare `{} == {}` and a no-op would pass. Floor rejects nest inside the
-   divergence slot: `{accepted: false, divergence: {stage, detail}}`.
-3. `validate/function.validate_function` draws the fuzz seed (fresh entropy
-   per call; `submit_model` exposes no seed, so the agent cannot pin
-   its own draw — tests pin it via `mcp/server.TEST_PINNED_SEED`, internal
-   callers via `seed=`) and builds `n_fuzz` cases (`N_FUZZ=64`, floored at
-   the MCP boundary — the agent cannot tune its own judge down; capped at
-   4×). Poison-filled out buffers included.
-4. Ground truth per case: `driver/calling.batch_call_original` runs the round's
-   cases through the original function under ONE qiling VM, restoring a pristine
-   post-init snapshot (registers + memory) before every case — pinned
-   byte-identical by the batch-vs-fresh equivalence test
-   to fresh VMs (tests/test_driver.py equivalence guard). The snapshot contract
-   is pinned for syscall-free kernels only: it spans registers+memory, never
-   rootfs contents, OS/fd objects, or post-save mapped regions. The structural
-   guard is a direct syscall scan at batch entry: the function's
-   symtab-bounded .text slice is checked for `syscall`/`sysenter` opcodes, and
-   any hit — or an unboundable slice (stripped/zero-size symbol) — reroutes
-   the round to per-case fresh VMs. Each trace records its route in
-   `batch_mode` (`"batched-snapshot"` vs `"fresh-vm-fallback"`), and the
-   syscalling-witness test pins fallback routing + result identity.
-   This scan does not follow callees: shared-VM execution remains for known
-   syscall-free kernels, including their callees.
-   Optional `hook_scope(ql)` instrumentation owns one VM attachment and yields
-   a reset callback. Snapshot order is save → attach once → (restore → reset →
-   run) per case → detach in `finally`. Hooks and Python recorder state are
-   outside the snapshot. Fresh-VM fallback attaches/resets/detaches for each
-   VM instead of silently skipping instrumentation. Empty batches attach
-   nothing. Setup must not modify guest state; scopes release only their own
-   handles and surface instrumentation errors, including callback errors that
-   the guest-fault conversion might otherwise hide. The coverage spike resets
-   previous-block history per case, retains bitmap/hits per batch, and creates
-   fresh totals per timed trial. It checks all trial payloads for equality and
-   labels the collision-prone bitmap as occupied edge bins.
-   Cases where the *original* faults are skipped — a crash is not a behavior
-   spec.
-5. The model is compiled and executed in ONE worker round trip (`validate`
-   job): `gcc -O1 -shared -fPIC` in the container, RTLD_NOW load + symbol
-   presence check, then fork-per-case ctypes calls under the 5s case budget.
-   A model segfault/hang surfaces as a per-case `crash` result (first crash
-   stops the round), never a wedged harness. Comparison is `{ret, mem}` only
-   — level-B never compares syscalls (scope guardrail).
+1. The candidate is `model.c` plus `params.json` (the declared parameter
+   list). A malformed declaration is a `spec` reject.
+2. `validate/function.validate_function` applies the spec floors (more than
+   6 register args: stage `arity`; `ret: "void"` with no memory-channel
+   param: stage `spec`), draws the fuzz cases from `ctx.draw_seed()`
+   (`N_FUZZ=64`, uniform plus the static-immediates scout slice,
+   poison-filled out buffers) and records ground truth with
+   `driver/calling.batch_call_original` under qiling on the host. Original
+   timeouts are skipped; an original memory fault on a declared case is a
+   `spec` reject; total skipping is `skip-starvation`; fewer than 2
+   distinct inputs is a `spec` reject.
+3. The model is compiled and called in ONE job
+   (`checks/function_fuzz.worker_job`): `native_worker.py` and `spec.py` as
+   flat files, `TMPDIR=/work` (the job's `/tmp` is noexec), `gcc -O1 -shared
+   -fPIC`, RTLD_NOW load and symbol check, then fork-per-case ctypes calls
+   under the 5s case budget. A crash or hang is a per-case `crash` result.
+   The job's output is the model's claim: a malformed or short result list
+   is a `worker` reject, and any stage it reports is a reject, never an
+   infrastructure failure.
+4. Per case, `{ret, mem}` is compared on the host (`ret` skipped for void
+   specs). The first mismatch rejects with `{input, field, expected,
+   actual, seed}`.
+5. **Accept**: the fact `{function, params, source}` (or digests) becomes
+   verified memory, which the family's later tasks, the program task
+   included, see in `memory.json`.
 
 Note the deliberate substrate asymmetry: the *original* always executes under
-emulation (fidelity), while the *model* `.so` always executes native inside
-the container (containment for untrusted code). They never share a substrate.
-6. Per case, `{ret, mem}` is compared (`ret` skipped for void specs — eax is
-   register residue; mem is their channel). First mismatch rejects with
-   `{input, field, expected, actual, seed}`.
-7. Accept: newest source wins in the ledger (`{func: c_source}`, moved to the
-   end on re-accept so list order is accept recency), audit keeps
-   `{seed, n_fuzz, compared, skipped, params, binary, toolchain}`, and a `verified_fact`
-   (params, source, topology digest) is appended to the family cache.
-
-### Composition (`engine.compose`, deliberately not an MCP tool)
-
-Each accepted source is compiled as its own TU and linked with a generated
-`main` stub via the worker's `compile-link` mode. A duplicate
-externally-visible symbol across TUs fails at the linker and maps to a
-structured "declare helpers `static`" reject — that is the linkage contract
-the `abi_template` preaches.
+emulation (fidelity), while the *model* `.so` always executes natively inside
+a job (containment for untrusted code).
 
 ## The rejection payload
 
-Every agent-facing verdict is a typed dict. There are three shapes:
+A checker's verdict feedback is what the worker sees, capped under
+Warranted's `FEEDBACK_LIMIT` (divergence payloads are shrunk to fit).
 
-**Accepts:**
-
-- program: `{accepted: true, recorded_cases, hidden_cases, hidden_seed,
-  task_complete: true}`.
-- function: `{accepted: true, compared, skipped, seed, task_complete, note?}`
-  — `task_complete` is read live from the ledger (`"program"` in `accepted`),
-  and when False the payload attaches `TASK_INCOMPLETE_NOTE` naming the
-  completion criterion (#103; constant, truth-only, snapshot-pinned). Function
-  acceptance without program acceptance is a building block, never task
-  completion — this framing exists because the first live floors lost nearly
-  half their `agent-exit` slots to models stopping at a function accept.
-
-**Gate rejects:** `{accepted: false, ...}`
-
-- Behavior divergences (program gate): reasons `io-mismatch`,
-  `files-mismatch`, `event-divergence`, `event-length` — carry
-  `stage: recorded|hidden` and a `divergence` payload describing the FIRST
-  divergence (decoded previews for io, hex elsewhere, plus a `dep_slice`
-  fd-chain for event/files divergences).
-- Behavior divergences (function gate): `{accepted: false, divergence:
-  {input, field, expected, actual, seed}}` with `field` in `ret|mem|crash`.
-- **Flail guard (`duplicate`, #95, both submit paths):** a candidate whose
-  comment/whitespace-stripped source fingerprint has looped too often on this
-  task is refused pre-gate as top-level `{accepted: false, reason:
-  "duplicate", detail}` (the detail names the match count and edit mass).
-  Two bands, because text alone cannot tell verbatim churn from the
-  legitimate minimal repair: EXACT normalized duplicates are refused from the
-  3rd submission of the shape (`DUP_MIN_REJECTS`); small EDITED variants
-  (edit mass ≤ max(24 chars, 6% of length)) get one extra repair attempt's
-  runway, refused from the 4th (`DUP_MIN_NEAR_REJECTS`) — a one-char fix
-  discovered after two flailed attempts always reaches the gate. Fingerprints
-  live in the task ledger's `rejected_norm` (string-literal-aware
-  normalization, capped at 8). Loop-killer, not paraphrase-blocker; verdicts
-  without a CODE judgment are never fingerprinted (the malformed-spec early
-  return, plus validator stages `spec`/`arity`/`skip-starvation`/`infra` —
-  a declaration failure, not a source verdict); guard
-  refusals count as submissions/rejections (E still prices the flail; the
-  guard saves the compile/fuzz wall-clock and endpoint tokens).
-- Mechanical rejects carry a human-readable `detail`, but its nesting depends
-  on the path: program-gate mechanical rejects (`compile`,
-  `hidden-starvation`, `duplicate`) return top-level `{accepted: false, reason, detail}`;
-  function-gate floor verdicts from the validator (arity, void-without-
-  memory-channel, no-input-variation spec, memory-fault skip floor,
-  skip-starvation, infra) nest it as
-  `{accepted: false, divergence: {stage, detail}}` (skip-starvation, the
-  memory-fault floor and no-input-variation also carry the fuzz `seed`); a malformed spec JSON fails before validation as top-level
-  `{accepted: false, reason: "spec", detail}`. Clients should read the reason
-  from `divergence.stage` first and fall back to top-level `reason`.
-
-**Tool-boundary errors (not verdicts):** `{error: not_found|spec|internal,
-detail}` — unknown task/function, malformed params crossing the wire, or
-harness faults (corrupt ledger, missing image). The `internal` detail names
-the exception class; it is a structured report, not a traceback page.
-
-**Optional rejection coaching (#127):** the host can set
-`RESCHEMA_CONTINUATION_FEEDBACK=rejection-once-v1` to attach
-`continuation_feedback` on the first repairable rejection while the program
-task is unfinished. Default/unrecognized settings are off; the MCP tool
-schema and baseline payloads are unchanged. The engine references only the
-current response's `detail`/`divergence` and previously accepted function
-names, explicitly scoped to those earlier models. It reuses `repair_directive`
-and labels all feedback as procedural coaching, never a `verified_fact`.
-No hidden progress, extra cases, resource estimates, or new seeds are exposed.
-
-A `continuation_feedback` version marker is saved with the existing rejection
-ledger write. It survives task reopens and journal eviction, applies across
-both submission modes, and disappears only with task-state reset. Compile,
-link, symbol, spec, arity, duplicate and behavior rejections are eligible;
-infra, starvation, unknown stages, accepts and completed tasks are not.
-Budget owners may supply `RESCHEMA_FEEDBACK_DEADLINE` (Unix seconds) and
-`RESCHEMA_FEEDBACK_PROBE_CEILING` (the existing guard's inclusive ceiling).
-Reached deadlines, exceeded ceilings, or malformed limits suppress coaching
-without changing verdicts or guards. No remaining-budget counts are shown.
-Feedback text, reused repair policy, and cadence are snapshot-pinned; changes
-require a new treatment revision. Delivery is once per task, not a runner
-restart or continuation policy (#128).
+- **Accepts:** program `{accepted: true, recorded_cases, hidden_cases}`;
+  function `{accepted: true, compared, skipped}`.
+- **Program rejects:** `{accepted: false, reason, stage, ...}` with `reason`
+  one of `io-mismatch`, `files-mismatch`, `event-divergence`, `event-length`
+  (`stage: recorded|hidden`, with a `divergence` describing the FIRST
+  divergence: decoded previews for io, hex elsewhere, plus a `dep_slice` for
+  event/files divergences), `compile` (with the compiler's `detail`),
+  `hidden-starvation`, `flaky-case`, `candidate`/`cases` (malformed
+  candidate), `replay-fault`/`replay-timeout`/`replay-output` (the job).
+- **Function rejects:** `{accepted: false, reason: "spec", detail}` for a
+  malformed candidate or declaration; otherwise `{accepted: false,
+  divergence}` where `divergence` is either a behavior divergence `{input,
+  field, expected, actual, seed}` (`field` in `ret|mem|crash`) or a floor
+  verdict `{stage, detail}` (`arity`, `spec`, `skip-starvation`, `compile`,
+  `link`, `symbol`, `worker`). Clients read `divergence.stage` first and
+  fall back to top-level `reason`.
+- **Duplicates** are Warranted's: a candidate the guard refuses is decided
+  `duplicate` without a check, and still uses a submission.
+- **Host faults** (missing image, job runner failure) raise; Warranted
+  records the check as an infrastructure failure, never a verdict.
 
 ## Components
 
-### mcp/server.py — 5 tools, dispatch only
+### domain.py, tasks.py, operations.py — the Warranted surface
 
-`corpus_build(seed_ids?, matrix?)`, `task_open`, `experiment`, `submit_model`,
-`status`. No business logic; errors are mapped to `{error: not_found|spec|internal}`
-dicts. A contract test pins the term coverage of every tool description.
-`experiment` on a function task deliberately skips case persistence: one
-emulated call against the original, one ledger probe, no `trace_*.json` —
-the cheap scout round before an agent commits recorded cases.
+- **ReSchemaDomain**: `checkers` (`function-fuzz`, `program-replay`),
+  `operations` (`experiment`, `experiment_function`), `sources` (the whole
+  `reschema` package, so any change is a new domain identity), `normalize`
+  (the duplicate guard's fingerprint), `worker_image` (the toolchain image
+  ID).
+- **tasks.py**: `function_task`/`program_task`/`slot_tasks` build the
+  `TaskSpec`s for a slot (function tasks before the program task, one memory
+  scope per seed, `DuplicateGuard(exact_repeats=2, near_repeats=3,
+  near_edit_floor=24, near_edit_percent=6, window=8)`); `task_md` renders the
+  worker's instructions from the checkers' own limits; `write_campaign`
+  writes the TOML files `warranted campaign run` reads.
+- **operations.py**: `experiment` records the private binary on
+  worker-chosen argv/stdin (double-recorded, canonical trace shown, large
+  traces delivered as a file); `experiment_function` calls the task's
+  function (target from the private `task.json`, never the worker) once on
+  a worker-chosen case. One `probe` each. Experiments are hints: no checker
+  reads them (D3).
 
-### engine.py — task state, gates, ledger
+### checks/ — the two checkers
 
-`TaskStore` persists per-task state under `.reschema/tasks/<task_id>/`:
-canonical case traces (`trace_<label>.json`) and `ledger.json`
-(accepted entries [markers and `{func: source}` dicts], the immutable
-`program_source` body of the newest accepted program model,
-submissions/rejections counters, `audit` seeds, a
-capped `recent` submission journal, the `rejected_norm` flail-guard
-fingerprints — see the rejection payload's `duplicate` entry — and
-`rejected_sources`: the RAW c_source of each code-verdict reject with mode/
-function/stage (plus the declared `params` on function entries, so the
-supply re-verifies from `{task_id, function, params, c_source}` alone),
-capped at 16 newest. That store is the phase-3 self-play
-failure supply (#111 prerequisite): all rejects at the flail guard's
-fingerprinting sites, never outcomes without judgment — declaration
-failures (spec no-verdict stages, function path), transient infra compile
-failures, or hidden input-starvation (program path's
-`PROGRAM_NO_VERDICT_STAGES` mirror; the journal's `stage` still names
-them honestly).
-
-**Concurrency: single-process (or out-of-band serialized) access is
-assumed.** Ledger writes are atomic per file (temp + `os.replace`) but
-uncoordinated across processes; run two servers against one `.reschema/`
-tree at your own risk. This constraint exists because the alternative —
-file locking across MCP stdio servers — buys correctness nobody is
-exercising yet.
-
-- **submit_program** compiles the candidate, replays recorded traces, then
-  replays 8 freshly drawn hidden inputs (`HIDDEN_N`, fresh entropy per
-  submission, double-recorded ground truth), and returns rich accepts
-  (`recorded_cases`, `hidden_cases`, `hidden_seed`) or structured rejects with
-  an ordered reason (`io-mismatch`, `files-mismatch`, `event-divergence`,
-  `event-length`, `hidden-starvation`, `compile`). All outcomes update the
-  ledger (counters, accept marker idempotent, journal, `audit.program`).
-- **submit_function** compiles and differential-fuzzes via the worker; the
-  tool boundary floors `n_fuzz` at `N_FUZZ=64`; a void spec with no
-  memory-channel param is rejected up front; the draw itself is uniform +
-  a **static-immediates scout slice** (validate/scout.py, #109-A): seeds
-  carved fresh from the original's own `.text` per round (cmp/test/sub/add/imul
-  immediates reinterpreted per Param kind, including beyond declared ranges),
-  capped at min(16, n_fuzz/4) — the binary is the pheromone: no cross-
-  submission memory, no entropy-policy violation, and wrong-branch stubs on
-  sparse cmp sites provably die (tests/test_scout.py). Accepts carry
-  `compared/skipped/seed` and write
-  `audit[func] = {seed, n_fuzz, compared, skipped, params, binary, toolchain}`.
-- **compose** links awaited sources per-TU through the worker's
-  `compile-link` mode; duplicate externally-visible symbols map to a
-  structured "declare helpers static" reject. Not exposed as an MCP tool.
-- **status_snapshot** computes readiness (recorded cases vs the hidden-gate
-  minimum), coverage (accepted/total manifest functions), the `recent`
-  journal, and the cost-shaped `efficiency` metric
-  (`E = accepted * exp(-(0.15*(probes-1) + 0.4*(submissions-1)))`, probe and
-  submission counts only — wall-clock noise is deliberately excluded) from
-  ledger/manifest only. The 0.15/0.40 constants are **provisional** chosen
-  values, not measured ones — see `docs/benchmark-protocol.md` for the state
-  of their justification. Probe accounting lives on both experiment paths
-  (program-path records and function-path cases), stored as a lazy
-  `probes` ledger key.
-- **_abi_template** renders a compile-ready function-mode header from the
-  driver's own constants (`KINDS` + `Param` defaults, so the docs can't drift
-  from the schema): the `RESCHEMA_FN` macro (`__attribute__((sysv_abi,
-  noinline))` — SysV lowering is an attribute, not a flag), the param-spec
-  JSON sketch, the sketched signature, and the compose rule (single-function
-  helpers must be `static`).
-- **open_function_task** assembles the function-mode `task_open` payload:
-  disasm slice, capstone facts + labeled signature guess, known callees,
-  `abi_template`, family memory plus its presentation tier
-  (`memory_provenance`, `ready_to_submit` — see memory.py) — and
-  **repair_directive** when the task
-  ledger's journal shows rejection history (research slot 2B-5): two-pass
-  coaching answering rejections FIRST with abstract bit-logic repair
-  (fixed-width ints, exact byte behavior, no idiomatic attempts), idiomatic
-  annotation only after acceptance. It is provenance-tagged as coaching
-  derived from the rejection history, never a verified fact.
-- **_topology_digest** fingerprints an accepted function by name-independent
-  call shape — callee count, per-child chain depths, own call depth, arity
-  hint (names deliberately excluded: a symbol-less slot renames them all,
-  the shape survives) — recorded on each function-mode `verified_fact`
-  (docs/roadmap.md research slot). Write-side only today; matching stripped
-  slots' `fn_0x…` back to family names by shape is the intended consumer.
+`program_replay.ProgramReplay` and `function_fuzz.FunctionFuzz`, as in
+[Life of a submission](#life-of-a-submission). `checks.candidate_files`
+reads the candidate either as files or from the `submit` helper's
+`result.json`; a name given both ways is malformed.
 
 ### exec/recorder.py — ground-truth records
 
@@ -412,7 +232,7 @@ ENTER+EXIT, and returns
 files_written, events}`. `files_written` is a post-run scrape of the rootfs
 (real fs semantics for truncate/rename/append); crashes/timeouts produce
 `exit_code: -1` plus a trailing fault event. Ground truth is always
-double-recorded (`_record_stable`) before storage.
+double-recorded (`validate.program.record_stable`).
 
 ### exec/canonical.py — canonicalize (`CANONICALIZER_VERSION = "2.1"`)
 
@@ -448,19 +268,20 @@ Note what does *not* change: the open's exit `result` keeps its literal
 stays an ABI literal, and small literals like `0xe` (14 bytes) are untouched.
 
 The corpus manifest directory carries a `canonicalizer_version`
-sidecar; `engine.load_manifest` hard-refuses a version mismatch with a
-rebuild hint.
+sidecar; `corpus.generate.load_manifest` hard-refuses a version mismatch
+with a rebuild hint. The version is also in every task's `family.json`, so
+a rules change marks the family's memory stale.
 
-### validate/program.py — program gate
+### validate/program.py — program gate (host side)
 
-`compile_model` compiles through the worker's `compile` mode.
-`replay_against(model, traces)` compares per case: `stdout`/`stderr`/
-`exit_code` byte-exact (with latin-1 decoded previews in divergences),
-`files_written` map byte-exact, and the observable event channel `OBS =
-("write", "writev", "exit_group")` with `ADDR_*` wildcards on address ordinals
-(event fd/count shape is significant; chunking is observable). Reason order:
-io-mismatch → files-mismatch → event-divergence/event-length; divergence on
-the first mismatch only.
+`record_stable` double-records ground truth; `hidden_suite` draws and
+records the hidden cases; `compare(traces, got)` compares per case:
+`stdout`/`stderr`/`exit_code` byte-exact (with latin-1 decoded previews in
+divergences), `files_written` map byte-exact, and the observable event
+channel `OBS = ("write", "writev", "exit_group")` with `ADDR_*` wildcards on
+address ordinals (event fd/count shape is significant; chunking is
+observable). Reason order: io-mismatch → files-mismatch →
+event-divergence/event-length; divergence on the first mismatch only.
 `hidden_input_stream` yields text charset draws by mode and `stdin-bytes`
 draws (random bytes with a guaranteed NUL and ≥0x80 byte) for binary-safe
 seeds; `INPUT_MODE` selects the mode per seed. Seeds with
@@ -471,7 +292,7 @@ draws overclaim the final payload without adding bytes to satisfy the claim.
 Without grammar-aware draws, valid magic is rare and an always-`"bad magic"`
 stub can pass. The hidden suite is finite random sampling, not guaranteed
 path coverage or proof of equivalence (codex P1 on #125; the regression
-attack lives in tests/test_hidden.py).
+attack is the golden fixture's `pkfmt-o2-always-bad-magic`).
 
 Event-divergence and files-mismatch payloads carry a `dep_slice`
 ([Terms](#terms)): the validator searches backward from the focus event for
@@ -481,42 +302,40 @@ write-intent one), then collects every write/writev on that fd up to and
 including the focus, capped at 6 events. io-mismatch delivers no slice — the
 decoded stdout previews already localize those.
 
-### driver/ — marshaling, original calls, container boundary
+### driver/ — marshaling, original calls, the native worker
 
-- **spec.py**: `Param` (kinds `i32`/`buffer_i32`/`cstring`,
-  length_param, range default `(-100,100)`, `ret` carried on `params[0]`) with
+- **spec.py**: `Param` (kinds `i32`/`buffer_i32`/`cstring`, length_param,
+  range default `(-100,100)`, `ret` carried on `params[0]`) with
   `from_json`/`to_json`.
 - **calling.py**: `call_original(binary, addr, params, case)` executes the
   original function under qiling (scratch rootfs; `SENTINEL` return trap;
   register args in SysV order; memory readback for `buffer_i32`/`cstring`;
-  timeout/fault → `exit_code: -1` convention). `batch_call_original(..., cases)`
-  is the same trace for a whole case list on one VM (`ql.save`/`ql.restore`
-  per case; shared `_run_case` marshaling) — unless the symtab-bounded
-  syscall scan finds a `syscall`/`sysenter` opcode (or no bound exists),
-  in which case it falls back to per-case fresh VMs; each trace's
-  `batch_mode` names the route. `gen_inputs` produces fuzz
-  cases (poison-filled out buffers).
-- **podrun.py**: `ensure_image()` (hard refusal with the build command when
-  podman/image is absent) + `run_worker(job, workdir)`: one-shot rootless
-  container with `--network none --read-only --tmpfs /tmp:rw,size=64m
-  --memory 1g --pids-limit 128`, repo `src` mounted read-only, and `workdir`
-  mounted rw with a hard contract: its contents are fully readable by
-  agent-authored C, so callers compiling/executing agent sources pass a
-  per-round scratch dir holding ONLY the model source — the task dir
-  (traces, ledger, accepted entries) never enters the mount. Timeout is
-  sized from the case budget.
-- **native_worker.py** (pure stdlib, runs inside the container): `validate`
-  (compile `gcc -O1 -shared -fPIC`, RTLD_NOW symbol check, fork-per-case
-  ctypes calls with a 5s budget → per-case crash results instead of harness
-  death, stop after the first crash), `compile-link` (compose), `compile`
-  (batched corpus/model compile jobs), `strip` (binutils is image-pinned).
+  timeout/fault → `exit_code: -1` convention). `batch_call_original(...,
+  cases)` runs a whole case list on one VM (`ql.save`/`ql.restore` per case)
+  unless the symtab-bounded syscall scan finds a `syscall`/`sysenter` opcode
+  (or no bound exists), in which case it falls back to per-case fresh VMs;
+  each trace's `batch_mode` names the route. The snapshot contract and the
+  `hook_scope` lifecycle are pinned in `tests/test_driver.py`. `gen_inputs`
+  produces fuzz cases (poison-filled out buffers).
+- **native_worker.py** (pure stdlib, runs inside the image): `validate`
+  (the function checker's job), `compile` and `strip` (the corpus build),
+  `compile-link`.
+
+### toolchain.py — the pinned image
+
+`image_id()` resolves `localhost/reschema-toolchain:1` to its image ID, which
+pins every checker job and the worker sandbox (Warranted records it per job
+in `jobs.json`). `run_build(job, workdir)` is the corpus build's one-shot
+container: `--network none --read-only`, `src` mounted read-only, `workdir`
+mounted rw so the binaries come back. Only ReSchema's own seed sources ever
+go through it.
 
 ### corpus/generate.py — 60-slot seed matrix
 
 Five seeds (`rot13`, `check`, `calc`, `filewrite`, `pkfmt`) × gcc/clang ×
-O0/O1/O2 × sym/stripped = 60 slots. All compiles run via worker `compile` jobs
-inside the
-image, and stripped variants are finalized with `strip -s` executed in the
+O0/O1/O2 × sym/stripped = 60 slots. All compiles run via the worker's `compile` mode
+(`toolchain.run_build`, the one bind-mounted container: trusted seed
+sources only) inside the image, and stripped variants are finalized with `strip -s` executed in the
 same image (binutils is image-pinned; no host binary tools are invoked in the
 corpus artifact path — host-side symtab reads happen before stripping, so
 manifest addresses are captured pre-strip). The manifest (`task_id`, binary,
@@ -546,7 +365,7 @@ the driver's opcode screen does not follow callees, and stripped functions
 still take the fresh-VM fallback. Byte-buffer Param support and new coverage
 and timing measurements remain follow-ups.
 
-### disasm/ — task_open facts
+### disasm/ — function task facts
 
 `analyze.function_insns` is the single loader (elftools + capstone detail).
 `analyze.analyze_function(binary, functions)` returns per-function
@@ -562,185 +381,64 @@ ret-terminated block or a leading accumulator-init; `callees` resolve direct
 `call rel32` targets against manifest addresses. Validated against the full
 corpus matrix by test; labeled a guess in payload.
 
-### memory.py — deduction cache
+### regrade.py — re-grade recorded checks
 
-Per-family deduction cache at `.reschema/memory/<seed>.jsonl` (temp file +
-atomic replace, single-process like the task ledger). Two tiers (see
-[Terms](#terms)): `verified_fact` written only by the harness on gate
-acceptance (function mode: `{fn, params, c_source, n_fuzz, audit_seed,
-topology}`; program mode: `fn: "__main__"`), and `unverified_hypothesis`
-agent notes via `submit_model(notes=[...])`, promoted only if the annotated
-submission itself is accepted. `task_open` injects family-matched entries
-(`{seed, function}` or `__main__`) with their tier tags; the hidden gate's
-strictness is unchanged — memory accelerates pathfinding only.
+`uv run python -m reschema.regrade PROJECT [--run R] [--submission N]`
+re-runs the CURRENT checker of each completed check in a Warranted project
+over what that check saw: the candidate files, the task's worker-visible and
+private files and the recorded seeds, replayed in order. One JSON line per
+check (`run, submission, check, recorded, regraded, holds,
+checker_version`, `feedback` on a flip); totals to stderr. Read-only.
 
-**Presentation tier (#92/#93, config B):** additive framing over the raw
-`memory` list, owned by `memory.present()`. On a non-empty cache,
-`memory_provenance` carries a constant natural-language sentence
-(harness-verified, not agent-claimed); when the cache holds a
-`verified_fact`, `ready_to_submit` distills the NEWEST fact into an action
-card (`c_source`, `fn`, `verified_on`, static `note`, plus `params` for
-function-mode facts). Card content is sourced exclusively from
-`verified_fact` entries — agent notes (promoted or not) never reach it
-(negative-tested); cache keying and gate strictness are untouched.
-
-The cache's cost effect is wired into CI by the reference benchmark
-(`tests/test_transfer_protocol.py`): when the cache carries a verified
-source, later family slots accept with zero probes (trajectory
-`[exp(-0.75), 1.0, 1.0]` vs the flat unprimed baseline). That trajectory is
-an instrumentation tautology check — it demonstrates the plumbing, not
-transfer in a live agent; a live-agent measurement is still pending (see
-`docs/benchmark-protocol.md`).
-
-### regrade.py — #112 re-grade job
-
-`uv run python -m reschema.regrade [--k K] [--fresh] [--task ID ...]`
-re-judges ledger accepts under the CURRENT verifier and prints one
-verdict-diff JSON line per accept, stamped with the canonicalizer version:
-`task_id, unit, old_verdict, new_verdict, source_hash, seed,
-binary_verified, toolchain_verified` plus `compared/skipped` (function), `fresh` (program),
-`divergence` (reject) or `reason` (unreplayable). Totals go to stderr.
-Measurement only: it writes no ledger or memory state, and a flip is data
-for 3B adjudication, not a verdict on the old judge.
-
-- Order: accepts carry no timestamps, so "last K" is tasks by ledger mtime,
-  then entries newest first within a task. A function re-accept moves to
-  the end of `accepted` (since #144; older ledgers kept it in place).
-- Function accepts replay `validate_function` with the audit seed and
-  `n_fuzz`, so a flip isolates the judge change from the draw. Params come
-  from `audit[func]["params"]` or, for pre-#143 entries, the
-  `verified_fact` with the same task, source and audit seed. When no fact
-  matches and the family file has unreadable lines, the reason names the
-  corruption (`bad stored data: corrupt memory (<n> lines)`) instead of
-  `no params`.
-- The program accept re-runs `engine.program_gate` (the judge
-  `submit_program` wraps) on `program_source` with the audit `hidden_seed`,
-  or fresh entropy under `--fresh`, replaying the accept-time recorded set
-  (`audit.program.recorded`), not today's: experiments after the accept are
-  new evidence, not a judge change.
-- Everything else the verdict depended on is pinned, so a flip can only be
-  the judge's. An accept whose pins cannot be honored is emitted as
-  `new_verdict: "unreplayable"` with a reason, never dropped and never a
-  flip: `no program_source` (pre-#118), `no audit seed` / `no audit
-  hidden_seed` (a fresh program draw only under `--fresh`), `no params`,
-  `no recorded snapshot` (pre-#144), `recorded cases changed` (a snapshot
-  case vanished or its content digest differs), `binary changed` (the
-  corpus binary's digest differs; legacy accepts without one replay with
-  `binary_verified: false`), `toolchain changed` (the toolchain image ID
-  differs: `localhost/reschema-toolchain:1` is a mutable tag, so a rebuild
-  may compile the source differently; legacy accepts without one, or with a
-  null one because the image changed mid-gate, replay with
-  `toolchain_verified: false`), `canonicalizer changed` (stored traces are in
-  another rules version's format), `unknown task` / `unknown function`,
-  `bad ledger` (unreadable, or a missing or malformed `accepted`), `bad stored data:
-  <error>` (any other stored-data load/decode/type failure), and from the
-  judge `infra` / `hidden-starvation` (an outage or an unjudged draw).
-- Failure boundaries: each accept is prepared (every stored-data read and
-  type check) then judged. Only the prepare phase degrades to a row; judge
-  exceptions raise (engine bug). Environment faults (a missing tasks dir,
-  a stale or corrupt manifest, a missing corpus binary or toolchain image)
-  fail the whole job
-  once, loudly, rather than as per-accept noise.
-
-Negative tests (`tests/test_regrade.py`): a real function accept and a real
-program accept reproduce; the pre-#143 mistyped `scale_buf` stub accept
-surfaces as a `spec` flip, also via the memory-params fallback; a planted
-wrong program surfaces as a `recorded` flip; every unreplayable reason and
-environment fault has its own case.
-
-### tools/dogfood/ — 2C live-agent transfer driver
-
-Measures what the CI reference run deliberately cannot: whether a REAL agent
-benefits from the family memory the harness ships. `slot.py` is the atom: one
-live-agent run of one corpus slot — layout (primed chains share one
-`RESCHEMA_HOME` across their 3 slots; unprimed opens memory-cold per slot,
-enforced by filesystem, the CI isolation invariant), agent spawn, ledger
-polling with typed guards (`aborted: timeout|probe-ceiling|agent-exit|
-priming-failed`, `infra-error` for endpoint failure), one atomic JSONL record
-per slot. `driver.py` expands TOML campaigns into a bounded pool; primed
-chains run SEQUENTIALLY inside one worker task (a later slot must open after
-slot 0's acceptance wrote the verified_fact it exists to consume; a failing
-chain slot short-circuits the rest as `aborted: priming-failed`, but an
-endpoint flap leaves the chain resumable). Resume is filesystem truth:
-budget-consuming outcomes skip, `infra-error` retries. `runners/base.py`'s
-`AgentRunner` Protocol keeps the driver harness-free — `opencode_v1.py` is
-today's adapter: session config allowlisting exactly the 5 MCP tools
-(top-level `tools` switchboard with `reschema_*` wildcard, empty sandbox cwd,
-sanitized HOME/XDG so global config can't leak in — the agent physically
-cannot read this repo's seeds), GET/POST preflight language the endpoint
-actually speaks, process-group lifecycle. Session transcripts name themselves
-per slot (`transcript-<stem>.log` via `RunnerConfig.transcript`, #94): primed
-chains share one sandbox, so a fixed `transcript.log` truncated each earlier
-slot's session at the next spawn — post-hoc priming audits need all slots'
-logs, not just the chain's last. A resumed slot re-truncates only its own
-log, matching the stale-ledger wipe's resume idempotence. `prompt.py` is one
-neutral task template whose neutrality is lint-tested against a stemmed
-forbidden list and
-pinned by a golden digest — prompt contamination is solver scaffolding and
-would silently reframe the measurement. `measure.py` is the only statistics
-site: φ per (family, rep) as the protocol requires, median/IQR across reps,
-rejected slots at E=0 (survivor-bias-free), infra-error evidence shown but
-never entering statistics, per-slot deltas when the unprimed trajectory isn't
-flat. Reports land `report-<family>.md` beside the JSONL under
-`docs/benchmark-results/2c/`; invocation: `uv run python -m
-tools.dogfood.driver <campaign.toml> --out <dir> [--pool N]` (AGENTS.md
-carries the smoke checklist). 46 CI-safe tests run the whole pipeline against
-`FakeRunner`; no LLM, podman, or endpoint in CI.
-
-Add `--continuation-feedback` to select `rejection-once-v1` for a campaign.
-Use a separate `--out` directory to compare it with the default baseline.
-Every run header, including infra errors and synthetic priming failures,
-records `continuation_feedback: off|rejection-once-v1`. The runner explicitly
-pins the MCP environment, so inherited standalone feedback settings cannot
-enable coaching in a baseline run. Enabled slots supply their existing
-deadline and probe ceiling solely to suppress feedback after a hard stop.
-Resume and reporting refuse mixed feedback treatments; unstamped historical
-records are treated as baseline. Prompts, slot exits, validation budgets,
-probe/submission costs and efficiency formulas remain unchanged. This patch
-does not establish an improvement in model persistence; that requires a
-separate controlled campaign.
+Everything but the judge is pinned by the evidence: the corpus binary is the
+recorded private file (a corpus rebuild cannot move a verdict); a checker
+that draws more seeds than were recorded, or whose recorded jobs ran another
+image than today's, is `unreplayable` with a reason, never a flip. Tampered
+evidence is refused per row: `Ledger.lookup` re-verifies every artifact
+against its digest, and the candidate files must match the submission
+record. Warranted v0.3.0 has no public re-check entry point and `Project`
+refuses a changed domain identity, so regrade reads the ledger through
+`warranted.host` (Lewdwig-V/warranted#78).
 
 ## Key architectural decisions
 
-1. **Single pinned toolchain image for everything binary** — corpus
-   seeds and both levels' model compiles run inside the same container image,
-   so guest binaries carry identical toolchain/libc encodings on every
-   machine; ambient host toolchains are out of the trust surface.
+1. **Single pinned toolchain image for everything binary** — corpus seeds,
+   both checkers' model jobs and the worker sandbox use one image, pinned by
+   its ID, so guest binaries carry identical toolchain/libc encodings on
+   every machine; ambient host toolchains are out of the trust surface.
 2. **Emulation and native execution are contained, not enumerated** —
-   scratch rootfs (for qiling) and one-shot containers (for native) provide
-   structural containment; no syscall allowlist is trusted.
+   scratch rootfs (for qiling) and one-shot Warranted jobs (for agent C)
+   provide structural containment; no syscall allowlist is trusted.
 3. **Hidden-state economy over reported-state completeness** — hidden
-   inputs are drawn with fresh entropy per submission and ground truth is
-   double-recorded; rejections reveal the first divergence only (extraction
-   is priced in submissions; the hidden gate backstops overfitting).
+   inputs are drawn with fresh entropy per check and ground truth is
+   double-recorded; rejections reveal the first divergence only.
 4. **Determinism-by-canonicalization + machine-checked versioning** — all
    comparisons apply to canonicalized traces; a canonicalizer rules change
-   forces corpus re-record via the sidecar check.
-5. **Corpus-as-oracle for heuristics** — `task_open`'s signature
+   forces a corpus rebuild via the sidecar check, and stales family memory.
+5. **Corpus-as-oracle for heuristics** — the function tasks' signature
    guesses/callees are validated against the full 60-slot corpus matrix in
    the test suite, keeping compiler/capstone drift observable in CI.
-6. **Structured judgment at every boundary** — MCP errors, compile
-   failures, divergences, crashes, and starvation are all typed payloads;
-   agents parse verdicts, never stderr pages.
-7. **Ledger is the only cross-run memory** — accepted
-   sources/audit/journal are cumulative state by design; composition
-   re-compiles accepted sources per-TU rather than trusting earlier
-   artifacts.
+6. **Structured judgment at every boundary** — compile failures,
+   divergences, crashes, starvation and malformed candidates are typed
+   feedback; only host faults raise.
+7. **ReSchema keeps only reverse engineering** — anything that is not
+   (state, accounting, budgets, guard, containment, memory) is Warranted's;
+   a misfit is fixed in Warranted, not worked around here.
 8. **No ambient host binaries anywhere in the corpus path** — compilation
-   and stripping of corpus binaries happen inside the toolchain image; a
-   binutils-less host cannot produce degraded corpora.
+   and stripping of corpus binaries happen inside the toolchain image.
 
 ## Decision records
 
 Each record leads with the shipped decision and its rationale; the delta
 against the (non-public) original plans is kept as history, subordinate.
 
-- **Level-B execution is contained end-to-end** — function-mode models
-  compile *and* execute inside mandatory one-shot podman containers; ctypes
-  never runs in the engine process. Untrusted source deserves no reachable
-  host. (History: the original design recorded "function-mode models execute
-  natively (ctypes) as a throughput decision… no additional sandboxing" as a
-  guardrail.)
+- **Agent C is contained end-to-end** — models compile *and* execute only
+  inside Warranted jobs (both levels since M8, decision D1); ctypes and the
+  model's qiling replay never run in a host process. Untrusted source
+  deserves no reachable host. (History: the original design ran
+  function-mode models natively "as a throughput decision… no additional
+  sandboxing"; until M8 the level-A model replay ran under qiling on the
+  host.)
 - **Qiling records against a fresh empty rootfs** — every record and
   `call_original` runs with a scratch rootfs holding only the guest binary.
   (History: qiling ran with rootfs `/` until a demonstrated host-write leak —
@@ -753,8 +451,8 @@ against the (non-public) original plans is kept as history, subordinate.
 - **Corpus shape: 60 slots incl. a file-writing seed and a parser-class
   seed** — the `filewrite` seed makes the `files_written` gate and a
   raw-bytes hidden domain (`stdin-bytes`) first-class;
-  `corpus_build(seed_ids, matrix)` targeting exists with merge-and-prune
-  semantics. (History: plan said 36 slots, 3 seeds, no targeting.)
+  `corpus.generate.build(seed_ids=, matrix=)` targeting exists with
+  merge-and-prune semantics. (History: plan said 36 slots, 3 seeds, no targeting.)
   **pkfmt (added post-#121):** TLV parser — magic u16, version bounds,
   tag-dispatch records, FNV checksum. The #121 spike motivated a richer
   corpus, but its historical 14-edge
@@ -773,67 +471,35 @@ against the (non-public) original plans is kept as history, subordinate.
   does not guarantee rejection of every overfit model.
 - **Canonicalizer is v2.1** — FD and PATH ordinals plus the enforced
   version stamp. (History: planned v1 was ADDR ordinals + argv basename.)
-- **task_open carries a contract surface** — disasm slice, known callees,
-  labeled signature guess, and ABI template. (History: descoped in the
-  original spec.)
-- **status is a snapshot, not a counter** — readiness/coverage/recent
-  journal/efficiency from ledger+manifest. (History: descoped to recorded
-  count + ledger.) See the "No replay-% metric" record below for the
-  accept-payload field that died with it.
-- **Program-path ledger accounting is symmetric** — counters, idempotent
-  accept markers, and a `recent` journal. (History: the first implementation
-  left counters untouched and stacked duplicate accept markers.)
+- **Function tasks carry a contract surface** — disasm slice, known
+  callees, labeled signature guess, and ABI template, as task inputs.
+  (History: descoped in the original spec; served by `task_open` until M8.)
 - **qiling is bounded to 1.4.x** — the code carries 1.4.6-specific
   adjustments in `exec/recorder.py` and `driver/calling.py` (hook arg
   shapes, exit-code defaults, `QlErrorBase` repr recursion, loader stack
   API); hence `qiling>=1.4.6,<1.5`, and a `pillow>=12.3.0` override is forced
   over `python-fx`'s `pillow<11` cap to clear transitive CVEs (the image/TUI
   paths of python-fx/asciimatics are never exercised).
-- **The tool table is exactly five tools; the shipped signatures are
-  canonical** — `compose()` is deliberately not exposed. (History: a spec
-  §5 table existed with different literal parameter names; per issue #44
-  decision, the shipped names are the canonical table — no external consumer
-  bound to the old names, and the contract test pins term coverage.)
-- **No replay-% metric** — issue #43 closed without a denominator: readiness
-  (recorded vs hidden-gate minimum), coverage (accepted/total), the
-  audit-trail seeds, and the efficiency metric already subsume the uses.
-  (History: program accepts carried a constant `replay_pct: 100` placeholder;
-  the placeholder is removed, and the test suite pins its absence.)
-- **compose() is a pure linkage check by policy** — accepted sources are
-  compiled per-TU and linked, nothing executes the composed binary (issue
-  #46): execution semantics for composed programs are undefined scope until
-  a real consumer appears; linkability is what the dogfood tests assert.
-- **Agent-C compile/execution mounts scratch, not the oracle store** —
-  information isolation, not just host isolation: worker containers
-  bind-mount a per-round scratch directory holding only the model source.
-  (History: the task dir — recorded traces, ledger, accepted sources — was
-  itself the rw mount, and gcc's habit of quoting offending source lines in
-  diagnostics made `#include "trace_*.json"` an agent-readable channel into
-  ground truth; function-mode runtime `fopen` was the same channel. Issue
-  #61; closed structurally by mount, not by filtering stderr.)
-- **Research slots landed as primitives, not pipelines** — four ideas from
-  the 2025–26 RE-literature sweep (docs/roadmap.md), each refactored onto an
-  existing surface rather than adding a subsystem: the two-pass repair
-  directive (coaching context in `task_open`), syscall dependency slices
-  (`dep_slice` in event/files divergences), name-independent topology
-  digests on `verified_fact` entries, and the function-mode scout probe
-  (one emulated call, no case persisted).
-- **Harness capabilities are runtime-agnostic by construction** — the five
-  anti-lock-in principles of issue #86 audited against the shipped code; four
-  are already structural, one is deferred. (1) Capabilities hold no
-  orchestrator state: `mcp/server.py` is dispatch-only, the engine owns all
-  tool logic, and the dogfood `AgentRunner` Protocol already drives the same
-  five tools from a second, unrelated harness. (2) The transport boundary is
-  MCP over stdio, consumable by any compliant client. (3) Tool contracts ship
-  as JSON Schema on the wire: `tools/list` serves every tool's `inputSchema`;
-  the Python type hints are an authoring surface, never the contract a client
-  binds to, and the contract test pins description coverage. (4) Side-effects
-  execute out-of-process: every compile/execution inside one-shot rootless
-  podman containers, emulation against a fresh empty rootfs, host gcc never
-  in the trust surface. (5) Prompt-as-a-skill is the one open gap: procedural
-  coaching ships today as structured payload fields (`repair_directive`,
-  family-memory injection) and contract-pinned tool descriptions, not as MCP
-  `prompts`/`resources` — tracked as issue #88.
+- **Superseded in M8 S7 (Warranted owns them now):** the five-tool MCP
+  table, `status` snapshots and the efficiency metric over the engine ledger
+  (a new metric epoch starts on Warranted accounting), symmetric ledger
+  accounting, `compose()` as a linkage check, the flail guard (now
+  Warranted's `DuplicateGuard`), the family deduction cache (now Warranted
+  memory), the repair directive and continuation feedback, the topology
+  digest, and the #86 runtime-agnosticism audit of the MCP surface (the
+  worker surface is now files plus the image's helpers).
+- **Agent-C jobs see only their own files** — information isolation, not
+  just host isolation: a job holds the model source and the harness files it
+  needs, never ground truth (the program job gets case inputs only).
+  (History: the task dir — recorded traces, ledger — was once the worker
+  container's rw mount, and gcc's habit of quoting offending source lines
+  made `#include "trace_*.json"` an agent-readable channel into ground truth;
+  issue #61 closed it with a scratch mount, M8 with mount-free jobs.)
+- **Research slots landed as primitives, not pipelines** — syscall
+  dependency slices (`dep_slice` in event/files divergences) and the
+  function-mode scout probe (`experiment_function`: one emulated call, no
+  case persisted) remain; the repair directive and topology digest went
+  with the engine in M8 S7.
 - **Refused ideas are recorded, not re-argued** — ideas from the agentic-RE,
   decompilation and code-RL literature that would break judge-only
   acceptance, the entropy policy, first-divergence-only feedback, the trust
@@ -885,9 +551,9 @@ against the (non-public) original plans is kept as history, subordinate.
 
 ## Verification & maintenance
 
-This document is verified against the delivered codebase. Latest FULL
-line-by-line audit: 2026-08-12 (phase-2 closeout: scratch-mount isolation,
-xdist/budget suite, `tools/dogfood/`, evidence records, and the three
-issue-closing decision records folded in). It rots by default — policy: any
-PR that changes behavior described here must update this file in the same
-commit; a dated claim a reviewer can falsify from `src/` is a doc bug, file it.
+This document is verified against the delivered codebase. Latest rewrite:
+2026-10-11 (M8 S7: engine, MCP server, memory cache and dogfood driver
+removed; checkers, tasks and regrade on Warranted). It rots by default —
+policy: any PR that changes behavior described here must update this file
+in the same commit; a dated claim a reviewer can falsify from `src/` is a
+doc bug, file it.

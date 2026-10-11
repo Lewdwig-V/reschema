@@ -13,12 +13,10 @@ the corpus-matrix phrasings below are.
 import re
 from pathlib import Path
 
-from conftest import mcp_list_tools
-
 from reschema.corpus.generate import COMPILERS, FUNCS, OPTS
-from reschema.engine import HIDDEN_N
 from reschema.exec.canonical import CANONICALIZER_VERSION
 from reschema.validate.function import N_FUZZ
+from reschema.validate.program import HIDDEN_N
 
 REPO = Path(__file__).resolve().parents[1]
 DOCS = ("README.md", "ARCHITECTURE.md", "AGENTS.md")
@@ -81,10 +79,6 @@ def test_seed_count_and_lists():
     assert rows == seeds, f"README corpus table rows {sorted(rows)}"
 
 
-def test_tool_count():
-    _check(NUM + r" (?:MCP )?tools\b", len(mcp_list_tools()))
-
-
 def test_tuning_constants():
     _check(r"HIDDEN_N\s*=\s*(\d+)", HIDDEN_N, int)
     _check(r"N_FUZZ\s*=\s*(\d+)", N_FUZZ, int)
@@ -95,17 +89,3 @@ def test_canonicalizer_version():
     _check(r'CANONICALIZER_VERSION\s*=\s*"([\d.]+)"', v, str)
     _check(r"rules v(\d+\.\d+)", v, str)
     _check(r"\(v(\d+\.\d+)\)", v, str)
-
-
-def test_audit_key_set_matches_engine():
-    # engine.submit_function's audit[func] keys (pinned against the ledger in
-    # test_engine_b); every doc spelling of the set must list them all.
-    keys = {"seed", "n_fuzz", "compared", "skipped", "params", "binary", "toolchain"}
-    hits = _hits(r"\{(seed, n_fuzz[^}]*)\}")
-    assert hits, "audit key-set guard went vacuous"
-    bad = [
-        f"{f}:{ln}: {m.group(0)!r}"
-        for f, ln, m in hits
-        if {k.strip() for k in m.group(1).split(",")} != keys
-    ]
-    assert not bad, "docs disagree with engine audit keys:\n" + "\n".join(bad)

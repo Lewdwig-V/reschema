@@ -1,6 +1,6 @@
 """M8 S4: the `program-replay` Warranted checker (decisions D1 and D3 in
 docs/proposals/m8-rebuild-on-warranted.md); the Warranted-backed successor of
-engine.program_gate.
+the old engine.program_gate.
 
 Candidate (see `candidate_files`): `model.c` and `cases.json` (the nominated recorded cases: at most
 MAX_CASES of {"argv": [str], "stdin_hex": str}, argv excluding argv[0]).
@@ -25,9 +25,8 @@ from pathlib import Path
 
 from warranted import FACTS_LIMIT, FEEDBACK_LIMIT, JobLimits, Verdict, VerdictStatus
 
-from ..driver import podrun
-from ..engine import HIDDEN_N, _record_stable, hidden_suite
-from ..validate.program import CFLAGS, compare
+from .. import toolchain
+from ..validate.program import CFLAGS, HIDDEN_N, compare, hidden_suite, record_stable
 from . import candidate_files
 
 MAX_CASES = 16  # nominated cases per submission (D3, like the mystery fixture)
@@ -183,7 +182,7 @@ class ProgramReplay:
             binary.write_bytes(ctx.private["binary"])
             rec = []
             for c in cases:
-                t = _record_stable(binary, c["argv"], bytes.fromhex(c["stdin_hex"]))
+                t = record_stable(binary, c["argv"], bytes.fromhex(c["stdin_hex"]))
                 if t is None:  # the input, not the model, is at fault
                     return _reject("flaky-case", "recorded", argv=c["argv"])
                 rec.append(t)
@@ -193,7 +192,7 @@ class ProgramReplay:
             {"argv": t["argv"][1:], "stdin_hex": t["stdin_hex"]} for t in rec + hidden
         ]
         r = ctx.run_job(
-            podrun.image_id(),
+            toolchain.image_id(),
             ["python", "replay.py"],
             {
                 "model.c": source.encode(),

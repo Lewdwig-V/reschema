@@ -51,3 +51,26 @@ def test_stripped_has_no_symtab(manifest):
     s = next(x for x in manifest if x["stripped"])
     with open(s["binary"], "rb") as f:
         assert ELFFile(f).get_section_by_name(".symtab") is None
+
+
+def test_load_manifest_refuses_a_stale_canonicalizer(tmp_path):
+    # A rules change means a corpus rebuild: ground truth recorded under other
+    # canonicalisation rules must never be judged against current ones.
+    from reschema.corpus.generate import load_manifest
+    from reschema.exec.canonical import CANONICALIZER_VERSION
+
+    (tmp_path / "manifest.json").write_text("[]")
+    with pytest.raises(RuntimeError, match="canonicalizer \\(missing\\)"):
+        load_manifest(tmp_path)
+    (tmp_path / "canonicalizer_version").write_text("1.0")
+    with pytest.raises(RuntimeError, match="canonicalizer 1.0"):
+        load_manifest(tmp_path)
+    (tmp_path / "canonicalizer_version").write_text(CANONICALIZER_VERSION)
+    assert load_manifest(tmp_path) == []
+
+
+def test_unknown_slot_lists_the_available_ones(manifest):
+    from reschema.corpus.generate import slot
+
+    with pytest.raises(KeyError, match="unknown task_id: nope::x.*calc::"):
+        slot("nope::x")

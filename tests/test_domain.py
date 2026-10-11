@@ -43,8 +43,6 @@ def test_checker_requirements_match_lock() -> None:
             "--no-dev",
             "--no-emit-project",
             "--prune",
-            "mcp",
-            "--prune",
             "warranted",
             "--format",
             "requirements-txt",
@@ -56,3 +54,15 @@ def test_checker_requirements_match_lock() -> None:
     ).stdout
     committed = (ROOT / "checker-requirements.txt").read_text()
     assert _requirements(committed) == _requirements(exported)
+
+
+def test_norm_source_strips_comments_and_whitespace_keeps_literals() -> None:
+    # The duplicate guard's fingerprint (ReSchemaDomain.normalize).
+    from reschema.domain import norm_source
+
+    a = norm_source('int f() { // a comment\n return printf("a//b /*c*/"); }')
+    b = norm_source('int f(){/*c*/return printf("a//b /*c*/");}')
+    assert a == b
+    assert '"a//b /*c*/"' in b  # literal content intact (// and /* inside)
+    # char literals and escapes survive; comments die at an unterminated EOF
+    assert norm_source("char c='/'; /* unterminated") == "charc='/';"

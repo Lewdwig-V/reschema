@@ -16,8 +16,8 @@ from reschema import tasks
 from reschema.checks import candidate_files
 from reschema.checks.function_fuzz import FunctionFuzz
 from reschema.checks.program_replay import ProgramReplay
+from reschema.corpus.generate import slot
 from reschema.domain import ReSchemaDomain
-from reschema.engine import TaskStore
 
 HELPERS = Path(__file__).resolve().parent.parent / "tools" / "worker"
 MARK = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
@@ -197,7 +197,7 @@ def test_guard_fingerprints_the_files_not_the_workspace():
 
 @pytest.fixture(scope="module")
 def meta(built_corpus):
-    return TaskStore("rot13::gcc-O2-sym").meta
+    return slot("rot13::gcc-O2-sym")
 
 
 def test_task_md_per_kind(meta):

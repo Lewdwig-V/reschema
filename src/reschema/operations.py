@@ -1,4 +1,4 @@
-"""`experiment`: the Warranted host-mediated operation that replaces the MCP
+"""`experiment`: the Warranted host-mediated operation that replaced the MCP
 `experiment` tool (M8 S5, docs/proposals/m8-rebuild-on-warranted.md).
 
 The host runs the corpus binary (a private task file the worker never holds)
@@ -7,7 +7,7 @@ shows the canonical trace. One `probe` unit per executed request. Traces are
 hints only (D3): no checker reads them; a case the worker wants judged is
 nominated in the candidate's cases.json and re-recorded by the checker.
 
-`experiment_function` (function tasks) is the MCP tool's function mode: one
+`experiment_function` (function tasks) is the old MCP tool's function mode: one
 call of the task's original function, the target fixed by private task.json.
 """
 
@@ -23,7 +23,7 @@ from .checks.function_fuzz import MAX_BUFFER_LEN, _params
 from .checks.program_replay import MAX_ARG, MAX_ARGS, MAX_STDIN, _capped
 from .driver.calling import BAREGS, _guard_arity, call_original
 from .driver.spec import Param
-from .engine import _record_stable
+from .validate.program import record_stable
 
 # warranted._operations.SHOWN_LIMIT (not exported in v0.3.0); measured compact,
 # while _capped measures indented JSON, so a capped trace always fits.
@@ -74,7 +74,7 @@ class Experiment:
         with tempfile.TemporaryDirectory(prefix="reschema-experiment-") as d:
             prog = Path(d) / "prog"  # canonical argv[0] is the basename, as today
             prog.write_bytes(ctx.inputs["binary"])
-            t = _record_stable(prog, arguments["argv"], arguments["stdin"].encode())
+            t = record_stable(prog, arguments["argv"], arguments["stdin"].encode())
         if t is None:
             return OperationResult(
                 Outcome.FAILED,

@@ -7,8 +7,8 @@ import pytest
 
 from reschema.corpus.generate import _symtab
 from reschema.driver.calling import batch_call_original, call_original, gen_inputs
-from reschema.driver.podrun import run_worker
 from reschema.driver.spec import Param
+from reschema.toolchain import run_build as run_worker
 from tools.coverage_spike import _hook_recorder
 
 MODEL = r"""
@@ -89,7 +89,7 @@ def probe_bin(tmp_path_factory):
         },
         d,
     )
-    assert r.get("results"), r  # infra failure surfaces the podrun stage detail
+    assert r.get("results"), r  # infra failure surfaces the container stage detail
     res = r["results"][0]
     assert res["rc"] == 0, res["stderr"]
     binp = d / "probe"

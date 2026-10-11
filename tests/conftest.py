@@ -16,8 +16,8 @@ import time
 
 import pytest
 
-# pytest-xdist: give each worker its own .reschema root so task dirs, ledgers,
-# memory, and the corpus manifest can't race across processes. Must run at
+# pytest-xdist: give each worker its own .reschema root so corpus builds
+# can't race across processes. Must run at
 # conftest import time — reschema's ROOT constants read the env at THEIR import.
 # _OWN_ROOT is the ONE root this process made (#76): sessionfinish deletes
 # exactly it — never a path a user pointed RESCHEMA_HOME at.
@@ -65,62 +65,20 @@ def built_corpus():
     return build()
 
 
-def mcp_call(tool, **kw):
-    """One in-process MCP tool call; structured_content unwrapped, errors
-    asserted. Shared by test_mcp/test_dogfood (was two hand-rolled copies).
-
-    reschema import stays lazy: RESCHEMA_HOME is set at conftest import time
-    above and reschema's ROOT constants read the env at THEIR import.
-    """
-    import json
-
-    import anyio
-    from mcp.client._memory import InMemoryTransport
-    from mcp.client.session import ClientSession
-
-    from reschema.mcp.server import server
-
-    async def go():
-        async with InMemoryTransport(server) as (r, w), ClientSession(r, w) as s:
-            await s.initialize()
-            res = await s.call_tool(tool, kw)
-            assert not res.is_error, res.content
-            sc = res.structured_content
-            if sc is not None:
-                return sc["result"] if set(sc) == {"result"} else sc
-            return json.loads(res.content[0].text)
-
-    return anyio.run(go)
-
-
-def mcp_list_tools():
-    """The server's tool listing, in-process (same lazy-import rule as mcp_call)."""
-    import anyio
-    from mcp.client._memory import InMemoryTransport
-    from mcp.client.session import ClientSession
-
-    from reschema.mcp.server import server
-
-    async def go():
-        async with InMemoryTransport(server) as (r, w), ClientSession(r, w) as s:
-            await s.initialize()
-            return (await s.list_tools()).tools
-
-    return anyio.run(go)
-
-
 def check_context(task_id: str, candidate: dict, jobs=None, seed: int = 0):
     """A Warranted CheckContext for the program-replay checker on a corpus
     task, draw_seed pinned (tests pin entropy; production draws fresh).
-    `jobs` defaults to real podman jobs. Lazy imports: see mcp_call."""
+    `jobs` defaults to real podman jobs. reschema imports stay lazy:
+    RESCHEMA_HOME is set at conftest import time above and reschema's ROOT
+    constants read the env at THEIR import."""
     import json
     from pathlib import Path
 
     from warranted import CheckContext, PodmanJobs
 
-    from reschema.engine import TaskStore
+    from reschema.corpus.generate import slot
 
-    meta = TaskStore(task_id).meta
+    meta = slot(task_id)
 
     class Pinned(CheckContext):
         def draw_seed(self) -> int:
@@ -138,8 +96,30 @@ def check_context(task_id: str, candidate: dict, jobs=None, seed: int = 0):
     )
 
 
-def wipe_task(store):
-    """Clean slate for a shared-runtime-state task dir: traces + ledger gone."""
-    for p in store.dir.glob("trace_*.json"):
-        p.unlink()
-    store._path("ledger.json").unlink(missing_ok=True)
+def compile_original(c_source: str, out):
+    """A test-only original, compiled like a corpus seed (trusted source, the
+    toolchain image's build path): gcc with the program gate's CFLAGS."""
+    import shutil
+    from pathlib import Path
+
+    from reschema import toolchain
+    from reschema.validate.program import CFLAGS
+
+    with tempfile.TemporaryDirectory(prefix="reschema-orig-") as d:
+        job = {"c_source": c_source, "out": "prog", "compiler": "gcc", "flags": CFLAGS}
+        r = toolchain.run_build({"mode": "compile", "jobs": [job]}, Path(d))
+        assert "stage" not in r and r["results"][0]["rc"] == 0, r
+        shutil.copy2(Path(d) / "prog", out)
+
+
+def validate_function(*args, run_model=None, **kw):
+    """validate_function as the function-fuzz checker runs it: the model in a
+    Warranted job (podman), unless a test stubs `run_model`."""
+    from warranted import PodmanJobs
+
+    from reschema.checks.function_fuzz import job_model
+    from reschema.validate import function
+
+    if run_model is None:
+        run_model = job_model(PodmanJobs().run)
+    return function.validate_function(*args, run_model=run_model, **kw)

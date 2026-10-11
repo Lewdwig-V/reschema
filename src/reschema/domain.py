@@ -8,18 +8,33 @@ reschema.tasks), the worker image (S6).
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 
+from reschema import toolchain
 from reschema.checks import candidate_files
 from reschema.checks.function_fuzz import FunctionFuzz
 from reschema.checks.program_replay import ProgramReplay
-from reschema.driver import podrun
-from reschema.engine import _norm_source
 from reschema.operations import Experiment, ExperimentFunction
 
 _PACKAGE = Path(__file__).resolve().parent
+
+# A literal (kept, through its closing quote or EOF), or noise: a line
+# comment, a block comment (through */ or EOF), whitespace.
+_NOISE = re.compile(
+    r'("(?:\\.|[^"\\])*"?|\'(?:\\.|[^\'\\])*\'?)|//[^\n]*|/\*.*?(?:\*/|\Z)|\s+',
+    re.DOTALL,
+)
+
+
+def norm_source(src: str) -> str:
+    """Comment/whitespace-stripped fingerprint, string-literal aware.
+
+    A heuristic, not a parse: deterministic and crash-free on any input.
+    `//`/`/* */` sequences INSIDE literals survive; outside they die."""
+    return _NOISE.sub(lambda m: m[1] or "", src)
 
 
 class ReSchemaDomain:
@@ -43,7 +58,7 @@ class ReSchemaDomain:
     @staticmethod
     def normalize(candidate) -> bytes:
         """The duplicate guard's fingerprint: the model source, comment- and
-        whitespace-stripped (the old flail guard's), plus the declaration
+        whitespace-stripped (`norm_source`, the old flail guard's), plus the declaration
         (params.json or cases.json) in canonical JSON. Warranted counts every
         rejection, declaration rejects included, so a corrected declaration
         must be a new candidate, not a repeat of the source. Fingerprinted as
@@ -53,7 +68,7 @@ class ReSchemaDomain:
         if type(files) is str:
             return b"\1" + candidate.get("result.json", b"")
         src = files.get("model.c", b"").decode(errors="replace")
-        out = [_norm_source(src).encode()]
+        out = [norm_source(src).encode()]
         for name in ("params.json", "cases.json"):
             raw = files.get(name)
             if raw is None:
@@ -71,4 +86,4 @@ class ReSchemaDomain:
     def worker_image(self) -> str:
         # The toolchain image is the worker image too (S6: the Containerfile
         # COPYs tools/worker/'s helpers onto PATH), pinned by its local ID.
-        return podrun.image_id()
+        return toolchain.image_id()

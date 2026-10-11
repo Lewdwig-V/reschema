@@ -168,25 +168,30 @@ Skipping the image build is the most common setup failure. The first compile
 refuses with a message naming the `podman build` line above.
 
 An agent works a slot as Warranted tasks: one per function, then one for the
-whole program (`reschema.tasks`). Write a campaign, create a project with the
-ReSchema domain, and run it with the `warranted` CLI:
+whole program (`reschema.tasks`).
 
-```python
-from pathlib import Path
+### Live campaign
 
-from reschema import tasks
-from reschema.corpus.generate import slot
-
-specs = tasks.slot_tasks(slot("rot13::gcc-O2-sym"))
-tasks.write_campaign("rot13", specs, {"local": "run.toml"}, Path("camp"))
-```
+`python -m reschema.campaign write` lays out a campaign in a new or empty
+`--out` directory for corpus slots (each
+slot's function tasks, then its program task) after a full corpus rebuild
+(about 10s; it replaces the manifest and binaries, never a past project's
+pinned task files), and prints the commands below with the project's `--allow`
+flags filled in. Run configs live in `campaigns/` (local Qwen on Ollama, GLM
+on OpenRouter via litellm; `campaigns/README.md` has the smoke slots and the
+key file). Keep campaigns, projects and keys under `results/`, which is
+gitignored:
 
 ```bash
-uv run warranted init proj --domain reschema.domain:ReSchemaDomain \
-    --allow model=200 --allow tool=200 --allow check=40 --allow probe=40
-uv run warranted campaign run proj camp/campaign.toml   # run.toml: model + adapter
-uv run warranted campaign report proj rot13
-uv run python -m reschema.regrade proj  # re-judge recorded checks under today's checkers
+uv run python -m reschema.campaign write --out results/smoke-qwen \
+    --config campaigns/run-qwen-local.toml \
+    rot13::gcc-O2-sym check::gcc-O1-stripped calc::gcc-O2-sym
+uv run warranted init results/smoke-qwen/project \
+    --domain reschema.domain:ReSchemaDomain \
+    --allow check=80 --allow model=3200 --allow probe=2560 --allow tool=3200
+uv run warranted campaign run results/smoke-qwen/project results/smoke-qwen/campaign.toml
+uv run warranted campaign report results/smoke-qwen/project smoke-qwen
+uv run python -m reschema.regrade results/smoke-qwen/project  # re-judge under today's checkers
 ```
 
 Each task's `task.md` is the worker's instructions. In the sandbox the worker
@@ -207,10 +212,12 @@ src/reschema/
   checks/              # Warranted checkers: function-fuzz, program-replay
   operations.py        # experiment / experiment_function host operations
   tasks.py             # TaskSpecs per slot, task.md, campaign files
+  campaign.py          # `python -m reschema.campaign write`: a live campaign
   domain.py            # ReSchemaDomain: checkers, operations, guard fingerprint
   regrade.py           # re-run current checkers over recorded check evidence
   toolchain.py         # the pinned image's ID; the corpus build's container run
 tools/worker/          # experiment / experiment-function / submit (in the image)
+campaigns/             # live run configs (Ollama, OpenRouter), smoke slots
 ```
 
 (The `SENTINEL` trap is how a level-B call ends under emulation: the driver

@@ -30,7 +30,7 @@ from reschema import operations, tasks
 from reschema.domain import ReSchemaDomain
 from reschema.engine import TaskStore
 from reschema.exec import canonical
-from reschema.operations import Experiment
+from reschema.operations import Experiment, ExperimentFunction
 
 SLOT = "rot13::gcc-O2-sym"
 SUBMIT_MARK = b"COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n"
@@ -305,6 +305,96 @@ def test_oversized_trace_is_capped_and_delivered_whole(monkeypatch):
 
     monkeypatch.setattr(operations, "_record_stable", lambda *a: None)
     r = Experiment().execute(OperationContext({"binary": b""}), args)
+    assert r.outcome is Outcome.FAILED and "flaky" in r.shown["error"]
+
+
+CHAR = [{"name": "c", "kind": "i32", "range": [0, 255]}]
+STR = [{"name": "s", "kind": "cstring", "ret": "void"}]
+
+
+def fn_request(*arguments) -> bytes:
+    items = [{"operation": "experiment_function", "arguments": a} for a in arguments]
+    return b"WARRANTED_REQUEST\n" + json.dumps({"requests": items}).encode()
+
+
+def bad_function() -> tuple[bytes, dict]:
+    """A function candidate the checker rejects at the spec stage, no job."""
+    return submit(**{"model.c": "int x;", "params.json": "not json"})
+
+
+def test_experiment_function_calls_the_task_function(tmp_path, meta):
+    probe = fn_request(
+        {"params": CHAR, "case": {"c": ord("h")}},
+        {"params": STR, "case": {"s": b"hello\0".hex()}},
+    )
+    proj, _ = project(tmp_path, [[probe, bad_function()]], jobs=NoJobs())
+    task = tasks.function_task(meta, "rot13_char", submissions=1, check_budget=1)
+    run = proj.start(task, CONFIG, Model())
+    char, string = shown(proj)
+    assert (char["ret"], char["mem"]) == (ord("u"), {})
+    # the target is the task's function (rot13_char) whatever the worker's
+    # params say: a byte in, never the string rot13
+    assert "s" in string["mem"] and string["mem"]["s"] != b"uryyb\0".hex()
+    for _, a in ops(proj, "operation"):
+        assert len(a["shown.json"]) < operations.SHOWN_LIMIT
+    assert proj.status(run.run_id).accounting["probe"].spent == 2
+
+
+def test_experiment_function_on_a_program_task_fails(tmp_path, meta):
+    probe = fn_request({"params": CHAR, "case": {"c": 1}})
+    proj, _ = project(tmp_path, [[probe, bad_program("a")]], jobs=NoJobs())
+    proj.start(one(meta), CONFIG, Model())
+    [(op, a)] = ops(proj, "operation")
+    assert op.completion.result.outcome is Outcome.FAILED
+    assert "function task" in json.loads(a["shown.json"])["error"]
+
+
+def test_experiment_function_target_is_not_the_workers(tmp_path, meta):
+    probe = fn_request({"params": CHAR, "case": {"c": 1}, "function": "rot13"})
+    proj, _ = project(tmp_path, [[probe, bad_function()]], jobs=NoJobs())
+    task = tasks.function_task(meta, "rot13_char", submissions=1, check_budget=1)
+    run = proj.start(task, CONFIG, Model())
+    assert ops(proj, "operation") == []
+    assert proj.status(run.run_id).accounting["probe"].spent == 0
+
+
+BUF = [
+    {"name": "n", "kind": "i32", "range": [0, 8]},
+    {"name": "b", "kind": "buffer_i32", "length_param": "n"},
+]
+
+
+@pytest.mark.parametrize(
+    ("params", "case"),
+    [
+        (BUF, {"n": 1, "b": 33}),  # out-buffer length over MAX_BUFFER_LEN
+        (BUF, {"n": 1, "b": -1}),
+        (BUF, {"n": 1, "b": [0] * 33}),
+        (BUF, {"n": 1, "b": [2**31]}),
+        (STR, {"s": ("61" * 256) + "00"}),  # 257 bytes
+        (STR, {"s": "6162"}),  # no NUL
+        (STR, {"s": "zz"}),
+        (CHAR, {"c": 2**31}),
+        (CHAR, {"c": True}),
+        (CHAR, {"c": 1, "d": 2}),  # extra key
+        (CHAR, {}),  # missing key
+        ([{"name": f"a{i}", "kind": "i32"} for i in range(7)], {}),
+        ([{"name": "c", "kind": "f64"}], {"c": 1}),
+        ([{"name": "c", "kind": "i32", "range": [1]}], {"c": 1}),
+        ("not a list", {}),
+    ],
+)
+def test_experiment_function_refuses_bad_input_in_parse(params, case):
+    with pytest.raises(ValueError):
+        ExperimentFunction().parse({"params": params, "case": case})
+
+
+def test_experiment_function_flaky_original_is_failed(monkeypatch, meta, slot):
+    calls = iter([{"ret": 1, "mem": {}}, {"ret": 2, "mem": {}}])
+    monkeypatch.setattr(operations, "call_original", lambda *a: next(calls))
+    args = ExperimentFunction().parse({"params": CHAR, "case": {"c": 1}})
+    ctx = OperationContext({"binary": b"", "task.json": slot[0].private["task.json"]})
+    r = ExperimentFunction().execute(ctx, args)
     assert r.outcome is Outcome.FAILED and "flaky" in r.shown["error"]
 
 

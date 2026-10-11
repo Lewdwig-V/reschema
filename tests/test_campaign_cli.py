@@ -124,3 +124,12 @@ def test_non_integer_budgets_are_a_structured_reject(tmp_path, capsys, budgets):
     err = json.loads(capsys.readouterr().err)
     assert err["reason"] == "bad-config" and "[budgets]" in err["detail"]
     assert not (tmp_path / "c").exists()
+
+
+def test_an_undecodable_config_is_a_structured_reject(tmp_path, capsys):
+    # Codex #168: read_text raised UnicodeDecodeError past the bad-config path
+    cfg = tmp_path / "bad.toml"
+    cfg.write_bytes(b"\xff\xfe model")
+    argv = ["write", "--out", str(tmp_path / "c"), "--config", str(cfg)]
+    assert campaign.main([*argv, "rot13::gcc-O2-sym"]) == 2
+    assert json.loads(capsys.readouterr().err)["reason"] == "bad-config"

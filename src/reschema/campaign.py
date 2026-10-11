@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         return _fail("duplicate-config-name", configs=names)
     try:
         budgets = [tomllib.loads(c.read_text()).get("budgets", {}) for c in a.config]
-    except (OSError, tomllib.TOMLDecodeError) as e:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
         return _fail("bad-config", detail=str(e))
     for c, b in zip(a.config, budgets):
         # explicit, so the printed allowances cover every unit a run spends

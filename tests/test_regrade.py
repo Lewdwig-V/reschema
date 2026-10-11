@@ -65,6 +65,21 @@ class Jobbing(Exact):
         return super().check(ctx)
 
 
+class Faulting(Exact):
+    """Raises on one source, as a checker does when its image or job runner
+    is gone; Warranted records that as an infrastructure failure."""
+
+    def check(self, ctx):
+        if ctx.candidate["model.c"] == b"boom":
+            raise RuntimeError("job runner unavailable")
+        return super().check(ctx)
+
+
+class Seedless(Exact):
+    def check(self, ctx):
+        return Verdict(VerdictStatus.PASSED, {"accepted": True})
+
+
 class FakeJobs:
     identity = "fake-jobs"
 
@@ -136,6 +151,19 @@ def test_unpinnable_checks_are_unreplayable_not_flips(
     root = recorded(tmp_path, meta, Jobbing() if jobs else Exact(), jobs=jobs)
     [row] = rg.regrade(root, domain(checker), jobs=jobs)
     assert reason in row["unreplayable"] and "holds" not in row, row
+
+
+def test_an_infrastructure_failed_check_is_unreplayable(tmp_path, meta):
+    # Codex #167: such a check records no verdict.json; one of them must not
+    # abort the whole re-grade.
+    root = recorded(tmp_path, meta, Faulting(), sources=[b"boom", b"ok"])
+    failed, ok = rg.regrade(root, domain(Exact()))
+    assert failed["recorded"] == "infrastructure_failure"
+    assert "infrastructure failure" in failed["unreplayable"], failed
+    assert "holds" not in failed and ok["holds"] is True, ok
+    # a judge that draws nothing would otherwise "re-grade" the failure as a flip
+    failed, _ = rg.regrade(root, domain(Seedless()))
+    assert "infrastructure failure" in failed["unreplayable"] and "holds" not in failed
 
 
 def test_an_unknown_checker_is_unreplayable(tmp_path, meta):

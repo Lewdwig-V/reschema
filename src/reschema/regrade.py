@@ -104,6 +104,13 @@ def _evidence(ledger: Ledger, op, observations: dict) -> dict:
     if len(claimed) != len(observations[target[0]].origin.inputs):
         raise Refused("the submission names files that were not captured")
     artifacts = op.completion.observation.artifacts
+    if "verdict.json" not in artifacts:
+        # A checker raise (missing image, job runner down) is recorded as an
+        # infrastructure failure with no verdict: nothing to compare against.
+        raise Unreplayable("the recorded check has no verdict")
+    missing = sorted({"seeds.json", "jobs.json"} - set(artifacts))
+    if missing:
+        raise Refused(f"verdict recorded without {missing}")
     return {
         "candidate": candidate,
         "inputs": inputs,
@@ -141,7 +148,15 @@ def regrade(project: Path, domain=None, *, run=None, submission=None, jobs=None)
             except (Refused, CorruptArtifact, FileNotFoundError, ValueError) as e:
                 row["refused"] = f"tampered evidence: {e}"
                 continue
+            except Unreplayable as e:
+                row["unreplayable"] = str(e)
+                continue
             row["recorded"] = ev["verdict"]["status"]
+            if row["recorded"] == "infrastructure_failure":
+                # The checker raised on the host (image or job runner gone): no
+                # judgement was recorded, so a re-grade has nothing to hold.
+                row["unreplayable"] = "the recorded check was an infrastructure failure"
+                continue
             checker = domain.checkers.get(m["name"])
             if checker is None:
                 row["unreplayable"] = "no current checker of that name"

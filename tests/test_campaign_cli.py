@@ -229,3 +229,17 @@ def test_a_config_inside_out_is_rejected(tmp_path, capsys):
     assert campaign.main(argv) == 2
     assert json.loads(capsys.readouterr().err)["reason"] == "bad-config"
     assert cfg.read_text() == Path(QWEN).read_text()
+
+
+def test_a_symlinked_config_inside_out_is_rejected(tmp_path, capsys):
+    # Codex #168: resolve() followed the link out of OUT, then write_campaign
+    # wrote the plan through it over the real config
+    real = tmp_path / "qwen.toml"
+    real.write_text(Path(QWEN).read_text())
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "campaign.toml").symlink_to(real)
+    argv = ["write", "--out", str(out), "--config", str(out / "campaign.toml")]
+    assert campaign.main([*argv, "rot13::gcc-O2-sym"]) == 2
+    assert json.loads(capsys.readouterr().err)["reason"] == "bad-config"
+    assert real.read_text() == Path(QWEN).read_text()

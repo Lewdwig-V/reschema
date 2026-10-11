@@ -31,9 +31,11 @@ _DRIVER = Path(__file__).resolve().parents[1] / "driver"
 # podrun's level-B envelope; /work holds the source, the .so and per-load copies.
 _LIMITS = JobLimits(memory_mb=1024, pids=128, scratch_mb=64)
 _CAP = 4096  # per worker-reported string; keeps feedback far under FEEDBACK_LIMIT
-# Buffers are drawn on the host before any job limit applies: a scalar that
-# sizes one is capped, or a one-line spec could allocate 2**31 cells here.
-MAX_BUFFER_LEN = 4096
+# A scalar that sizes a buffer is capped: buffers are drawn on the host before
+# any job limit applies (2**31 cells from a one-line spec), and every cell comes
+# back in the job's stdout, capped at 256 KiB. Worst case 5 buffers x 32 cells x
+# N_FUZZ=64 draws x ~13 bytes per JSON int is ~133 KiB.
+MAX_BUFFER_LEN = 32
 
 
 def _reject(feedback: dict) -> Verdict:

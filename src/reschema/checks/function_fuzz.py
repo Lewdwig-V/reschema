@@ -10,7 +10,8 @@ image, runner failure) becomes Warranted's infrastructure failure.
 
 Task files (reschema.tasks): private `binary` (the corpus binary) and
 `task.json` ({"seed": name, "function": {name, addr, size}}); candidate
-`model.c` and `params.json` (submit_function's param list).
+`model.c` and `params.json` (submit_function's param list), see
+`candidate_files`.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from ..driver import podrun
 from ..driver.native_worker import CASE_TIMEOUT_S
 from ..driver.spec import Param
 from ..validate.function import N_FUZZ, validate_function
+from . import candidate_files
 
 _DRIVER = Path(__file__).resolve().parents[1] / "driver"
 # podrun's level-B envelope; /work holds the source, the .so and per-load copies.
@@ -150,18 +152,21 @@ class FunctionFuzz:
 
     def check(self, ctx: CheckContext) -> Verdict:
         fn = json.loads(ctx.private["task.json"])["function"]
-        missing = sorted({"model.c", "params.json"} - set(ctx.candidate))
+        files = candidate_files(ctx.candidate)
+        if type(files) is str:
+            return _reject({"reason": "spec", "detail": files})
+        missing = sorted({"model.c", "params.json"} - set(files))
         if missing:
             return _reject({"reason": "spec", "detail": f"missing {missing}"})
-        if "cases.json" in ctx.candidate:
+        if "cases.json" in files:
             # The guard fingerprints every declaration file; an unused one could
             # be varied to dodge it while the judged source repeats.
             return _reject(
                 {"reason": "spec", "detail": "cases.json belongs to program tasks"}
             )
         try:
-            params = _params(ctx.candidate["params.json"])
-            source = ctx.candidate["model.c"].decode()
+            params = _params(files["params.json"])
+            source = files["model.c"].decode()
         except (LookupError, ValueError, TypeError, RecursionError) as e:
             return _reject({"reason": "spec", "detail": str(e)[:_CAP]})
 
@@ -218,7 +223,7 @@ class FunctionFuzz:
             fact = {
                 "function": fn["name"],
                 **{
-                    f"{k}_sha256": hashlib.sha256(ctx.candidate[f]).hexdigest()
+                    f"{k}_sha256": hashlib.sha256(files[f]).hexdigest()
                     for k, f in (("params", "params.json"), ("source", "model.c"))
                 },
             }

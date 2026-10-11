@@ -43,3 +43,20 @@ def test_apt_sources_pinned_to_snapshot() -> None:
         "apt sources must be pinned to a snapshot.debian.org timestamp, "
         "else gcc/clang/libc resolve against live rolling trixie"
     )
+
+
+def test_image_tag_hashes_every_copied_file() -> None:
+    # The GHCR tag and CI cache key are this hash: a COPY'd file left out of it
+    # changes the image under an unchanged tag (#154/#146).
+    script = (CONTAINERFILE.parent / "tools" / "toolchain_image.sh").read_text()
+    hashed = re.search(r"TAG=\$\(cat ([^|]*)\|", script).group(1).split()
+    copied = [
+        tok
+        for line in _text().splitlines()
+        if line.startswith("COPY ")
+        for tok in line.split()[1:-1]
+        if not tok.startswith("--")
+    ]
+    assert copied
+    for src in copied:
+        assert src in hashed or f"{src.rstrip('/')}/*" in hashed, src

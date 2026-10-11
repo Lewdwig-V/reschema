@@ -180,12 +180,13 @@ def test_one_task_per_function_then_the_program(meta, slot):
     }
     assert json.loads(slot[2].private["task.json"]) == {"seed": "rot13"}
     assert set(slot[0].inputs) == {
+        "task.md",
         "family.json",
         "function.json",
         "disasm.txt",
         "abi_template.c",
     }
-    assert set(slot[2].inputs) == {"family.json", "program.json"}
+    assert set(slot[2].inputs) == {"task.md", "family.json", "program.json"}
     assert json.loads(slot[2].inputs["program.json"])["input"] == "argv"
     spec = tasks.campaign("c1", [meta], {"cfg": CONFIG})
     assert [e.task.id for e in spec.tasks] == [t.id for t in slot]

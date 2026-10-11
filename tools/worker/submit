@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""submit -- submit /work/workspace/model.c with its declaration.
+
+Function task (function.json present): model.c + params.json, both required.
+Program task: model.c + cases.json (optional; no file nominates no cases).
+Both are copied into /work/result.json, the only file the host captures, then
+the submit marker is printed. Run it as the whole command, or after commands
+that print nothing: the marker must be the command's first output line.
+"""
+
+import json
+import os
+import sys
+
+WORK = os.environ.get("RESCHEMA_WORK", "/work")  # tests only; /work in the sandbox
+function = os.path.exists(os.path.join(WORK, "function.json"))
+decl = "params.json" if function else "cases.json"
+files = {}
+for name in ("model.c", decl):
+    try:
+        with open(os.path.join(WORK, "workspace", name), encoding="utf-8") as f:
+            files[name] = f.read()
+    except FileNotFoundError:
+        if name == "model.c" or function:
+            sys.exit(f"submit: write {WORK}/workspace/{name} first")
+    except (OSError, ValueError) as e:
+        sys.exit(f"submit: {name}: {e}")
+if decl in files:
+    try:
+        value = json.loads(files[decl])
+    except ValueError as e:
+        sys.exit(f"submit: {decl} is not JSON: {e}")
+    if type(value) is not list:
+        sys.exit(f"submit: {decl} must be a JSON list")
+result = json.dumps(files)
+if len(result.encode()) > 1024 * 1024:
+    sys.exit("submit: model.c and its declaration exceed 1 MiB")
+path = os.path.join(WORK, "result.json")
+if os.path.lexists(path):
+    os.unlink(path)  # the host captures only a regular file with one link
+with open(path, "w") as f:
+    f.write(result)
+print("COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT")

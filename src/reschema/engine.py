@@ -384,6 +384,36 @@ def _held_toolchain(before: str | None) -> str | None:
     return before if before is not None and _toolchain_id() == before else None
 
 
+def hidden_suite(
+    binary: str | Path, seed_name: str, rec: list[dict], hidden_seed: str
+) -> list[dict]:
+    """Up to HIDDEN_N distinct hidden cases drawn from `hidden_seed`, ground
+    truth double-recorded on `binary`, none repeating a `rec` input; fewer
+    than HIDDEN_N means the draw starved."""
+    modes = (INPUT_MODE.get(seed_name, "argv"),)
+    known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in rec}
+    # Double-recorded like stored cases. A flaky or crashing draw invalidates
+    # the INPUT (redraw), never the model — a crash trace is not a behavior spec.
+    rng = random.Random(hidden_seed)
+    fresh = []
+    for (argv, stdin), _attempt in zip(
+        hidden_input_stream(rng, modes, seed=seed_name),
+        range(10 * HIDDEN_N),
+        strict=False,
+    ):
+        if len(fresh) == HIDDEN_N:
+            break
+        key = (tuple(argv), stdin.hex())
+        if key in known:
+            continue
+        known.add(key)  # dedupes both against recorded cases and within the suite
+        t = _record_stable(binary, argv, stdin)
+        if t is None or t["exit_code"] == -1:
+            continue
+        fresh.append(t)
+    return fresh
+
+
 def program_gate(
     store: TaskStore,
     c_source: str,
@@ -418,27 +448,7 @@ def program_gate(
         }, None
     if hidden_seed is None:  # hidden ground truth: new entropy every submission
         hidden_seed = f"hidden:{store.meta['task_id']}:{secrets.token_hex(16)}"
-    modes = (INPUT_MODE.get(store.meta["seed"], "argv"),)
-    known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in rec}
-    # Double-recorded like stored cases. A flaky or crashing draw invalidates
-    # the INPUT (redraw), never the model — a crash trace is not a behavior spec.
-    rng = random.Random(hidden_seed)
-    fresh = []
-    for (argv, stdin), _attempt in zip(
-        hidden_input_stream(rng, modes, seed=store.meta["seed"]),
-        range(10 * HIDDEN_N),
-        strict=False,
-    ):
-        if len(fresh) == HIDDEN_N:
-            break
-        key = (tuple(argv), stdin.hex())
-        if key in known:
-            continue
-        known.add(key)  # dedupes both against recorded cases and within the suite
-        t = _record_stable(store.meta["binary"], argv, stdin)
-        if t is None or t["exit_code"] == -1:
-            continue
-        fresh.append(t)
+    fresh = hidden_suite(store.meta["binary"], store.meta["seed"], rec, hidden_seed)
     if len(fresh) < HIDDEN_N:
         # Loud failure over vacuous pass: too few distinct usable hidden inputs.
         return {

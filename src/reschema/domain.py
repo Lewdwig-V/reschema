@@ -2,7 +2,7 @@
 
 Checkers `function-fuzz` (S3) and `program-replay` (S4), the `experiment`
 operation and the duplicate guard's normalisation (S5; task specs in
-reschema.tasks). The worker image lands in S6.
+reschema.tasks), the worker image (S6).
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 
+from reschema.checks import candidate_files
 from reschema.checks.function_fuzz import FunctionFuzz
 from reschema.checks.program_replay import ProgramReplay
 from reschema.driver import podrun
@@ -45,11 +46,16 @@ class ReSchemaDomain:
         whitespace-stripped (the old flail guard's), plus the declaration
         (params.json or cases.json) in canonical JSON. Warranted counts every
         rejection, declaration rejects included, so a corrected declaration
-        must be a new candidate, not a repeat of the source."""
-        src = candidate.get("model.c", b"").decode(errors="replace")
+        must be a new candidate, not a repeat of the source. Fingerprinted as
+        files (`candidate_files`), so the worker's workspace is not part of it;
+        a malformed result.json fingerprints as its raw bytes."""
+        files = candidate_files(candidate)
+        if type(files) is str:
+            return b"\1" + candidate.get("result.json", b"")
+        src = files.get("model.c", b"").decode(errors="replace")
         out = [_norm_source(src).encode()]
         for name in ("params.json", "cases.json"):
-            raw = candidate.get(name)
+            raw = files.get(name)
             if raw is None:
                 continue
             try:
@@ -63,5 +69,6 @@ class ReSchemaDomain:
 
     @property
     def worker_image(self) -> str:
-        # ponytail: the toolchain image's local ID until S6 ships the worker image.
+        # The toolchain image is the worker image too (S6: the Containerfile
+        # COPYs tools/worker/'s helpers onto PATH), pinned by its local ID.
         return podrun.image_id()

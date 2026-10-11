@@ -15,8 +15,8 @@
 # (3) update the digest in FROM, the pin date above, and the snapshot
 #     timestamp in the sed below (snapshot date = pin date)
 # (4) rebuild localhost/reschema-toolchain:1 and run the full test suite
-#     (CI's image cache keys on this file's and checker-requirements.txt's
-#     hash, so any edit to either rebuilds it).
+#     (CI's image cache keys on the hash of this file and every file it COPYs,
+#     tools/toolchain_image.sh --tag, so any edit to one rebuilds it).
 FROM docker.io/library/debian:trixie-slim@sha256:38a76d01668772e381ad2826d876627c89e7133e2f8a0f5d567306798b0f2a16
 # Pin apt sources to the snapshot matching the digest pin date, else gcc/clang/libc
 # resolve against live rolling trixie and the digest pin guarantees nothing.
@@ -40,6 +40,10 @@ COPY checker-requirements.txt /tmp/
 RUN pip install --break-system-packages --no-cache-dir --require-hashes --no-deps \
       --prefer-binary -r /tmp/checker-requirements.txt \
  && rm /tmp/checker-requirements.txt
+# M8 S6: the image is also the Warranted worker image (ReSchemaDomain.worker_image):
+# the task helpers (experiment, experiment-function, submit; stdlib Python) on
+# PATH. One image, so the worker, checker and toolchain pins are one image ID.
+COPY --chmod=0755 tools/worker/ /usr/local/bin/
 WORKDIR /work
 # Worker module ships with the repo (mounted ro at run time), not baked in:
 # image rebuilds are only for toolchain changes.

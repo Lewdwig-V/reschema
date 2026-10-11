@@ -2,7 +2,7 @@
 docs/proposals/m8-rebuild-on-warranted.md); the Warranted-backed successor of
 engine.program_gate.
 
-Candidate: `model.c` and `cases.json` (the nominated recorded cases: at most
+Candidate (see `candidate_files`): `model.c` and `cases.json` (the nominated recorded cases: at most
 MAX_CASES of {"argv": [str], "stdin_hex": str}, argv excluding argv[0]).
 Private task files: `binary` (the corpus ELF) and `task.json` ({"seed": name}).
 
@@ -28,6 +28,7 @@ from warranted import FACTS_LIMIT, FEEDBACK_LIMIT, JobLimits, Verdict, VerdictSt
 from ..driver import podrun
 from ..engine import HIDDEN_N, _record_stable, hidden_suite
 from ..validate.program import CFLAGS, compare
+from . import candidate_files
 
 MAX_CASES = 16  # nominated cases per submission (D3, like the mystery fixture)
 MAX_ARGS, MAX_ARG, MAX_STDIN = 16, 256, 4096
@@ -158,19 +159,22 @@ class ProgramReplay:
     isolated = True  # host recording in private temp dirs; no shared state
 
     def check(self, ctx) -> Verdict:
+        files = candidate_files(ctx.candidate)
+        if type(files) is str:
+            return _reject("candidate", "candidate", detail=files)
         try:
-            source = ctx.candidate["model.c"].decode()
+            source = files["model.c"].decode()
         except KeyError:
             return _reject("candidate", "candidate", detail="model.c is missing")
         except UnicodeDecodeError:
             return _reject("candidate", "candidate", detail="model.c is not UTF-8")
-        if "params.json" in ctx.candidate:
+        if "params.json" in files:
             # The guard fingerprints every declaration file; an unused one could
             # be varied to dodge it while the judged source repeats.
             return _reject(
                 "candidate", "candidate", detail="params.json belongs to function tasks"
             )
-        cases = _parse_cases(ctx.candidate.get("cases.json", b"[]"))
+        cases = _parse_cases(files.get("cases.json", b"[]"))
         if type(cases) is str:
             return _reject("cases", "candidate", detail=cases)
         seed_name = json.loads(ctx.private["task.json"])["seed"]

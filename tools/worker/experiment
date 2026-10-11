@@ -1,0 +1,26 @@
+#!/usr/bin/env python3
+"""experiment ARGS... -- ask the host to run the task's program, once per ARGS.
+
+Each ARGS is a JSON object {"argv": [str], "stdin": str, "quiet": bool} (all
+optional; argv excludes the program name, stdin is plain text). The host
+records each run and shows the canonical trace in the next observation's
+`host_results`, one result per object, in order. Each run costs one probe;
+an identical repeat is free. Up to 32 objects per call, one turn.
+"""
+
+import json
+import sys
+
+items = []
+for arg in sys.argv[1:]:
+    try:
+        value = json.loads(arg)
+    except (ValueError, RecursionError):
+        value = None
+    if type(value) is not dict:
+        sys.exit(f"experiment: each argument is a JSON object, not {arg[:80]!r}")
+    items.append({"operation": "experiment", "arguments": value})
+if not 1 <= len(items) <= 32:
+    sys.exit(__doc__)
+print("WARRANTED_REQUEST")
+print(json.dumps({"requests": items}))

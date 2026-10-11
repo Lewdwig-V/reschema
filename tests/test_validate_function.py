@@ -1,7 +1,7 @@
 import pytest
+from conftest import validate_function
 
 from reschema.driver.spec import Param
-from reschema.validate.function import validate_function
 
 MODEL = r"""
 #include <stdint.h>
@@ -122,27 +122,23 @@ def manifest(built_corpus):
     return built_corpus
 
 
-def test_missing_worker_image_is_structured_infra(manifest, tmp_path, monkeypatch):
-    from reschema.driver import podrun
+def test_missing_worker_image_is_a_host_failure(manifest, tmp_path, monkeypatch):
+    # No image, no job: the checker raises (Warranted records the host's
+    # infrastructure failure), never a verdict about the model.
+    import subprocess
 
-    def _boom():
-        raise RuntimeError(
-            f"level-B worker image missing; build it: {podrun.BUILD_CMD}"
-        )
+    from reschema import toolchain
 
-    monkeypatch.setattr(podrun, "ensure_image", _boom)
-    binary, addr = _slot(manifest, "calc", "sum_range")
-    v = validate_function(
-        binary,
-        addr,
-        "sum_range",
-        SUM_PARAMS,
-        MODEL,
-        seed=1,
-        n_fuzz=2,
+    monkeypatch.setattr(
+        toolchain,
+        "_podman",
+        lambda *a, **k: subprocess.CompletedProcess(a, 125, "", ""),
     )
-    assert not v.ok and v.divergence["stage"] == "infra"
-    assert "podman build" in v.divergence["detail"]
+    binary, addr = _slot(manifest, "calc", "sum_range")
+    with pytest.raises(RuntimeError, match="podman build"):
+        validate_function(
+            binary, addr, "sum_range", SUM_PARAMS, MODEL, seed=1, n_fuzz=2
+        )
 
 
 def test_hanging_model_rejected_with_crash_detail(manifest, tmp_path):
@@ -275,7 +271,7 @@ def test_missing_symbol_rejected(manifest, tmp_path):
 
 def test_unresolved_extern_structured_link_reject(manifest, tmp_path):
     """gcc -shared permits unresolved externals; the load must surface as a structured
-    "link" reject, not a raw OSError escaping to the MCP catch-all."""
+    "link" reject, not a raw OSError escaping the checker."""
     binary, addr = _slot(manifest, "calc", "sum_range")
     v = validate_function(
         binary,
@@ -571,12 +567,12 @@ def _stub_original(monkeypatch, fault_sc, fault_msg):
                 out.append({"ret": 0, "mem": {}, "exit_code": 0, "events": []})
         return out
 
-    def worker(job, workdir, timeout=None):
+    def worker(job):
         return {"results": [{"ret": 0, "mem": {}} for _ in job["cases"]]}
 
     monkeypatch.setattr(vf, "batch_call_original", original)
-    monkeypatch.setattr(vf.podrun, "run_worker", worker)
     monkeypatch.setattr(scout, "scrape_immediates", lambda b, a, n: [])
+    return worker
 
 
 WIDE_PARAMS = [
@@ -588,8 +584,10 @@ WIDE_PARAMS = [
 def test_skip_floor_ignores_timeouts(monkeypatch, tmp_path):
     # Positive control: correct-typed wide ranges time out (never memory-
     # fault) on real originals; timeouts stay skipped and the round compares.
-    _stub_original(monkeypatch, "timeout", [])
-    v = validate_function("unused", 0, "sum_range", WIDE_PARAMS, "", seed=7)
+    worker = _stub_original(monkeypatch, "timeout", [])
+    v = validate_function(
+        "unused", 0, "sum_range", WIDE_PARAMS, "", seed=7, run_model=worker
+    )
     assert v.ok, v
     assert v.skipped > 0 and v.compared > 0, v
 
@@ -600,8 +598,10 @@ def test_skip_floor_rejects_memory_faults(monkeypatch, tmp_path):
     # the fault may be a correctly typed index run past a table: the detail
     # must offer narrowing the range, not only retyping as a pointer.
     msg = ["UcError: Invalid memory read (UC_ERR_READ_UNMAPPED)"]
-    _stub_original(monkeypatch, "crash", msg)
-    v = validate_function("unused", 0, "sum_range", WIDE_PARAMS, "", seed=7)
+    worker = _stub_original(monkeypatch, "crash", msg)
+    v = validate_function(
+        "unused", 0, "sum_range", WIDE_PARAMS, "", seed=7, run_model=worker
+    )
     assert not v.ok and v.divergence["stage"] == "spec", v
     assert v.skipped > 0 and v.compared == 0, v
     assert "buffer_i32" in v.divergence["detail"], v
@@ -613,12 +613,14 @@ def test_skip_floor_ignores_scout_memory_faults(monkeypatch, tmp_path):
     # memory-faults the original stays skipped; declared cases never fault.
     from reschema.validate import scout
 
-    _stub_original(monkeypatch, "crash", ["UcError: (UC_ERR_READ_PROT)"])
+    worker = _stub_original(monkeypatch, "crash", ["UcError: (UC_ERR_READ_PROT)"])
     monkeypatch.setattr(
         scout, "scout_inputs", lambda params, imms: [{"lo": -99999, "hi": 99999}]
     )
     narrow = [Param("lo", "i32", range=(-10, 0)), Param("hi", "i32", range=(0, 10))]
-    v = validate_function("unused", 0, "sum_range", narrow, "", seed=7)
+    v = validate_function(
+        "unused", 0, "sum_range", narrow, "", seed=7, run_model=worker
+    )
     assert v.ok, v
     assert v.skipped == 1, v
 

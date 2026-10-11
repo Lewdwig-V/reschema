@@ -20,6 +20,7 @@ import hashlib
 import json
 import re
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from warranted import (
@@ -27,18 +28,19 @@ from warranted import (
     FEEDBACK_LIMIT,
     CheckContext,
     JobLimits,
+    JobResult,
     Verdict,
     VerdictStatus,
 )
 
-from ..driver import podrun
+from .. import toolchain
 from ..driver.native_worker import CASE_TIMEOUT_S
 from ..driver.spec import Param
 from ..validate.function import N_FUZZ, validate_function
 from . import candidate_files
 
 _DRIVER = Path(__file__).resolve().parents[1] / "driver"
-# podrun's level-B envelope; /work holds the source, the .so and per-load copies.
+# the old level-B container's envelope; /work holds the source, the .so and per-load copies.
 _LIMITS = JobLimits(memory_mb=1024, pids=128, scratch_mb=64)
 _CAP = 4096  # per worker-reported string; keeps feedback far under FEEDBACK_LIMIT
 # A scalar that sizes a buffer is capped: buffers are drawn on the host before
@@ -143,6 +145,45 @@ def _claim(out, params: list[Param], n: int) -> dict:
     return {"stage": "worker", "detail": f"worker results malformed for {n} cases"}
 
 
+def worker_job(run_job, job: dict) -> JobResult:
+    """One native_worker round (`job` on stdin) as a Warranted job: flat files,
+    no mounts. `run_job` is a CheckContext's, or `PodmanJobs().run`."""
+    return run_job(
+        toolchain.image_id(),
+        # /tmp is noexec in a job: the worker dlopens copies from TMPDIR
+        ["env", "TMPDIR=/work", "python", "native_worker.py"],
+        {n: (_DRIVER / n).read_bytes() for n in ("native_worker.py", "spec.py")},
+        stdin=json.dumps(job).encode(),
+        timeout_seconds=120 + len(job["cases"]) * (CASE_TIMEOUT_S + 2),
+        limits=_LIMITS,
+    )
+
+
+def job_model(run_job) -> Callable[[dict], dict]:
+    """validate_function's `run_model` over `worker_job`: the model compiled
+    and called in a contained job, its output shape-checked as the model's
+    claim. The job dict is host-built, so its params are the declared (already
+    parsed) ones."""
+
+    def run_model(job: dict) -> dict:
+        r = worker_job(run_job, job)
+        if r.returncode != 0 or r.timed_out or r.truncated:
+            return {
+                "stage": "worker",
+                "detail": f"job rc={r.returncode} timed_out={r.timed_out} "
+                f"truncated={r.truncated}: "
+                + r.stderr.decode(errors="replace")[-_CAP:],
+            }
+        try:
+            out = json.loads(r.stdout)
+        except (ValueError, RecursionError):
+            return {"stage": "worker", "detail": "worker output is not JSON"}
+        params = [Param.from_json(p) for p in job["params"]]
+        return _claim(out, params, len(job["cases"]))
+
+    return run_model
+
+
 class FunctionFuzz:
     version = "1"
     isolated = True  # a private temp copy of the binary and contained jobs
@@ -170,32 +211,6 @@ class FunctionFuzz:
         except (LookupError, ValueError, TypeError, RecursionError) as e:
             return _reject({"reason": "spec", "detail": str(e)[:_CAP]})
 
-        def run_model(job: dict) -> dict:
-            r = ctx.run_job(
-                podrun.image_id(),
-                # /tmp is noexec in a job: the worker dlopens copies from TMPDIR
-                ["env", "TMPDIR=/work", "python", "native_worker.py"],
-                {
-                    n: (_DRIVER / n).read_bytes()
-                    for n in ("native_worker.py", "spec.py")
-                },
-                stdin=json.dumps(job).encode(),
-                timeout_seconds=120 + len(job["cases"]) * (CASE_TIMEOUT_S + 2),
-                limits=_LIMITS,
-            )
-            if r.returncode != 0 or r.timed_out or r.truncated:
-                return {
-                    "stage": "worker",
-                    "detail": f"job rc={r.returncode} timed_out={r.timed_out} "
-                    f"truncated={r.truncated}: "
-                    + r.stderr.decode(errors="replace")[-_CAP:],
-                }
-            try:
-                out = json.loads(r.stdout)
-            except (ValueError, RecursionError):
-                return {"stage": "worker", "detail": "worker output is not JSON"}
-            return _claim(out, params, len(job["cases"]))
-
         with tempfile.TemporaryDirectory(prefix="reschema-fnfuzz-") as d:
             binary = Path(d) / "binary"
             binary.write_bytes(ctx.private["binary"])
@@ -208,7 +223,7 @@ class FunctionFuzz:
                 seed=ctx.draw_seed(),
                 n_fuzz=self.n_fuzz,
                 size=fn["size"],
-                run_model=run_model,
+                run_model=job_model(ctx.run_job),
             )
         if not v.ok:
             return _reject({"divergence": v.divergence})

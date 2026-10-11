@@ -12,9 +12,9 @@ Task files:
   "function": {name, addr, size}. The worker never holds the binary's bytes:
   it could embed and exec the original.
 - inputs (the worker's workspace): `task.md` (the instructions, one variant
-  per task kind: the MCP tool docstrings rewritten for the worker image's
+  per task kind: the old MCP tool docstrings rewritten for the worker image's
   helpers), `family.json` (the memory dependency, see `family`), and what
-  task_open shows today. Function task: `function.json` (address, signature
+  the old task_open showed. Function task: `function.json` (address, signature
   guess, callees), `disasm.txt`, `abi_template.c`. Program task:
   `program.json` (seed metadata and the input mode).
 
@@ -47,14 +47,13 @@ from .corpus.generate import FUNCS, SEEDS
 from .disasm.analyze import analyze_function, disasm_function
 from .driver.calling import BAREGS
 from .driver.spec import KINDS, Param
-from .engine import HIDDEN_N, INPUT_MODE, _abi_template
 from .exec import canonical
 from .validate.function import N_FUZZ
-from .validate.program import CFLAGS
+from .validate.program import CFLAGS, HIDDEN_N, INPUT_MODE
 
 SUBMISSIONS = 8
-# The flail guard's thresholds (engine DUP_*), as Warranted's guard; the
-# normalisation is ReSchemaDomain.normalize (engine._norm_source).
+# The old flail guard's thresholds, as Warranted's guard; the normalisation
+# is ReSchemaDomain.normalize (domain.norm_source).
 GUARD = DuplicateGuard(
     exact_repeats=2,
     near_repeats=3,
@@ -222,6 +221,59 @@ in comments or whitespace, or barely at all, is refused without a check and
 still uses a submission.
 """
 )
+
+
+def _abi_template(func: str, facts: dict) -> str:
+    """Compile-ready function-mode starter, rendered from the driver's own
+    constants (KINDS + Param defaults) so the schema docs can't drift."""
+    n = facts["arity_guess"]
+    ret_void = not facts["returns_hint"]
+    default_range = list(Param.__dataclass_fields__["range"].default)
+    params = [
+        {"name": f"arg{i}", "kind": "i32", "range": default_range} for i in range(n)
+    ]
+    if ret_void and params:
+        # The sketch must satisfy the checker's own void floor (>=1 memory-channel
+        # param), or a pasted submission self-rejects at the spec stage. Channel
+        # kind is a guess (buffer_i32+length param for multi-arg fns, cstring for
+        # 1-arg fns); the agent verifies against experiments — facts are guesses.
+        params[0] = {
+            "name": "arg0",
+            **(
+                {
+                    "kind": "buffer_i32",
+                    "length_param": "arg1",
+                    "range": default_range,
+                }
+                if n > 1
+                else {"kind": "cstring"}
+            ),
+            "ret": "void",
+        }
+    sketch = json.dumps(params)
+    ret_ty = "void" if ret_void else "int32_t"
+    sig = ", ".join(f"int32_t arg{i}" for i in range(n)) or "void"
+    return f"""/* ReSchema ABI starter — {func} (facts are {facts["labeled"]})
+ *
+ * COMPOSE RULE: a helper used by ONE function MUST be declared `static` —
+ * internal linkage means no cross-TU duplicate-symbol failures at compose time.
+ */
+#include <stdint.h>
+#define RESCHEMA_FN __attribute__((sysv_abi, noinline))
+
+/* Param-spec JSON sketch (schema from the driver constants):
+ *   kind: {(" | ").join(f'"{k}"' for k in KINDS)}
+ *   ret: "i32" (default) | "void" — carried on params[0]; a void spec with NO
+ *        memory-channel param (buffer_i32/cstring) is REJECTED (compares {{}} == {{}}).
+ *   length_param: scalar param name carrying a buffer_i32's length
+ *   range: i32 default [-100, 100]; cstring case values travel as hex
+ *
+ * {sketch}
+ *
+ * Sketched signature: {ret_ty} {func}({sig}) — arity {n}, returns {"void" if ret_void else "int32_t"}:
+ * heuristic guess; verify via experiments before declaring. */
+
+"""
 
 
 def task_md(kind: str, submissions: int, name: str = "") -> bytes:

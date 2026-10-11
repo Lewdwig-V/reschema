@@ -17,7 +17,7 @@ from typing import ClassVar
 import pytest
 
 from reschema import tasks
-from reschema.engine import TaskStore
+from reschema.corpus.generate import slot
 
 GOLDEN = {
     c["id"]: c
@@ -124,7 +124,7 @@ def observations(task_word: str) -> list[dict]:
 
 @pytest.mark.golden
 def test_scripted_campaign_through_the_cli(tmp_path, built_corpus, model_server):
-    meta = TaskStore("rot13::gcc-O2-sym").meta
+    meta = slot("rot13::gcc-O2-sym")
     specs = [tasks.function_task(meta, "rot13_char"), tasks.program_task(meta)]
     (tmp_path / "run.toml").write_text(
         f'model = "{MODEL}"\nprovider = "ollama"\nmax_steps = 6\n'

@@ -1,19 +1,23 @@
-"""Compile agent C model; replay canonical traces; structured accept/reject."""
+"""The program gate's host side: double-recorded ground truth, the hidden
+suite, and `compare` (the model's canonical traces vs ground truth). The model
+itself is compiled and replayed only in a job (checks/program_replay.py)."""
 
 from __future__ import annotations
 
 import random
-import shutil
 import string
-import tempfile
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..driver import podrun
 from ..exec.canonical import _mapper, _write_intent, canonicalize
 from ..exec.recorder import record
 
+HIDDEN_N = 8  # distinct usable hidden inputs each submission must survive
+# ponytail: manifest-driven input-space deferred
+# Hidden-input mode per stdin-driven seed (unlisted seeds take argv);
+# "stdin-bytes" = stdin in the RAW byte domain (binary-safe seeds).
+INPUT_MODE = {"check": "stdin", "filewrite": "stdin-bytes", "pkfmt": "stdin-bytes"}
 CFLAGS = ["-O1", "-static", "-fno-pie", "-no-pie", "-g0"]  # gcc
 
 
@@ -22,37 +26,6 @@ class Verdict:
     ok: bool
     reason: str = ""
     divergence: dict | None = None
-
-
-def compile_model(c_source: str, out: Path) -> tuple[bool, str]:
-    out.with_suffix(".c").write_text(c_source)  # debug artifact lands in the task dir
-    # ISSUE-61: the worker mount holds ONLY the model source's scratch dir —
-    # gcc's diagnostic quoting makes any other file in the mount an agent-readable
-    # channel into recorded ground truth.
-    with tempfile.TemporaryDirectory(prefix="reschema-build-") as scratch:
-        try:
-            r = podrun.run_worker(
-                {
-                    "mode": "compile",
-                    "jobs": [
-                        {
-                            "c_source": c_source,
-                            "out": out.name,
-                            "compiler": "gcc",
-                            "flags": CFLAGS,
-                        }
-                    ],
-                },
-                Path(scratch),
-            )
-        except RuntimeError as e:  # missing podman/image: mandatory containment
-            return False, f"compile infra: {e}"
-        if "stage" in r:
-            return False, f"compile infra: {r['detail']}"
-        res = r["results"][0]
-        if res["rc"] == 0:
-            shutil.copy2(Path(scratch) / out.name, out)
-        return res["rc"] == 0, res["stderr"]
 
 
 # Observable channel: write-family + exit_group only. Address tokens are wildcards:
@@ -169,19 +142,6 @@ def _io(t: dict) -> dict:
     }
 
 
-def replay_against(model_bin: Path, traces: list[dict]) -> Verdict:
-    # lazy: replay stops at the first divergence
-    return compare(
-        traces,
-        (
-            canonicalize(
-                record(model_bin, tr["argv"][1:], bytes.fromhex(tr["stdin_hex"]))
-            )
-            for tr in traces
-        ),
-    )
-
-
 def compare(traces: list[dict], got_traces: Iterable[dict]) -> Verdict:
     """Stored traces vs the model's canonical traces, pairwise in order; the
     first divergence decides. Also judges traces replayed elsewhere (the M8
@@ -271,7 +231,7 @@ def _pkfmt_grammar_packet(rng: random.Random) -> bytes:
 
 
 # Per-seed hidden grammar overrides. Seeds with real wire formats get the
-# submission-hardening they need here (the engine consults this by name);
+# submission-hardening they need here (hidden_input_stream looks them up by name);
 # seeds without one take the uniform stream, unchanged.
 _SEED_GRAMMARS = {"pkfmt": _pkfmt_grammar_packet}
 
@@ -303,3 +263,39 @@ def hidden_input_stream(
             continue
         s = "".join(rng.choice(_CHARSET) for _ in range(rng.randint(1, 24)))
         yield ([s], b"") if "argv" in modes else ([], (s + "\n").encode())
+
+
+def record_stable(binary: str | Path, argv: list[str], stdin: bytes) -> dict | None:
+    """Double-record ground truth; canonical trace, or None on flaky divergence."""
+    a = canonicalize(record(binary, argv, stdin))
+    return a if a == canonicalize(record(binary, argv, stdin)) else None
+
+
+def hidden_suite(
+    binary: str | Path, seed_name: str, rec: list[dict], hidden_seed: str
+) -> list[dict]:
+    """Up to HIDDEN_N distinct hidden cases drawn from `hidden_seed`, ground
+    truth double-recorded on `binary`, none repeating a `rec` input; fewer
+    than HIDDEN_N means the draw starved."""
+    modes = (INPUT_MODE.get(seed_name, "argv"),)
+    known = {(tuple(t["argv"][1:]), t["stdin_hex"]) for t in rec}
+    # A flaky or crashing draw invalidates the INPUT (redraw), never the
+    # model: a crash trace is not a behavior spec.
+    rng = random.Random(hidden_seed)
+    fresh = []
+    for (argv, stdin), _attempt in zip(
+        hidden_input_stream(rng, modes, seed=seed_name),
+        range(10 * HIDDEN_N),
+        strict=False,
+    ):
+        if len(fresh) == HIDDEN_N:
+            break
+        key = (tuple(argv), stdin.hex())
+        if key in known:
+            continue
+        known.add(key)  # dedupes both against recorded cases and within the suite
+        t = record_stable(binary, argv, stdin)
+        if t is None or t["exit_code"] == -1:
+            continue
+        fresh.append(t)
+    return fresh

@@ -153,7 +153,7 @@ def test_strip_runs_in_the_toolchain_image_and_never_on_host(monkeypatch, tmp_pa
             }
         raise AssertionError(job)
 
-    monkeypatch.setattr(gen.podrun, "run_worker", fake_worker)
+    monkeypatch.setattr(gen.toolchain, "run_build", fake_worker)
     monkeypatch.setattr(
         gen,
         "_symtab",
@@ -189,7 +189,7 @@ def test_no_host_subprocess_for_strip(monkeypatch, tmp_path):
             ]
         }
 
-    monkeypatch.setattr(gen.podrun, "run_worker", fake_worker)
+    monkeypatch.setattr(gen.toolchain, "run_build", fake_worker)
     monkeypatch.setattr(
         gen,
         "_symtab",

@@ -87,7 +87,7 @@ def _timed(batch_args, *, instrumented=False):
 
 
 def main() -> int:
-    from reschema.engine import load_manifest
+    from reschema.corpus.generate import load_manifest
 
     task = next(t for t in load_manifest() if t["task_id"] == "calc::gcc-O2-sym")
     params = [

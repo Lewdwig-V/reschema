@@ -1,7 +1,7 @@
-"""Heuristic function facts for task_open: callees, arity guess, returning hint.
+"""Heuristic function facts for function tasks: callees, arity guess, returning hint.
 
 Everything here is a LABELED GUESS: coarse capstone evidence shaping, not a
-contract — the agent still declares the falsifiable param spec; the engine's
+contract — the agent still declares the falsifiable param spec; the checker's
 semantics are unchanged. Rules were validated against the full corpus matrix
 (48 build slots x seed functions with known call graphs):
 

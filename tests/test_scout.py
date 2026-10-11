@@ -9,9 +9,9 @@ entropy-policy violation, no symbolic execution.
 """
 
 import pytest
+from conftest import validate_function
 
 from reschema.driver.spec import Param
-from reschema.validate.function import validate_function
 from reschema.validate.scout import scout_inputs, scrape_immediates
 
 MAGIC_ORIG_C = r"""#include <stdint.h>
@@ -109,11 +109,10 @@ def find_sym_addr(binary: str, name: str) -> tuple[int, int]:
 def magic_binary(built_corpus, tmp_path_factory):
     # The synthetic original: its only behavioral branch is one sparse
     # magic-equality — the #109 hole, reproduced under test control.
-    from reschema.validate.program import compile_model
+    from conftest import compile_original
 
     out = tmp_path_factory.mktemp("magic") / "magic"
-    ok, err = compile_model(MAGIC_ORIG_C, out)
-    assert ok, err
+    compile_original(MAGIC_ORIG_C, out)
     return str(out)
 
 

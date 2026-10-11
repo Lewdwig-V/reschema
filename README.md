@@ -173,8 +173,9 @@ whole program (`reschema.tasks`).
 ### Live campaign
 
 `python -m reschema.campaign write` lays out a campaign for corpus slots (each
-slot's function tasks, then its program task), building the corpus first if
-it is missing, and prints the commands below with the project's `--allow`
+slot's function tasks, then its program task) after a full corpus rebuild
+(about 10s; it replaces the manifest and binaries, never a past project's
+pinned task files), and prints the commands below with the project's `--allow`
 flags filled in. Run configs live in `campaigns/` (local Qwen on Ollama, GLM
 on OpenRouter via litellm; `campaigns/README.md` has the smoke slots and the
 key file). Keep campaigns, projects and keys under `results/`, which is

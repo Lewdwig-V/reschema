@@ -70,13 +70,19 @@ def _budgets(data: dict) -> dict:
                 f"a litellm [adapter] needs {sorted(LITELLM_REQUIRED)}, "
                 f"and only {sorted(LITELLM_FIELDS)}"
             )
-        if "/" not in data["model"].strip("/") or (
-            type(adapter["api_key_file"]) is not str
-            or not adapter["api_key_file"].strip()
-            or not _int_in(adapter["max_tokens"], 1, 131072)
-            or not _int_in(adapter["timeout_seconds"], 1, 600)
-            or type(adapter.get("api_base", "")) is not str
-            or type(adapter.get("parameters", {})) is not dict
+        vendor, _, name = data["model"].partition("/")
+        if (
+            not vendor.strip()
+            or not name.strip()
+            or (
+                data["model"] != data["model"].strip()
+                or type(adapter["api_key_file"]) is not str
+                or not adapter["api_key_file"].strip()
+                or not _int_in(adapter["max_tokens"], 1, 131072)
+                or not _int_in(adapter["timeout_seconds"], 1, 600)
+                or type(adapter.get("api_base", "")) is not str
+                or type(adapter.get("parameters", {})) is not dict
+            )
         ):
             raise ValueError(
                 "litellm: model is provider/model; api_key_file a path; "

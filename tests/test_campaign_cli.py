@@ -164,6 +164,14 @@ def test_an_undecodable_config_is_a_structured_reject(tmp_path, capsys):
             "max_tokens = 1\ntimeout_seconds = 1\n"
         ),
         (
+            'model = "openrouter/   "\nprovider = "litellm"\n[adapter]\napi_key_file = "k"\n'
+            "max_tokens = 1\ntimeout_seconds = 1\n"
+        ),
+        (
+            'model = "  /m"\nprovider = "litellm"\n[adapter]\napi_key_file = "k"\n'
+            "max_tokens = 1\ntimeout_seconds = 1\n"
+        ),
+        (
             'model = "nomodel"\nprovider = "litellm"\n[adapter]\napi_key_file = "k"\n'
             "max_tokens = 1\ntimeout_seconds = 1\n"
         ),

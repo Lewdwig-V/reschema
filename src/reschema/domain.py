@@ -7,6 +7,7 @@ reschema.tasks). The worker image lands in S6.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -38,10 +39,25 @@ class ReSchemaDomain:
 
     @staticmethod
     def normalize(candidate) -> bytes:
-        """The duplicate guard compares model sources, comment- and
-        whitespace-stripped (the old flail guard's fingerprint)."""
+        """The duplicate guard's fingerprint: the model source, comment- and
+        whitespace-stripped (the old flail guard's), plus the declaration
+        (params.json or cases.json) in canonical JSON. Warranted counts every
+        rejection, declaration rejects included, so a corrected declaration
+        must be a new candidate, not a repeat of the source."""
         src = candidate.get("model.c", b"").decode(errors="replace")
-        return _norm_source(src).encode()
+        out = [_norm_source(src).encode()]
+        for name in ("params.json", "cases.json"):
+            raw = candidate.get(name)
+            if raw is None:
+                continue
+            try:
+                raw = json.dumps(
+                    json.loads(raw), sort_keys=True, separators=(",", ":")
+                ).encode()
+            except (ValueError, RecursionError):
+                pass  # unparseable: its raw bytes are the fingerprint
+            out.append(raw)
+        return b"\0".join(out)
 
     @property
     def worker_image(self) -> str:

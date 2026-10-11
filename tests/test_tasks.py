@@ -406,6 +406,63 @@ def test_guard_lets_a_real_change_through(tmp_path, meta):
     assert _decisions(tmp_path, meta, [BASE, BASE, other]) == (["rejected"] * 3, 3)
 
 
+class Reject:
+    """Stands in for both checkers: rejects without running anything."""
+
+    version = "stub-reject"
+    isolated = True
+
+    def check(self, ctx):
+        return Verdict(VerdictStatus.REJECTED, {"accepted": False})
+
+
+class RejectDomain(ReSchemaDomain):  # keeps ReSchemaDomain.normalize
+    checkers = MappingProxyType({"function-fuzz": Reject(), "program-replay": Reject()})
+
+
+GOOD_PARAMS = json.dumps([{"name": "c", "kind": "i32", "range": [0, 255]}])
+
+
+@pytest.mark.parametrize(
+    ("task_of", "decl", "bad", "fixed"),
+    [
+        (
+            lambda m: tasks.function_task(m, "rot13_char", submissions=3),
+            "params.json",
+            ['[{"name": "c"}]', '[{"name": "c", "kind": "f64"}]'],
+            GOOD_PARAMS,
+        ),
+        (
+            lambda m: tasks.program_task(m, submissions=3),
+            "cases.json",
+            ["{not json", '[{"argv": "x"}]'],
+            '[{"argv": ["hello"], "stdin_hex": ""}]',
+        ),
+    ],
+)
+def test_guard_a_corrected_declaration_is_a_new_candidate(
+    tmp_path, meta, task_of, decl, bad, fixed
+):
+    sources = [*bad, fixed]
+    plan = [[submit(**{"model.c": BASE, decl: d})] for d in sources]
+    proj, _ = project(tmp_path, plan, RejectDomain(), NoJobs())
+    run = proj.start(task_of(meta), CONFIG, Model())
+    assert [s.decision for s in run.submissions] == ["rejected"] * 3
+    assert len(ops(proj, "check")) == 3  # the fix reached the checker
+
+    # identical source and declaration (reformatted JSON) is still a repeat
+    same = json.dumps(json.loads(fixed), indent=4)
+    proj, _ = project(
+        tmp_path / "again",
+        [[submit(**{"model.c": BASE, decl: d})] for d in (fixed, same, fixed)],
+        RejectDomain(),
+        NoJobs(),
+    )
+    run = proj.start(task_of(meta), CONFIG, Model())
+    assert [s.decision for s in run.submissions] == ["rejected"] * 2 + ["duplicate"]
+    assert len(ops(proj, "check")) == 2
+
+
 # --- end to end ---------------------------------------------------------------
 
 

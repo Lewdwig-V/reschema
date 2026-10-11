@@ -126,6 +126,14 @@ def test_forged_crash_text_is_capped(sum_inputs):
             {"name": "n", "kind": "i32", "range": [0, 33]},
             {"name": "b", "kind": "buffer_i32", "length_param": "n"},
         ],
+        # Codex #162: names reach feedback and every worker result
+        [{"name": "x" * 65, "kind": "i32"}],
+        [{"name": "a b", "kind": "i32"}],
+        [{"name": ["lo"], "kind": "i32"}],
+        [
+            {"name": "n", "kind": "i32"},
+            {"name": "b", "kind": "buffer_i32", "length_param": ["n"]},
+        ],
         # Codex #162 P1: a huge length range allocated 2**31 cells on the host
         [
             {"name": "n", "kind": "i32", "range": [2**31 - 1, 2**31 - 1]},
@@ -178,3 +186,13 @@ def test_constructor_forging_stdout_in_a_real_job_is_rejected(sum_inputs):
     v, _ = _check(sum_inputs, PodmanJobs(), source=forge)
     assert v.status is VerdictStatus.REJECTED
     assert v.feedback["divergence"]["stage"] == "worker"
+
+
+def test_oversize_feedback_is_capped_not_a_fault():
+    from warranted import FEEDBACK_LIMIT
+
+    from reschema.checks.function_fuzz import _reject
+
+    v = _reject({"divergence": {"input": {"k" * 10**6: 1}}, "reason": "spec"})
+    assert len(json.dumps(v.feedback)) <= FEEDBACK_LIMIT
+    assert v.feedback["reason"] == "spec"

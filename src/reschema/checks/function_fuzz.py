@@ -17,10 +17,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import tempfile
 from pathlib import Path
 
-from warranted import FACTS_LIMIT, CheckContext, JobLimits, Verdict, VerdictStatus
+from warranted import (
+    FACTS_LIMIT,
+    FEEDBACK_LIMIT,
+    CheckContext,
+    JobLimits,
+    Verdict,
+    VerdictStatus,
+)
 
 from ..driver import podrun
 from ..driver.native_worker import CASE_TIMEOUT_S
@@ -38,8 +46,16 @@ _CAP = 4096  # per worker-reported string; keeps feedback far under FEEDBACK_LIM
 MAX_BUFFER_LEN = 32
 
 
+_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+
 def _reject(feedback: dict) -> Verdict:
-    return Verdict(VerdictStatus.REJECTED, {"accepted": False, **feedback})
+    out = {"accepted": False, **feedback}
+    if len(json.dumps(out)) > FEEDBACK_LIMIT // 2:
+        # Last line, not the only one: oversize feedback is a checker fault,
+        # which Warranted would record as the host's failure.
+        out = {"accepted": False, **{k: str(v)[:_CAP] for k, v in feedback.items()}}
+    return Verdict(VerdictStatus.REJECTED, out)
 
 
 def _params(raw: bytes) -> list[Param]:
@@ -49,18 +65,21 @@ def _params(raw: bytes) -> list[Param]:
     if type(specs) is not list or not all(type(d) is dict for d in specs):
         raise ValueError("params.json must be a list of param objects")
     params = [Param.from_json(d) for d in specs]
+    # Names land in feedback and in every worker result: C identifiers only.
+    if not all(type(p.name) is str and _NAME.fullmatch(p.name) for p in params):
+        raise ValueError("param names must be C identifiers of at most 64 chars")
     scalars = {p.name for p in params if p.kind == "i32"}
     if len({p.name for p in params}) != len(params):
         raise ValueError("param names must be unique")
     for p in params:
         lo, hi = p.range
-        if type(p.name) is not str or not (
-            type(lo) is type(hi) is int and -(2**31) <= lo <= hi < 2**31
-        ):
-            raise ValueError(f"param {p.name!r}: name str, range [lo, hi] i32s")
+        if not (type(lo) is type(hi) is int and -(2**31) <= lo <= hi < 2**31):
+            raise ValueError(f"param {p.name!r}: range [lo, hi] i32s")
         if p.ret not in ("i32", "void"):
             raise ValueError(f"param {p.name!r}: ret must be i32 or void")
-        if p.length_param is not None and p.length_param not in scalars:
+        if p.length_param is not None and (
+            type(p.length_param) is not str or p.length_param not in scalars
+        ):
             raise ValueError(f"param {p.name!r}: length_param must name an i32")
     sizing = {p.length_param for p in params if p.length_param is not None}
     for p in params:

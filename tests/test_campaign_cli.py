@@ -82,6 +82,51 @@ def test_all_rebuilds_a_partial_corpus(tmp_path, built_corpus, monkeypatch):
         )
 
 
+def test_a_valid_unbuilt_slot_is_built_not_unknown(tmp_path, built_corpus, monkeypatch):
+    # Codex #168: a partial manifest must not turn a current slot into unknown-slot
+    class Rebuilt(Exception):
+        pass
+
+    def rebuild(*a, **k):
+        raise Rebuilt
+
+    monkeypatch.setattr(generate, "build", rebuild)
+    real = generate.load_manifest()
+    monkeypatch.setattr(
+        generate,
+        "load_manifest",
+        lambda *a, **k: [m for m in real if m["task_id"] != "rot13::gcc-O2-sym"],
+    )
+    with pytest.raises(Rebuilt):
+        campaign.main(
+            [
+                "write",
+                "--out",
+                str(tmp_path / "c"),
+                "--config",
+                QWEN,
+                "rot13::gcc-O2-sym",
+            ]
+        )
+
+
+def test_all_skips_obsolete_manifest_entries(tmp_path, built_corpus, monkeypatch):
+    # Codex #168: another branch's leftover entry must not reach slot_tasks
+    real = generate.load_manifest()
+    stale = {**real[0], "task_id": "gone::gcc-O0-sym", "seed": "gone"}
+    monkeypatch.setattr(generate, "load_manifest", lambda *a, **k: [*real, stale])
+    out = tmp_path / "c"
+    assert campaign.main(["write", "--out", str(out), "--config", QWEN, "--all"]) == 0
+    plan = tomllib.loads((out / "campaign.toml").read_text())
+    assert not any("gone" in t["path"] for t in plan["tasks"])
+
+
+def test_an_obsolete_slot_is_unknown(tmp_path, capsys):
+    argv = ["write", "--out", str(tmp_path / "c"), "--config", QWEN, "gone::gcc-O0-sym"]
+    assert campaign.main(argv) == 2
+    assert json.loads(capsys.readouterr().err)["reason"] == "unknown-slot"
+
+
 @pytest.mark.parametrize(
     "budgets", ['model = "320"', "model = -1", "model = 1.5", "model = true"]
 )

@@ -3,8 +3,8 @@
     python -m reschema.campaign write --out DIR --config RUN.toml [...] SLOT...|--all
 
 Lays out `DIR/campaign.toml` and its tasks (each slot's function tasks, then
-its program task) with `tasks.write_campaign`, building the corpus only if it
-has no manifest (or, for --all, lacks a slot of the full matrix), and prints the `warranted` commands that run it. The project
+its program task) with `tasks.write_campaign`, building the corpus only if a
+wanted slot of the full matrix is missing from its manifest, and prints the `warranted` commands that run it. The project
 allowances it prints are the campaign's worst case: every planned run spending
 its run config's whole [budgets], and every task its whole check budget.
 Errors are one JSON object on stderr, exit 2.
@@ -69,20 +69,26 @@ def main(argv: list[str] | None = None) -> int:
                 "bad-config", detail=f"{c}: [budgets] maps units to integers >= 0"
             )
 
-    if not (generate.OUT_ROOT / "manifest.json").exists():
-        generate.build()
+    # The full matrix defines the valid slots; the manifest may be partial
+    # (targeted builds) or keep other branches' entries, so it decides nothing.
+    current = generate.all_task_ids()
+    unknown = [s for s in a.slots if s not in current]
+    if unknown:
+        return _fail("unknown-slot", slots=unknown, available=sorted(current))
+    wanted = current if a.all else set(a.slots)
     try:
-        manifest = {m["task_id"]: m for m in generate.load_manifest()}
-        if a.all and not generate.all_task_ids() <= set(manifest):
-            # a targeted build left a partial manifest; --all means every slot
+        built = set()
+        if (generate.OUT_ROOT / "manifest.json").exists():
+            built = {m["task_id"] for m in generate.load_manifest()}
+        if not wanted <= built:
             generate.build()
-            manifest = {m["task_id"]: m for m in generate.load_manifest()}
+        manifest = {m["task_id"]: m for m in generate.load_manifest()}
     except RuntimeError as e:  # recorded under another canonicalizer
         return _fail("stale-corpus", detail=str(e))
-    unknown = [s for s in a.slots if s not in manifest]
-    if unknown:
-        return _fail("unknown-slot", slots=unknown, available=sorted(manifest))
-    metas = list(manifest.values()) if a.all else [manifest[s] for s in a.slots]
+    if a.all:
+        metas = [m for i, m in manifest.items() if i in current]
+    else:
+        metas = [manifest[s] for s in a.slots]
 
     specs = [t for m in metas for t in tasks.slot_tasks(m)]
     out.mkdir(parents=True, exist_ok=True)

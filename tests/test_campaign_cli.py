@@ -217,3 +217,15 @@ def test_all_keeps_the_manifests_canonical_order(tmp_path, built_corpus, monkeyp
     assert ["::".join(s) for s in slots] == [
         m["task_id"] for m in generate.load_manifest()
     ]
+
+
+def test_a_config_inside_out_is_rejected(tmp_path, capsys):
+    # Codex #168: OUT/campaign.toml as a run config was overwritten by the plan
+    out = tmp_path / "run"
+    out.mkdir()
+    cfg = out / "campaign.toml"
+    cfg.write_text(Path(QWEN).read_text())
+    argv = ["write", "--out", str(out), "--config", str(cfg), "rot13::gcc-O2-sym"]
+    assert campaign.main(argv) == 2
+    assert json.loads(capsys.readouterr().err)["reason"] == "bad-config"
+    assert cfg.read_text() == Path(QWEN).read_text()

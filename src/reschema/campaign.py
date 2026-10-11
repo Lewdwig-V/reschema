@@ -126,6 +126,9 @@ def main(argv: list[str] | None = None) -> int:
     out = a.out.resolve()
     campaign_id = a.id or out.name
     project = a.project or a.out / "project"
+    inside = [str(c) for c in a.config if c.resolve().is_relative_to(out)]
+    if inside:  # write regenerates OUT; a config there could be overwritten
+        return _fail("bad-config", detail=f"run configs inside --out: {inside}")
     names = [c.stem for c in a.config]
     if len(set(names)) != len(names):
         return _fail("duplicate-config-name", configs=names)

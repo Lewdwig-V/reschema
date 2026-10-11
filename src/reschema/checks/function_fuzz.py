@@ -8,9 +8,9 @@ host against ground truth the job never sees. Every non-pass is REJECTED — a
 job can forge any stage, `infra` included, so only a host-side raise (missing
 image, runner failure) becomes Warranted's infrastructure failure.
 
-Task files: inputs `binary` (the corpus binary) and `function.json`
-({name, addr, size}); candidate `model.c` and `params.json` (submit_function's
-param list).
+Task files (reschema.tasks): private `binary` (the corpus binary) and
+`task.json` ({"seed": name, "function": {name, addr, size}}); candidate
+`model.c` and `params.json` (submit_function's param list).
 """
 
 from __future__ import annotations
@@ -149,7 +149,7 @@ class FunctionFuzz:
         self.n_fuzz = n_fuzz
 
     def check(self, ctx: CheckContext) -> Verdict:
-        fn = json.loads(ctx.inputs["function.json"])
+        fn = json.loads(ctx.private["task.json"])["function"]
         missing = sorted({"model.c", "params.json"} - set(ctx.candidate))
         if missing:
             return _reject({"reason": "spec", "detail": f"missing {missing}"})
@@ -187,7 +187,7 @@ class FunctionFuzz:
 
         with tempfile.TemporaryDirectory(prefix="reschema-fnfuzz-") as d:
             binary = Path(d) / "binary"
-            binary.write_bytes(ctx.inputs["binary"])
+            binary.write_bytes(ctx.private["binary"])
             v = validate_function(
                 str(binary),
                 fn["addr"],

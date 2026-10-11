@@ -43,17 +43,18 @@ class Pinned(CheckContext):
 
 
 @pytest.fixture(scope="module")
-def sum_inputs(built_corpus):
+def sum_private(built_corpus):
     meta = TaskStore("calc::gcc-O2-sym").meta
     f = meta["functions"]["sum_range"]
     fn = {"name": "sum_range", "addr": f["addr"], "size": f["size"]}
     with open(meta["binary"], "rb") as b:
-        return {"binary": b.read(), "function.json": json.dumps(fn).encode()}
+        task = {"seed": meta["seed"], "function": fn}
+        return {"binary": b.read(), "task.json": json.dumps(task).encode()}
 
 
-def _check(inputs, jobs, source=SUM, params=SUM_PARAMS, n_fuzz=8):
+def _check(private, jobs, source=SUM, params=SUM_PARAMS, n_fuzz=8):
     cand = {"model.c": source.encode(), "params.json": json.dumps(params).encode()}
-    ctx = Pinned(cand, inputs, {}, jobs=jobs)
+    ctx = Pinned(cand, {}, private, jobs=jobs)
     return FunctionFuzz(n_fuzz=n_fuzz).check(ctx), ctx
 
 
@@ -61,9 +62,9 @@ def test_registered_in_domain():
     assert isinstance(ReSchemaDomain.checkers["function-fuzz"], FunctionFuzz)
 
 
-def test_job_never_sees_ground_truth(sum_inputs):
+def test_job_never_sees_ground_truth(sum_private):
     jobs = FakeJobs(b'{"ok": true, "results": []}')
-    _check(sum_inputs, jobs)
+    _check(sum_private, jobs)
     ((files, job),) = jobs.sent
     assert set(files) == {"native_worker.py", "spec.py"}
     assert set(job) == {"mode", "c_source", "fname", "params", "cases"}
@@ -82,24 +83,24 @@ def test_job_never_sees_ground_truth(sum_inputs):
         "not an object",
     ],
 )
-def test_forged_worker_output_is_rejected(sum_inputs, forged):
-    v, _ = _check(sum_inputs, FakeJobs(json.dumps(forged).encode()))
+def test_forged_worker_output_is_rejected(sum_private, forged):
+    v, _ = _check(sum_private, FakeJobs(json.dumps(forged).encode()))
     assert v.status is VerdictStatus.REJECTED
     assert v.feedback["divergence"]["stage"] == "worker"
 
 
-def test_forged_infra_stage_is_a_reject_not_an_infra_failure(sum_inputs):
+def test_forged_infra_stage_is_a_reject_not_an_infra_failure(sum_private):
     # Infra failures do not count against the candidate; the job cannot claim one.
     huge = {"stage": "infra", "detail": "x" * 200_000, "stderr": "y" * 200_000}
-    v, _ = _check(sum_inputs, FakeJobs(json.dumps(huge).encode()))
+    v, _ = _check(sum_private, FakeJobs(json.dumps(huge).encode()))
     assert v.status is VerdictStatus.REJECTED
     assert v.feedback["divergence"]["stage"] == "infra"
     assert len(json.dumps(v.feedback)) < FEEDBACK_LIMIT // 4
 
 
-def test_forged_crash_text_is_capped(sum_inputs):
+def test_forged_crash_text_is_capped(sum_private):
     forged = {"results": [{"crash": {"error": "z" * 200_000}}]}
-    v, _ = _check(sum_inputs, FakeJobs(json.dumps(forged).encode()))
+    v, _ = _check(sum_private, FakeJobs(json.dumps(forged).encode()))
     assert v.feedback["divergence"]["field"] == "crash"
     assert len(json.dumps(v.feedback)) < 1024
 
@@ -141,7 +142,7 @@ def test_forged_crash_text_is_capped(sum_inputs):
         ],
     ],
 )
-def test_malformed_spec_is_a_spec_reject(sum_inputs, params):
+def test_malformed_spec_is_a_spec_reject(sum_private, params):
     jobs = FakeJobs(b"")
     cand = {
         "model.c": SUM.encode(),
@@ -149,13 +150,13 @@ def test_malformed_spec_is_a_spec_reject(sum_inputs, params):
         if isinstance(params, str)
         else json.dumps(params).encode(),
     }
-    v = FunctionFuzz(n_fuzz=8).check(Pinned(cand, sum_inputs, {}, jobs=jobs))
+    v = FunctionFuzz(n_fuzz=8).check(Pinned(cand, {}, sum_private, jobs=jobs))
     assert (v.status, v.feedback["reason"]) == (VerdictStatus.REJECTED, "spec")
     assert jobs.sent == []
 
 
-def test_missing_candidate_file_is_a_spec_reject(sum_inputs):
-    ctx = Pinned({"model.c": SUM.encode()}, sum_inputs, {}, jobs=FakeJobs(b""))
+def test_missing_candidate_file_is_a_spec_reject(sum_private):
+    ctx = Pinned({"model.c": SUM.encode()}, {}, sum_private, jobs=FakeJobs(b""))
     v = FunctionFuzz(n_fuzz=8).check(ctx)
     assert v.feedback == {
         "accepted": False,
@@ -164,8 +165,8 @@ def test_missing_candidate_file_is_a_spec_reject(sum_inputs):
     }
 
 
-def test_accept_in_a_real_job_records_fact_and_seed(sum_inputs):
-    v, ctx = _check(sum_inputs, PodmanJobs())
+def test_accept_in_a_real_job_records_fact_and_seed(sum_private):
+    v, ctx = _check(sum_private, PodmanJobs())
     assert v.status is VerdictStatus.PASSED, v.feedback
     assert v.feedback["compared"] > 0
     assert v.facts == (
@@ -174,7 +175,7 @@ def test_accept_in_a_real_job_records_fact_and_seed(sum_inputs):
     assert ctx.seeds == [1] and len(ctx.job_log) == 1
 
 
-def test_constructor_forging_stdout_in_a_real_job_is_rejected(sum_inputs):
+def test_constructor_forging_stdout_in_a_real_job_is_rejected(sum_private):
     # The .so's constructor runs inside the worker process (symbol check) and
     # prints a vacuous pass before the worker can: the forged claim is refused.
     forge = (
@@ -183,7 +184,7 @@ def test_constructor_forging_stdout_in_a_real_job_is_rejected(sum_inputs):
         'fputs("{\\"ok\\": true, \\"results\\": []}", stdout);'
         "fflush(stdout);_exit(0);}\n" + SUM.replace("s+=i", "s+=1")
     )
-    v, _ = _check(sum_inputs, PodmanJobs(), source=forge)
+    v, _ = _check(sum_private, PodmanJobs(), source=forge)
     assert v.status is VerdictStatus.REJECTED
     assert v.feedback["divergence"]["stage"] == "worker"
 

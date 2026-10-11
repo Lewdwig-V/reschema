@@ -2,12 +2,13 @@
 
     python -m reschema.campaign write --out DIR --config RUN.toml [...] SLOT...|--all
 
-Lays out `DIR/campaign.toml` and its tasks (each slot's function tasks, then
-its program task) with `tasks.write_campaign`, building the corpus only if a
-wanted slot of the full matrix is missing from its manifest, and prints the `warranted` commands that run it. The project
+Rebuilds the full corpus, lays out `DIR/campaign.toml` and its tasks (each
+slot's function tasks, then its program task) with `tasks.write_campaign`, and
+prints the `warranted` commands that run it, shell-quoted. The project
 allowances it prints are the campaign's worst case: every planned run spending
 its run config's whole [budgets], and every task its whole check budget.
-Errors are one JSON object on stderr, exit 2.
+Operator errors are one JSON object on stderr, exit 2; a build failure is a
+host failure and raises.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 import tomllib
 from collections import Counter
@@ -69,26 +71,17 @@ def main(argv: list[str] | None = None) -> int:
                 "bad-config", detail=f"{c}: [budgets] maps units to integers >= 0"
             )
 
-    # The full matrix defines the valid slots; the manifest may be partial
-    # (targeted builds) or keep other branches' entries, so it decides nothing.
     current = generate.all_task_ids()
     unknown = [s for s in a.slots if s not in current]
     if unknown:
         return _fail("unknown-slot", slots=unknown, available=sorted(current))
-    wanted = current if a.all else set(a.slots)
-    try:
-        built = set()
-        if (generate.OUT_ROOT / "manifest.json").exists():
-            built = {m["task_id"] for m in generate.load_manifest()}
-        if not wanted <= built:
-            generate.build()
-        manifest = {m["task_id"]: m for m in generate.load_manifest()}
-    except RuntimeError as e:  # recorded under another canonicalizer
-        return _fail("stale-corpus", detail=str(e))
-    if a.all:
-        metas = [m for i, m in manifest.items() if i in current]
-    else:
-        metas = [manifest[s] for s in a.slots]
+    # Always a full rebuild (~10s): a kept manifest can predate the current
+    # seeds, flags or toolchain, while family.json hashes today's sources. Run
+    # projects pin their binaries as task bytes, so this never moves one. A
+    # build failure is a host failure and propagates.
+    generate.build()
+    manifest = {m["task_id"]: m for m in generate.load_manifest()}
+    metas = [manifest[i] for i in (sorted(current) if a.all else a.slots)]
 
     specs = [t for m in metas for t in tasks.slot_tasks(m)]
     out.mkdir(parents=True, exist_ok=True)
@@ -99,13 +92,24 @@ def main(argv: list[str] | None = None) -> int:
     for b in budgets:
         allow.update({u: n * len(specs) for u, n in b.items()})
     allow["check"] = len(a.config) * sum(t.check_budget or 0 for t in specs)
-    allows = " ".join(f"--allow {u}={n}" for u, n in sorted(allow.items()))
+    allows = [x for u, n in sorted(allow.items()) for x in ("--allow", f"{u}={n}")]
     print(f"wrote {path} ({len(specs)} tasks, {len(metas)} slots)")
     print("next:")
-    print(f"  uv run warranted init {project} --domain {DOMAIN} {allows}")
-    print(f"  uv run warranted campaign run {project} {a.out / 'campaign.toml'}")
-    print(f"  uv run warranted campaign report {project} {campaign_id}")
-    print(f"  uv run python -m reschema.regrade {project}")
+    for cmd in (
+        ["uv", "run", "warranted", "init", str(project), "--domain", DOMAIN, *allows],
+        [
+            "uv",
+            "run",
+            "warranted",
+            "campaign",
+            "run",
+            str(project),
+            str(a.out / "campaign.toml"),
+        ],
+        ["uv", "run", "warranted", "campaign", "report", str(project), campaign_id],
+        ["uv", "run", "python", "-m", "reschema.regrade", str(project)],
+    ):
+        print("  " + shlex.join(cmd))
     return 0
 
 

@@ -1,6 +1,7 @@
 """M8 S8: `python -m reschema.campaign write` and the checked-in run configs."""
 
 import json
+import shlex
 import tomllib
 from pathlib import Path
 
@@ -17,10 +18,8 @@ QWEN = str(CAMPAIGNS / "run-qwen-local.toml")
 def test_write_orders_tasks_and_prints_allowances(
     tmp_path, built_corpus, monkeypatch, capsys
 ):
-    def no_rebuild(*a, **k):
-        raise AssertionError("corpus rebuilt although its manifest exists")
-
-    monkeypatch.setattr(generate, "build", no_rebuild)
+    builds = []
+    monkeypatch.setattr(generate, "build", lambda *a, **k: builds.append(1))
     out = tmp_path / "smoke"
     argv = ["write", "--out", str(out), "--config", QWEN]
     assert campaign.main([*argv, "rot13::gcc-O2-sym", "check::gcc-O1-stripped"]) == 0
@@ -44,6 +43,7 @@ def test_write_orders_tasks_and_prints_allowances(
         in printed
     )
     assert f"warranted campaign report {out / 'project'} smoke" in printed
+    assert builds == [1]  # always a full rebuild, never a stale manifest
 
 
 def test_unknown_slot_is_a_structured_reject(tmp_path, built_corpus, capsys):
@@ -63,55 +63,9 @@ def test_checked_in_run_configs_are_valid_run_configs(name):
     assert data["budgets"]["model"] >= data["max_steps"] * tasks.SUBMISSIONS
 
 
-def test_all_rebuilds_a_partial_corpus(tmp_path, built_corpus, monkeypatch):
-    # Codex #168: a targeted build leaves a partial manifest; --all must not
-    # silently write a campaign over just those slots.
-    class Rebuilt(Exception):
-        pass
-
-    def rebuild(*a, **k):
-        raise Rebuilt
-
-    monkeypatch.setattr(generate, "build", rebuild)
-    full = generate.all_task_ids()
-    assert {m["task_id"] for m in generate.load_manifest()} == full  # session corpus
-    monkeypatch.setattr(generate, "all_task_ids", lambda: full | {"extra::gcc-O0-sym"})
-    with pytest.raises(Rebuilt):
-        campaign.main(
-            ["write", "--out", str(tmp_path / "c"), "--config", QWEN, "--all"]
-        )
-
-
-def test_a_valid_unbuilt_slot_is_built_not_unknown(tmp_path, built_corpus, monkeypatch):
-    # Codex #168: a partial manifest must not turn a current slot into unknown-slot
-    class Rebuilt(Exception):
-        pass
-
-    def rebuild(*a, **k):
-        raise Rebuilt
-
-    monkeypatch.setattr(generate, "build", rebuild)
-    real = generate.load_manifest()
-    monkeypatch.setattr(
-        generate,
-        "load_manifest",
-        lambda *a, **k: [m for m in real if m["task_id"] != "rot13::gcc-O2-sym"],
-    )
-    with pytest.raises(Rebuilt):
-        campaign.main(
-            [
-                "write",
-                "--out",
-                str(tmp_path / "c"),
-                "--config",
-                QWEN,
-                "rot13::gcc-O2-sym",
-            ]
-        )
-
-
 def test_all_skips_obsolete_manifest_entries(tmp_path, built_corpus, monkeypatch):
     # Codex #168: another branch's leftover entry must not reach slot_tasks
+    monkeypatch.setattr(generate, "build", lambda *a, **k: None)
     real = generate.load_manifest()
     stale = {**real[0], "task_id": "gone::gcc-O0-sym", "seed": "gone"}
     monkeypatch.setattr(generate, "load_manifest", lambda *a, **k: [*real, stale])
@@ -125,6 +79,28 @@ def test_an_obsolete_slot_is_unknown(tmp_path, capsys):
     argv = ["write", "--out", str(tmp_path / "c"), "--config", QWEN, "gone::gcc-O0-sym"]
     assert campaign.main(argv) == 2
     assert json.loads(capsys.readouterr().err)["reason"] == "unknown-slot"
+
+
+def test_a_build_failure_propagates(tmp_path, monkeypatch):
+    # Codex #168: a podman/compile failure is the host's, not a "stale-corpus"
+    def broken(*a, **k):
+        raise RuntimeError("podman: image missing")
+
+    monkeypatch.setattr(generate, "build", broken)
+    argv = ["write", "--out", str(tmp_path / "c"), "--config", QWEN]
+    with pytest.raises(RuntimeError, match="image missing"):
+        campaign.main([*argv, "rot13::gcc-O2-sym"])
+
+
+def test_printed_commands_are_shell_quoted(tmp_path, built_corpus, monkeypatch, capsys):
+    # Codex #168: a path with spaces must survive copy-paste
+    monkeypatch.setattr(generate, "build", lambda *a, **k: None)
+    out = tmp_path / "my run"
+    argv = ["write", "--out", str(out), "--config", QWEN, "rot13::gcc-O2-sym"]
+    assert campaign.main(argv) == 0
+    lines = [ln.strip() for ln in capsys.readouterr().out.splitlines()]
+    run = next(shlex.split(ln) for ln in lines if " campaign run " in ln)
+    assert run[-2:] == [str(out / "project"), str(out / "campaign.toml")]
 
 
 @pytest.mark.parametrize(

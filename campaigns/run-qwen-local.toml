@@ -1,0 +1,19 @@
+# Local Qwen 27B through Ollama's OpenAI-compatible endpoint.
+model = "qwen3.8:27b"
+provider = "ollama"
+max_steps = 40             # per episode (an episode ends at a submission)
+
+[adapter]
+base_url = "http://127.0.0.1:11434/v1"
+max_tokens = 4096
+timeout_seconds = 300      # the adapter's ceiling; a local 27B is slow
+seed = 0
+
+# Per run. A task allows 8 submissions and 8 checks (tasks.SUBMISSIONS; checks
+# are task budgets, never run budgets): 8 episodes x 40 steps = 320 model
+# calls and 320 commands, so neither binds before the submissions do. Probes
+# are capped at 8 full 32-probe batches.
+[budgets]
+model = 320
+tool = 320
+probe = 256

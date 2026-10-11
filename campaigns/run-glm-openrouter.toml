@@ -1,0 +1,17 @@
+# GLM 5.3 Flash on OpenRouter through Warranted's litellm adapter.
+# The key is read from a file, never the environment: put it in
+# results/.secrets/openrouter (gitignored), mode 600. The path is relative to
+# the directory `warranted campaign run` starts in: run from the repo root.
+model = "openrouter/z-ai/glm-5.3-flash"
+provider = "litellm"
+max_steps = 40
+
+[adapter]
+api_key_file = "results/.secrets/openrouter"
+max_tokens = 8192          # reasoning tokens count against it
+timeout_seconds = 300
+
+[budgets]                  # as run-qwen-local.toml
+model = 320
+tool = 320
+probe = 256

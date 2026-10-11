@@ -43,13 +43,20 @@ the `experiment`/`experiment_function` operations and the task specs. See
 `docs/proposals/m8-rebuild-on-warranted.md` (decisions D1–D3).
 
 ```bash
-# tasks.write_campaign(id, tasks.slot_tasks(slot(...)), {"cfg": "run.toml"}, out)
-uv run warranted init PROJ --domain reschema.domain:ReSchemaDomain \
+uv run python -m reschema.campaign write --out results/ID \
+    --config campaigns/run-qwen-local.toml SLOT...  # or --all; prints the rest
+uv run warranted init results/ID/project --domain reschema.domain:ReSchemaDomain \
     --allow model=N --allow tool=N --allow check=N --allow probe=N
-uv run warranted campaign run PROJ OUT/campaign.toml
-uv run warranted campaign report PROJ ID
-uv run python -m reschema.regrade PROJ [--run R] [--submission N]
+uv run warranted campaign run results/ID/project results/ID/campaign.toml
+uv run warranted campaign report results/ID/project ID
+uv run python -m reschema.regrade results/ID/project [--run R] [--submission N]
 ```
+
+Live campaigns: run configs and the smoke slots are in `campaigns/`
+(`campaigns/README.md`). Campaigns, projects and the OpenRouter key file
+(`results/.secrets/openrouter`, mode 600: litellm reads keys from a file,
+never the environment) stay under `results/`, which is gitignored. Run from
+the repo root: the key path is relative to the working directory.
 
 The worker image is the toolchain image: the `Containerfile` copies
 `tools/worker/` (`experiment`, `experiment-function`, `submit`) onto PATH, so

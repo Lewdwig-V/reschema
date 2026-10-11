@@ -31,6 +31,9 @@ _DRIVER = Path(__file__).resolve().parents[1] / "driver"
 # podrun's level-B envelope; /work holds the source, the .so and per-load copies.
 _LIMITS = JobLimits(memory_mb=1024, pids=128, scratch_mb=64)
 _CAP = 4096  # per worker-reported string; keeps feedback far under FEEDBACK_LIMIT
+# Buffers are drawn on the host before any job limit applies: a scalar that
+# sizes one is capped, or a one-line spec could allocate 2**31 cells here.
+MAX_BUFFER_LEN = 4096
 
 
 def _reject(feedback: dict) -> Verdict:
@@ -57,6 +60,12 @@ def _params(raw: bytes) -> list[Param]:
             raise ValueError(f"param {p.name!r}: ret must be i32 or void")
         if p.length_param is not None and p.length_param not in scalars:
             raise ValueError(f"param {p.name!r}: length_param must name an i32")
+    sizing = {p.length_param for p in params if p.length_param is not None}
+    for p in params:
+        if p.name in sizing and p.range[1] > MAX_BUFFER_LEN:
+            raise ValueError(
+                f"param {p.name!r}: sizes a buffer, range must stay <= {MAX_BUFFER_LEN}"
+            )
     return params
 
 

@@ -121,6 +121,11 @@ def test_forged_crash_text_is_capped(sum_inputs):
         [{"name": "b", "kind": "buffer_i32", "range": [2**31, 2**31 + 1]}],
         [{"name": "lo", "kind": "i32", "range": [-(2**31) - 1, 0]}],
         [{"name": "x", "kind": "i32"}, {"name": "x", "kind": "buffer_i32"}],
+        # Codex #162 P1: a huge length range allocated 2**31 cells on the host
+        [
+            {"name": "n", "kind": "i32", "range": [2**31 - 1, 2**31 - 1]},
+            {"name": "b", "kind": "buffer_i32", "length_param": "n"},
+        ],
     ],
 )
 def test_malformed_spec_is_a_spec_reject(sum_inputs, params):

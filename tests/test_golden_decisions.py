@@ -1,7 +1,8 @@
 """M8 parity fixture (docs/proposals/m8-rebuild-on-warranted.md, slice S1):
 today's gates reproduce the accept/reject decisions recorded in
 tests/golden/m8_decisions.json. The Warranted-backed checkers must later pass
-the same file, so a decision that changes is caught on either side.
+the same file, so a decision that changes is caught on either side. S3: the
+`function-fuzz` checker replays every function case (no differences).
 
 Cases come from the existing gate tests (each names its `source_test`). Seeds
 are pinned so a hidden or fuzz draw cannot move a verdict between runs; a case
@@ -22,8 +23,9 @@ from pathlib import Path
 import pytest
 from conftest import check_context, wipe_task
 from elftools.elf.elffile import ELFFile
-from warranted import VerdictStatus
+from warranted import CheckContext, PodmanJobs, VerdictStatus
 
+from reschema.checks.function_fuzz import FunctionFuzz
 from reschema.checks.program_replay import ProgramReplay
 from reschema.driver.spec import Param
 from reschema.engine import TaskStore, _record_stable, program_gate, submit_function
@@ -70,6 +72,66 @@ def _synthetic_original(spec: dict, d: Path) -> tuple[str, int]:
     return str(binary), addr
 
 
+def _original(case: dict, d: Path) -> tuple[str, int, int | None]:
+    """The case's original: binary path, function address, scout window."""
+    if case.get("binary_override"):
+        binary, addr = _synthetic_original(case["binary_override"], d)
+        size = None
+    else:
+        meta = TaskStore(case["task_id"]).meta
+        fmeta = meta["functions"][case["func"]]
+        binary, addr = meta["binary"], fmeta["addr"]
+        # submit_function and the re-grade pass the manifest size; direct
+        # validate_function calls in the source tests leave the default
+        size = None if case["call_path"] == "validate_function" else fmeta["size"]
+    if case.get("addr_override") is not None:
+        addr = case["addr_override"]
+    return binary, addr, size
+
+
+class _PinnedSeed(CheckContext):
+    def __init__(self, seed, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._seed = seed
+
+    def draw_seed(self):
+        self.seeds.append(self._seed)
+        return self._seed
+
+
+@pytest.mark.parametrize("case", FIXTURE["function"], ids=_id)
+def test_function_fuzz_checker_decision(request, case):
+    """M8 S3: the function-fuzz checker over run_job decides every golden
+    function case as the old gate did (spec decode rejects included)."""
+    request.getfixturevalue("built_corpus")
+    with tempfile.TemporaryDirectory(prefix="reschema-golden-") as d:
+        binary, addr, size = _original(case, Path(d))
+        fn = {"name": case["func"], "addr": addr, "size": size}
+        ctx = _PinnedSeed(
+            case["seed"],
+            {
+                "model.c": case["c_source"].encode(),
+                "params.json": json.dumps(case["params"]).encode(),
+            },
+            {
+                "binary": Path(binary).read_bytes(),
+                "function.json": json.dumps(fn).encode(),
+            },
+            {},
+            jobs=PodmanJobs(),
+        )
+        v = FunctionFuzz(n_fuzz=case["n_fuzz"]).check(ctx)
+    div = v.feedback.get("divergence") or {}
+    _expect(
+        case,
+        {
+            "ok": v.status is VerdictStatus.PASSED,
+            "stage": v.feedback.get("reason") or div.get("stage"),
+            "field": div.get("field"),
+        },
+    )
+
+
 @pytest.mark.parametrize("case", FIXTURE["function"], ids=_id)
 def test_function_gate_decision(request, case):
     request.getfixturevalue("built_corpus")
@@ -94,18 +156,7 @@ def test_function_gate_decision(request, case):
         _expect(case, {"ok": r["accepted"], "stage": r.get("reason")})
         return
     with tempfile.TemporaryDirectory(prefix="reschema-golden-") as d:
-        if case.get("binary_override"):
-            binary, addr = _synthetic_original(case["binary_override"], Path(d))
-            size = None
-        else:
-            meta = TaskStore(case["task_id"]).meta
-            fmeta = meta["functions"][case["func"]]
-            binary, addr = meta["binary"], fmeta["addr"]
-            # submit_function and the re-grade pass the manifest size; direct
-            # validate_function calls in the source tests leave the default
-            size = None if case["call_path"] == "validate_function" else fmeta["size"]
-        if case.get("addr_override") is not None:
-            addr = case["addr_override"]
+        binary, addr, size = _original(case, Path(d))
         v = validate_function(
             binary,
             addr,

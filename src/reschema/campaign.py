@@ -141,7 +141,11 @@ def main(argv: list[str] | None = None) -> int:
     # build failure is a host failure and propagates.
     generate.build()
     manifest = {m["task_id"]: m for m in generate.load_manifest()}
-    metas = [manifest[i] for i in (sorted(current) if a.all else a.slots)]
+    if a.all:  # the manifest's canonical order: -sym variants before -stripped,
+        # so a seed's easier slots can leave verified facts for its harder ones
+        metas = [m for i, m in manifest.items() if i in current]
+    else:
+        metas = [manifest[s] for s in a.slots]
 
     specs = [t for m in metas for t in tasks.slot_tasks(m)]
     out.mkdir(parents=True, exist_ok=True)

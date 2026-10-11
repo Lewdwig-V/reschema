@@ -188,3 +188,20 @@ def test_glm_config_writes_before_its_key_exists(tmp_path, built_corpus, monkeyp
         == 0
     )
     assert (out / "campaign.toml").exists()
+
+
+def test_all_keeps_the_manifests_canonical_order(tmp_path, built_corpus, monkeypatch):
+    # Codex #168: sorting ids put each -stripped slot before its -sym sibling,
+    # starving the harder task of the facts memory would hand it
+    monkeypatch.setattr(generate, "build", lambda *a, **k: None)
+    out = tmp_path / "all"
+    assert campaign.main(["write", "--out", str(out), "--config", QWEN, "--all"]) == 0
+    plan = tomllib.loads((out / "campaign.toml").read_text())
+    slots = []
+    for t in plan["tasks"]:
+        slot = tomllib.loads((out / t["path"]).read_text())["id"].split("::")[:2]
+        if slot not in slots:
+            slots.append(slot)
+    assert ["::".join(s) for s in slots] == [
+        m["task_id"] for m in generate.load_manifest()
+    ]

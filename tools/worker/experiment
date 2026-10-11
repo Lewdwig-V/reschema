@@ -15,7 +15,7 @@ items = []
 for arg in sys.argv[1:]:
     try:
         value = json.loads(arg)
-    except ValueError:
+    except (ValueError, RecursionError):
         value = None
     if type(value) is not dict:
         sys.exit(f"experiment: each argument is a JSON object, not {arg[:80]!r}")

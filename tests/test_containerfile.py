@@ -49,7 +49,7 @@ def test_image_tag_hashes_every_copied_file() -> None:
     # The GHCR tag and CI cache key are this hash: a COPY'd file left out of it
     # changes the image under an unchanged tag (#154/#146).
     script = (CONTAINERFILE.parent / "tools" / "toolchain_image.sh").read_text()
-    hashed = re.search(r"TAG=\$\(cat ([^|]*)\|", script).group(1).split()
+    hashed = re.search(r"TAG=\$\(sha256sum ([^|]*)\|", script).group(1).split()
     copied = [
         tok
         for line in _text().splitlines()

@@ -28,7 +28,7 @@ for name in ("model.c", decl):
 if decl in files:
     try:
         value = json.loads(files[decl])
-    except ValueError as e:
+    except (ValueError, RecursionError) as e:
         sys.exit(f"submit: {decl} is not JSON: {e}")
     if type(value) is not list:
         sys.exit(f"submit: {decl} must be a JSON list")

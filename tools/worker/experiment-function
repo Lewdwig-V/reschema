@@ -19,13 +19,13 @@ if args[:1] == ["--params"] and len(args) > 1:
 try:
     with open(path) as f:
         params = json.load(f)
-except (OSError, ValueError) as e:
+except (OSError, ValueError, RecursionError) as e:
     sys.exit(f"experiment-function: cannot read params from {path}: {e}")
 items = []
 for arg in args:
     try:
         case = json.loads(arg)
-    except ValueError:
+    except (ValueError, RecursionError):
         case = None
     if type(case) is not dict:
         sys.exit(f"experiment-function: each case is a JSON object, not {arg[:80]!r}")

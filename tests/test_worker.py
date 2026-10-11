@@ -22,6 +22,7 @@ from reschema.engine import TaskStore
 HELPERS = Path(__file__).resolve().parent.parent / "tools" / "worker"
 MARK = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
 PARAMS = [{"name": "c", "kind": "i32", "range": [0, 255]}]
+NESTED = "[" * 50_000 + "]" * 50_000  # valid JSON, deeper than the parser goes
 
 
 def helper(name, *args, work=None):
@@ -75,12 +76,25 @@ def test_experiment_function_adds_the_params(tmp_path):
         ("experiment", "[]"),  # not an object
         ("experiment", *['{"argv": []}'] * 33),  # over Warranted's batch limit
         ("experiment-function", "--params", "/nonexistent", '{"c": 1}'),
+        # Codex #166: nesting past the parser's depth is a RecursionError
+        ("experiment", NESTED),
     ],
 )
 def test_a_bad_probe_is_no_request(args):
     # a failing command is never read as a request
     r = helper(*args)
     assert r.returncode != 0 and "WARRANTED_REQUEST" not in r.stdout
+    assert "Traceback" not in r.stderr
+
+
+def test_nested_params_or_case_is_no_request(tmp_path):
+    deep, ok = tmp_path / "deep.json", tmp_path / "params.json"
+    deep.write_text(NESTED)
+    ok.write_text(json.dumps(PARAMS))
+    for args in (("--params", str(deep), '{"c": 1}'), ("--params", str(ok), NESTED)):
+        r = helper("experiment-function", *args)
+        assert r.returncode != 0 and "WARRANTED_REQUEST" not in r.stdout
+        assert "Traceback" not in r.stderr
 
 
 # --- submit -------------------------------------------------------------------
@@ -119,12 +133,14 @@ def test_submit_packs_the_task_kinds_files(tmp_path):
         ("program", {"cases.json": "[]"}),  # no model.c
         ("program", {"model.c": "x", "cases.json": "{not json"}),
         ("function", {"model.c": "x", "params.json": "{}"}),
+        ("function", {"model.c": "x", "params.json": NESTED}),
     ],
 )
 def test_submit_refuses_without_marking(tmp_path, kind, files):
     w = work(tmp_path, kind, **files)
     r = helper("submit", work=w)
     assert r.returncode != 0 and MARK not in r.stdout
+    assert "Traceback" not in r.stderr
     assert not (w / "result.json").exists()
 
 

@@ -48,7 +48,14 @@ def _budgets(data: dict) -> dict:
     """The run config's [budgets], after checking the whole config the way
     `warranted run` would (its loader is private: warranted#78), short of
     reading the litellm key file, which may not exist until run time."""
-    known = {"model", "provider", "max_steps", "budgets", "adapter"}
+    known = {
+        "model",
+        "provider",
+        "max_steps",
+        "container_timeout_seconds",
+        "budgets",
+        "adapter",
+    }
     if not data.keys() <= known or type(data.get("model")) is not str:
         raise ValueError(f"needs a model string, and only {sorted(known)}")
     provider = data.get("provider", "ollama")
@@ -99,7 +106,12 @@ def _budgets(data: dict) -> dict:
             f"[budgets] must set {sorted(REQUIRED_BUDGETS)} "
             "(and any other units) to integers >= 0"
         )
-    RunConfig(data["model"], data.get("max_steps", 4), b)  # Warranted's own checks
+    RunConfig(  # Warranted's own checks
+        data["model"],
+        data.get("max_steps", 4),
+        b,
+        container_timeout_seconds=data.get("container_timeout_seconds", 120),
+    )
     return b
 
 

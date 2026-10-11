@@ -13,7 +13,7 @@
 ## Overview
 
 ReSchema is a [Warranted](https://github.com/Lewdwig-V/warranted) domain
-(`reschema.domain:ReSchemaDomain`, Warranted pinned at v0.3.0) that makes an
+(`reschema.domain:ReSchemaDomain`, Warranted pinned at v0.4.0) that makes an
 LLM agent hold executable C world-models of x86-64 static ELFs. Ground truth
 is recorded by emulating the corpus binaries (qiling, on the host), and the
 agent's C candidate is judged against it by two checkers: **program-replay**
@@ -396,7 +396,7 @@ that draws more seeds than were recorded, or whose recorded jobs ran another
 image than today's, is `unreplayable` with a reason, never a flip. Tampered
 evidence is refused per row: `Ledger.lookup` re-verifies every artifact
 against its digest, and the candidate files must match the submission
-record. Warranted v0.3.0 has no public re-check entry point and `Project`
+record. Warranted (as of v0.4.0) has no public re-check entry point and `Project`
 refuses a changed domain identity, so regrade reads the ledger through
 `warranted.host` (Lewdwig-V/warranted#78).
 

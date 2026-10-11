@@ -9,9 +9,12 @@
 ReSchema is a reasoning-with-verification harness for reverse engineering.
 It is built around world-model construction: an agent should hold an explicit,
 checkable model of the world it reasons about. The world is a binary and
-the model is executable C. An LLM agent probes an unknown binary through a
-strictly-gated game engine, building a C world-model that must
-reproduce observed behavior byte-for-byte.
+the model is executable C. An LLM agent probes an unknown binary through
+host-mediated experiments, building a C world-model that must reproduce
+observed behavior byte-for-byte. ReSchema is a domain on
+[Warranted](https://github.com/Lewdwig-V/warranted), which owns task state,
+the ledger and accounting, containment and memory; ReSchema keeps the reverse
+engineering: corpus, ground truth, canonicalisation and the two checkers.
 
 The harness is the judge. The agent does not grade its own work.
 
@@ -42,8 +45,9 @@ test suite responds.
   bounded by the ELF symbol table, a driver that calls the original
   function under emulation with fuzzed inputs, and a differential comparison
   of return value and memory effects against the agent's natively-compiled
-  `.so`. Accepted functions then compose per translation unit. Each validated
-  source is its own TU, linked into one program.
+  `.so`. Each function is its own task; an accepted function becomes a
+  verified fact that the family's later tasks (its program task included)
+  see in their memory.
 
 Negative tests are first-class. Every gate ships with the
 attack it must repel. These include wrong-spec flattery where a model matches the declared
@@ -71,15 +75,15 @@ stripped.
 
 ## Measured so far
 
-A scripted agent driving only the 5 MCP tools repairs a wrong level-B `sum_range` model
-to acceptance in exactly one rejection round on `calc::gcc-O2-sym`. It gets
-all three functions of the `calc` binary accepted on the `-O1` slot with a
-clean per-TU compose and link. These results are pinned in CI (`tests/test_dogfood.py`). The transfer benchmark's reference-agent run is
-also CI-pinned. No live-agent benchmark numbers exist yet.
+A scripted model drives one slot (`rot13::gcc-O2-sym`: a function task, then
+the program task) through the `warranted` CLI to two acceptances, with the
+function's verified fact reaching the program task and full per-run
+accounting (`tests/test_cli_campaign.py`, golden). No live-agent benchmark
+numbers exist yet.
 
 ## What a rejection looks like
 
-The feedback signal is the primary value. A real `submit_model` verdict:
+The feedback signal is the primary value. A real `program-replay` verdict:
 
 ```json
 {
@@ -113,30 +117,38 @@ gate prevents overfitting to the revealed prefix.
 
 ## Trust model
 
-This is adversarial-by-design tooling. Agent-authored C must be compiled and
-executed in a protected environment. Containment per level:
+This is adversarial-by-design tooling. Agent-authored C is compiled and run
+only inside Warranted jobs: a fresh rootless **podman** container per job
+with no network, a read-only root, private `/work` and `/tmp` holding only
+the job's files, UID 1000 with no capabilities, and memory and pid limits.
+A job's output is the model's claim about itself; the checker judges it on
+the host against ground truth the job never sees.
 
-- **Level A (qiling replay)**: every record runs against a fresh, empty
-  rootfs holding only a copy of the binary. Qiling emulates syscalls in
-  userspace, so any host-mutating file operation a guest issues resolves inside that scratch directory and is discarded after the run.
-  `files_written` is scraped from the same rootfs.
-- **Level B (differential function fuzzing)**: agent C compiles and executes
-  only inside a one-shot rootless **podman** container. It uses `--network none`,
-  `--read-only`, 1g memory, 128 pids, and fork-per-case. Model segfaults or hangs
-  become structured rejects.
+- **Level A (program replay)**: ground truth is the corpus binary
+  double-recorded under qiling on the host, each record against a fresh,
+  empty rootfs. The model is compiled and replayed under qiling inside one
+  job (decision D1 in `docs/proposals/m8-rebuild-on-warranted.md`).
+- **Level B (differential function fuzzing)**: the original function runs
+  under qiling on the host; the model compiles to a `.so` and is called
+  fork-per-case inside a job. Model segfaults or hangs become structured
+  rejects.
 
-The toolchain is pinned. One image
-(`localhost/reschema-toolchain:1`, debian trixie + gcc + clang) builds the
-entire corpus matrix and every model compile for both levels. Guest
-binaries carry identical toolchain and libc encodings on every machine. Host
-`gcc` is not used. Podman is a dependency for
-any build, validate, or test flow. A missing image or podman binary is an
-actionable structured refusal.
+The worker itself runs in Warranted's sandbox from the same image and never
+holds the corpus binary: it probes it through the host's `experiment`
+operations.
 
-Python orchestration and the qiling/unicorn emulator run on the host. These are contained by the
-scratch rootfs and the per-record timeout, but are trusted third-party
-code. The image supply chain is not contained beyond integrity. The base image is a pinned tag and digest in the `Containerfile`. This attests image identity but does not make sandbox
-claims about what the image contains.
+The toolchain is pinned. One image (`localhost/reschema-toolchain:1`, debian
+trixie + gcc + clang + the pinned qiling + the worker helpers) builds the
+corpus matrix, runs every checker job and hosts the worker, pinned by its
+image ID. Host `gcc` is not used. Podman is a dependency for any build,
+check, or test flow; a missing image or podman binary is a refusal naming
+the build command.
+
+Python orchestration and the qiling/unicorn emulator run on the host for
+ground truth. These are contained by the scratch rootfs and the per-record
+timeout, but are trusted third-party code. The image supply chain is not
+contained beyond integrity: the base image is a pinned tag and digest in the
+`Containerfile`.
 
 ## Getting started
 
@@ -147,34 +159,40 @@ claims about what the image contains.
 # step zero: the pinned toolchain image (once per machine/toolchain change):
 # pulls CI's published build from GHCR, else runs the podman build below
 tools/toolchain_image.sh   # fallback: podman build -t localhost/reschema-toolchain:1 -f Containerfile .
-uv sync                                    # python deps: qiling 1.4.6, mcp 2.x
+uv sync                                    # python deps: qiling 1.4.6, warranted v0.3.0
 uv run python -m reschema.corpus.generate  # builds the 60-slot corpus
-uv run pytest -q                           # full suite (~2 min; emulation is the cost)
+uv run pytest -q -n auto                   # default suite (~45 s)
 ```
 
 Skipping the image build is the most common setup failure. The first compile
 refuses with a message naming the `podman build` line above.
 
-Wire the stdio server into any MCP-capable agent:
+An agent works a slot as Warranted tasks: one per function, then one for the
+whole program (`reschema.tasks`). Write a campaign, create a project with the
+ReSchema domain, and run it with the `warranted` CLI:
 
-```json
-{ "mcpServers": { "reschema": {
-    "command": "uv", "args": ["run", "python", "-m", "reschema.mcp.server"],
-    "cwd": "/path/to/reschema" } } }
+```python
+from pathlib import Path
+
+from reschema import tasks
+from reschema.corpus.generate import slot
+
+specs = tasks.slot_tasks(slot("rot13::gcc-O2-sym"))
+tasks.write_campaign("rot13", specs, {"local": "run.toml"}, Path("camp"))
 ```
 
-Then the agent drives the loop with 5 tools:
+```bash
+uv run warranted init proj --domain reschema.domain:ReSchemaDomain \
+    --allow model=200 --allow tool=200 --allow check=40 --allow probe=40
+uv run warranted campaign run proj camp/campaign.toml   # run.toml: model + adapter
+uv run warranted campaign report proj rot13
+uv run python -m reschema.regrade proj  # re-judge recorded checks under today's checkers
+```
 
-1. `corpus_build` → task ids like `rot13::gcc-O2-sym`
-2. `task_open` → the task contract plus where this seed takes input
-3. `experiment` → probe: run an input against the recorded case and read the canonical trace
-4. `submit_model` → hand over C source; the gate compiles and replays recorded and
-   hidden inputs. `accepted: false` comes back with a structured divergence to repair
-5. `status` → the task ledger showing accepted
-   sources, submission counts, and audit seeds
-
-Accepted functions compose per-TU into a compiled program. A `submit_model` on
-a program task is the level-A verdict on reusing them.
+Each task's `task.md` is the worker's instructions. In the sandbox the worker
+probes with `experiment` (a whole-program run) and `experiment-function` (one
+call of the original function), and hands over its model with `submit`; a
+rejection comes back as structured feedback to repair.
 
 ## Layout
 
@@ -182,14 +200,17 @@ a program task is the level-A verdict on reusing them.
 src/reschema/
   corpus/generate.py   # seeds → 60-slot build matrix + manifest
   exec/                # qiling recorder, canonicalizer (rules v2.1)
-  validate/            # program gate, function gate
-  driver/              # call driver (SENTINEL trap), param specs, input gen
+  validate/            # program gate (hidden suite, compare), function gate
+  driver/              # call driver (SENTINEL trap), param specs, native worker
   disasm/analyze.py    # symtab-size-exact disasm slices + capstone facts
-                       # behind task_open (arity/callees/returns)
-  memory.py            # per-family deduction cache (.reschema/memory/<seed>.jsonl)
-  engine.py            # TaskStore, ledger, submit_*, compose (single-process)
-  mcp/server.py        # thin 1:1 tool wrapper over the engine
-tools/dogfood/         # phase-2C live-agent transfer driver (not in the package)
+                       # behind the function task inputs (arity/callees/returns)
+  checks/              # Warranted checkers: function-fuzz, program-replay
+  operations.py        # experiment / experiment_function host operations
+  tasks.py             # TaskSpecs per slot, task.md, campaign files
+  domain.py            # ReSchemaDomain: checkers, operations, guard fingerprint
+  regrade.py           # re-run current checkers over recorded check evidence
+  toolchain.py         # the pinned image's ID; the corpus build's container run
+tools/worker/          # experiment / experiment-function / submit (in the image)
 ```
 
 (The `SENTINEL` trap is how a level-B call ends under emulation: the driver
@@ -205,9 +226,9 @@ test suites, and 2026 results show both can be passed while behavior
 diverges. ReSchema's distinguishing feature is an **in-loop judge** with
 emulated ground truth. Every program-mode submission is replayed against
 fresh hidden inputs, and every function-mode submission is fuzzed against the
-original on a fresh draw that the agent cannot pin. Agent C is compiled only in containers. Level B runs it
-natively inside the container, and level A runs it under qiling against a
-scratch rootfs (see "Trust model" above). The nearest published neighbors
+original on a fresh draw that the agent cannot pin. Agent C is compiled and
+run only in contained jobs: natively for level B, under qiling for level A
+(see "Trust model" above). The nearest published neighbors
 are Decompile-Diverge (arXiv 2609.05370), which fuzzes from the original
 binary to find divergences that test suites miss, and "Recompilation Is Not
 Enough" (arXiv 2609.07201), which uses an exact-output gate on fixed tests. See
@@ -219,7 +240,10 @@ largely author-reported preprints.
 - `ARCHITECTURE.md` - canonical current-state description, including the scope
   guardrails and decision records.
 - `docs/benchmark-protocol.md` - the cross-task transfer benchmark (methods;
-  CI-pinned reference run, live-agent protocol pending).
+  its pre-M8 reference runs went with the old engine, a new metric epoch
+  starts on Warranted accounting).
+- `docs/proposals/m8-rebuild-on-warranted.md` - the M8 port onto Warranted
+  and its decisions (D1-D3).
 - `docs/roadmap.md` - phase order beyond the current milestone.
 - `docs/rejected-ideas.md` - ideas deliberately refused, with reasons and
   reopen conditions.

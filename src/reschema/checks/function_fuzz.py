@@ -8,9 +8,9 @@ host against ground truth the job never sees. Every non-pass is REJECTED — a
 job can forge any stage, `infra` included, so only a host-side raise (missing
 image, runner failure) becomes Warranted's infrastructure failure.
 
-Task files: inputs `binary` (the corpus binary) and `function.json`
-({name, addr, size}); candidate `model.c` and `params.json` (submit_function's
-param list).
+Task files (reschema.tasks): private `binary` (the corpus binary) and
+`task.json` ({"seed": name, "function": {name, addr, size}}); candidate
+`model.c` and `params.json` (submit_function's param list).
 """
 
 from __future__ import annotations
@@ -149,10 +149,16 @@ class FunctionFuzz:
         self.n_fuzz = n_fuzz
 
     def check(self, ctx: CheckContext) -> Verdict:
-        fn = json.loads(ctx.inputs["function.json"])
+        fn = json.loads(ctx.private["task.json"])["function"]
         missing = sorted({"model.c", "params.json"} - set(ctx.candidate))
         if missing:
             return _reject({"reason": "spec", "detail": f"missing {missing}"})
+        if "cases.json" in ctx.candidate:
+            # The guard fingerprints every declaration file; an unused one could
+            # be varied to dodge it while the judged source repeats.
+            return _reject(
+                {"reason": "spec", "detail": "cases.json belongs to program tasks"}
+            )
         try:
             params = _params(ctx.candidate["params.json"])
             source = ctx.candidate["model.c"].decode()
@@ -187,7 +193,7 @@ class FunctionFuzz:
 
         with tempfile.TemporaryDirectory(prefix="reschema-fnfuzz-") as d:
             binary = Path(d) / "binary"
-            binary.write_bytes(ctx.inputs["binary"])
+            binary.write_bytes(ctx.private["binary"])
             v = validate_function(
                 str(binary),
                 fn["addr"],

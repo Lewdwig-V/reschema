@@ -35,6 +35,8 @@ def _check(candidate):
     [
         ({"cases.json": b"[]"}, "candidate"),
         ({"model.c": b"\xff\xfe", "cases.json": b"[]"}, "candidate"),
+        # Codex #165: an unused declaration would be a guard-dodging knob
+        ({"model.c": b"", "cases.json": b"[]", "params.json": b"[]"}, "candidate"),
         ({"model.c": b"", "cases.json": b"{not json"}, "cases"),
         ({"model.c": b"", "cases.json": b'{"argv": []}'}, "cases"),
         ({"model.c": b"", "cases.json": json.dumps(HELLO * (MAX_CASES + 1))}, "cases"),

@@ -113,11 +113,11 @@ def test_function_fuzz_checker_decision(request, case):
                 "model.c": case["c_source"].encode(),
                 "params.json": json.dumps(case["params"]).encode(),
             },
+            {},
             {
                 "binary": Path(binary).read_bytes(),
-                "function.json": json.dumps(fn).encode(),
+                "task.json": json.dumps({"seed": "golden", "function": fn}).encode(),
             },
-            {},
             jobs=PodmanJobs(),
         )
         v = FunctionFuzz(n_fuzz=case["n_fuzz"]).check(ctx)

@@ -39,9 +39,14 @@ and memory.
   server, the memory cache and `tools/dogfood/` removed; `regrade` re-runs
   the current checkers over recorded check evidence (misfit noted for
   Lewdwig-V/warranted#78: no public re-check entry point).
-- **S8 (next):** a live-agent campaign through the CLI with full accounting
-  (M8 completion). The 2C results below are not comparable across the port:
-  it starts a new metric epoch.
+- **S8 (in progress):** a live-agent campaign through the CLI with full
+  accounting (M8 completion). The 2C results below are not comparable across
+  the port: it starts a new metric epoch. Done: the `campaign write` CLI and
+  run configs (#168). The first local smoke (qwen3.8:27b, 10 tasks,
+  2026-10-11) accepted both rot13 function tasks, but 5 of its 7
+  infrastructure failures were Warranted's fixed 120s worker-container
+  lifetime per episode; Warranted v0.4.0 makes it a run setting, which the
+  run configs now set (1800s local, 900s hosted). Next: re-run the smoke.
 
 ## Phase 1.5 — Engine Hardening & Spec Alignment
 

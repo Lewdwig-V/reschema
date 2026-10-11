@@ -36,7 +36,7 @@ the pull (blobs come from pkg-containers.githubusercontent.com). No host
 ## Running a slot on Warranted
 
 ReSchema is a Warranted domain (`reschema.domain:ReSchemaDomain`, Warranted
-pinned at v0.3.0). Warranted owns task state, the ledger, accounting, budgets,
+pinned at v0.4.0). Warranted owns task state, the ledger, accounting, budgets,
 the duplicate guard, containment and memory; ReSchema owns the corpus, ground
 truth, canonicalisation, the `function-fuzz` and `program-replay` checkers,
 the `experiment`/`experiment_function` operations and the task specs. See

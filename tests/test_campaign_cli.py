@@ -59,7 +59,12 @@ def test_unknown_slot_is_a_structured_reject(tmp_path, built_corpus, capsys):
 @pytest.mark.parametrize("name", ["run-qwen-local.toml", "run-glm-openrouter.toml"])
 def test_checked_in_run_configs_are_valid_run_configs(name):
     data = tomllib.loads((CAMPAIGNS / name).read_text())
-    RunConfig(data["model"], data["max_steps"], data["budgets"])
+    RunConfig(
+        data["model"],
+        data["max_steps"],
+        data["budgets"],
+        container_timeout_seconds=data["container_timeout_seconds"],
+    )
     assert data["budgets"]["model"] >= data["max_steps"] * tasks.SUBMISSIONS
 
 
@@ -257,3 +262,15 @@ def test_out_must_be_new_or_empty(tmp_path, capsys):
     assert campaign.main([*argv, "rot13::gcc-O2-sym"]) == 2
     assert json.loads(capsys.readouterr().err)["reason"] == "bad-config"
     assert real.read_text() == Path(QWEN).read_text()
+
+
+def test_container_timeout_is_checked_before_writing(tmp_path, capsys):
+    # Warranted 0.4.0's run-level worker lifetime: 30..3600, refused otherwise
+    cfg = tmp_path / "bad.toml"
+    cfg.write_text(
+        'model = "m"\ncontainer_timeout_seconds = 10\n'
+        "[budgets]\nmodel = 1\ntool = 1\nprobe = 1\n"
+    )
+    argv = ["write", "--out", str(tmp_path / "c"), "--config", str(cfg)]
+    assert campaign.main([*argv, "rot13::gcc-O2-sym"]) == 2
+    assert json.loads(capsys.readouterr().err)["reason"] == "bad-config"

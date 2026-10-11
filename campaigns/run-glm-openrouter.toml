@@ -5,6 +5,10 @@
 model = "openrouter/z-ai/glm-5.3-flash"
 provider = "litellm"
 max_steps = 40
+# The worker container lives this long for a WHOLE episode (Warranted's
+# default 120s killed long episodes in the first smoke): 40 steps x ~20s for a
+# hosted model plus command time.
+container_timeout_seconds = 900
 
 [adapter]
 api_key_file = "results/.secrets/openrouter"

@@ -2779,7 +2779,7 @@ requires-dist = [
     { name = "capstone" },
     { name = "pyelftools" },
     { name = "qiling", specifier = ">=1.4.6,<1.5" },
-    { name = "warranted", git = "https://github.com/Lewdwig-V/warranted?rev=v0.3.0" },
+    { name = "warranted", git = "https://github.com/Lewdwig-V/warranted?rev=v0.4.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -3277,8 +3277,8 @@ wheels = [
 
 [[package]]
 name = "warranted"
-version = "0.3.0"
-source = { git = "https://github.com/Lewdwig-V/warranted?rev=v0.3.0#0772d2f8ee79484b6502f2c4713f6da834f0d872" }
+version = "0.4.0"
+source = { git = "https://github.com/Lewdwig-V/warranted?rev=v0.4.0#6edc0171cb26fa2ad38ea024e5a63e898e40174d" }
 dependencies = [
     { name = "langgraph" },
     { name = "langgraph-checkpoint-sqlite" },

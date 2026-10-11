@@ -2,6 +2,9 @@
 model = "qwen3.8:27b"
 provider = "ollama"
 max_steps = 40             # per episode (an episode ends at a submission)
+# The worker container lives this long for a WHOLE episode (Warranted's
+# default 120s killed long episodes in the first smoke): 40 steps x ~45s (a local 27B averaged ~10s a step, slow ones far more).
+container_timeout_seconds = 1800
 
 [adapter]
 base_url = "http://127.0.0.1:11434/v1"

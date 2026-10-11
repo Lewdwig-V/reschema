@@ -159,7 +159,7 @@ contained beyond integrity: the base image is a pinned tag and digest in the
 # step zero: the pinned toolchain image (once per machine/toolchain change):
 # pulls CI's published build from GHCR, else runs the podman build below
 tools/toolchain_image.sh   # fallback: podman build -t localhost/reschema-toolchain:1 -f Containerfile .
-uv sync                                    # python deps: qiling 1.4.6, warranted v0.3.0
+uv sync                                    # python deps: qiling 1.4.6, warranted v0.4.0
 uv run python -m reschema.corpus.generate  # builds the 60-slot corpus
 uv run pytest -q -n auto                   # default suite (~45 s)
 ```

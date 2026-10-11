@@ -72,6 +72,7 @@ def _budgets(data: dict) -> dict:
             )
         if "/" not in data["model"].strip("/") or (
             type(adapter["api_key_file"]) is not str
+            or not adapter["api_key_file"].strip()
             or not _int_in(adapter["max_tokens"], 1, 131072)
             or not _int_in(adapter["timeout_seconds"], 1, 600)
             or type(adapter.get("api_base", "")) is not str

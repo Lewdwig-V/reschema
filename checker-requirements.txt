@@ -175,9 +175,9 @@ greenlet==3.5.4 ; platform_python_implementation == 'CPython' \
     --hash=sha256:f88193799d43dbf8c8a806d6405c9c52fe2af40bf75072a606357b33cc336c7f \
     --hash=sha256:f908898d6fa484ce4b6f447ce70ea99b52c503fee419e53cf74d60a16bc9e667
     # via gevent
-jsonpath-ng==1.6.0 \
-    --hash=sha256:5483f8e9d74c39c9abfab554c070ae783c1c8cbadf5df60d561bc705ac68a07e \
-    --hash=sha256:6fd04833412c4b3d9299edf369542f5e67095ca84efa17cbb7f06a34958adc9f
+jsonpath-ng==1.10.1 \
+    --hash=sha256:1247d0983361ebe44f47741e759bbb76e74213c68f25abb4b65f6de21d1934d6 \
+    --hash=sha256:9355047e5e6a8919f5ae0ccfd5b793bff69e4165f1248b1763e8962457b58ff5
     # via python-fx
 keystone-engine==0.9.2 \
     --hash=sha256:2f7af62dab0ce6c2732dbb4f31cfa2184a8a149e280b96b92ebc0db84c6e50f5 \

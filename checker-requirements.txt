@@ -406,9 +406,9 @@ unicorn==2.1.4 \
     --hash=sha256:d6c93e0f60328d8f4a1792af3f834137a28050fcc2305f2ec01efe8558a9844e \
     --hash=sha256:d7107500c64ce5c168fbff6bef9485b5db1350050036f4cea568650cf8bdbdf5
     # via qiling
-urwid==2.6.16 \
-    --hash=sha256:93ad239939e44c385e64aa00027878b9e5c486d59e855ec8ab5b1e1adcdb32a2 \
-    --hash=sha256:de14896c6df9eb759ed1fd93e0384a5279e51e0dde8f621e4083f7a8368c0797
+urwid==4.2.5 \
+    --hash=sha256:4b1cd9916d5a3bce1a6cfec8a4f157d287f2f05471df7d908f5ae9cee7eace5f \
+    --hash=sha256:a1fea3a551953fae4e6b727536334233bbb8b88c45230bc91d9751b402a8c16d
     # via python-fx
 wcwidth==0.2.14 \
     --hash=sha256:4d478375d31bc5395a3c55c40ccdf3354688364cd61c4f6adacaa9215d0b3605 \
